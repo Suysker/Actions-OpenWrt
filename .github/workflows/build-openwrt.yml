@@ -104,9 +104,8 @@ jobs:
         cd openwrt/target/linux/ramips
         sed -i '14s/5.15/5.4/' Makefile #选择5.4版本内核
         cd patches-5.4
+        curl -fsSL raw.githubusercontent.com/Suysker/Actions-OpenWrt/main/102-mt7621-fix-cpu-clk-add-clkdev.patch -o 102-mt7621-fix-cpu-clk-add-clkdev.patch #超频1100Mhz
 
-        
-        
 
     - name: Compile the firmware
       id: compile
