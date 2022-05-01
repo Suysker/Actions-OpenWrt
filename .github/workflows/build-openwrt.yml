@@ -99,6 +99,15 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
+    - name: Over Limit
+      run: |
+        cd openwrt/target/linux/ramips
+        sed -i '14s/5.15/5.4/' Makefile #选择5.4版本内核
+        cd patches-5.4
+
+        
+        
+
     - name: Compile the firmware
       id: compile
       run: |
