@@ -95,6 +95,9 @@ jobs:
       run: |
         cd openwrt/package/base-files/files/bin
         sed -i '150s/192.168.1.1/192.168.2.1/' config_generate #更改默认IP地址
+        
+    - name: Load custom settings
+      run: |        
         cd openwrt/package/lean/default-settings/files
         sed -i '39s/echo/#echo/' zzz-default-settings
         sed -i '40s/echo/#echo/' zzz-default-settings
