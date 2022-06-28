@@ -95,6 +95,12 @@ jobs:
       run: |
         cd openwrt/package/base-files/files/bin
         sed -i '150s/192.168.1.1/192.168.2.1/' config_generate #更改默认IP地址
+        cd openwrt/package/lean/default-settings/files
+        sed -i '39s/echo/#echo/' zzz-default-settings
+        sed -i '40s/echo/#echo/' zzz-default-settings
+        sed -i '41s/echo/#echo/' zzz-default-settings
+        sed -i '42s/echo/#echo/' zzz-default-settings
+        sed -i '43s/echo/#echo/' zzz-default-settings
 
     - name: SSH connection to Actions
       uses: P3TERX/ssh2actions@v1.0.0
