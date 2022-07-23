@@ -76,7 +76,6 @@ jobs:
         $GITHUB_WORKSPACE/$DIY_P1_SH
         sed -i '1i src-git kenzo https://github.com/kenzok8/openwrt-packages' feeds.conf.default
         sed -i '1a src-git small https://github.com/kenzok8/small' feeds.conf.default
-        sed -i '$a src-git op_luci https://github.com/openwrt/luci' feeds.conf.default
 
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -112,11 +111,6 @@ jobs:
       env:
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-    
-    - name: Load custom settings
-      run: |
-        cd openwrt/package/feeds/op_luci/luci-mod-network/root/etc/uci-defaults
-        rm -f 50_luci-mod-admin-full
       
     - name: Download package
       id: package
