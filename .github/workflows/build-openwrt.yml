@@ -21,7 +21,7 @@ on:
 
 
 env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
+  REPO_URL: https://github.com/openwrt/openwrt/tree/openwrt-19.07
   REPO_BRANCH: master
   FEEDS_CONF: feeds.conf.default
   CONFIG_FILE: .config
@@ -68,15 +68,6 @@ jobs:
         ccache: 'true'
         prefix: ${{ github.workspace }}/openwrt
 
-    - name: Load custom feeds
-      run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
-        cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
-        sed -i '1i src-git kenzo https://github.com/kenzok8/openwrt-packages' feeds.conf.default
-        sed -i '1a src-git small https://github.com/kenzok8/small' feeds.conf.default
-
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
@@ -94,17 +85,8 @@ jobs:
     - name: Load custom settings
       run: |
         cd openwrt/package/base-files/files/bin
-        sed -i '150s/192.168.1.1/192.168.2.1/' config_generate #更改默认IP地址
+        sed -i '103s/192.168.1.1/192.168.2.1/' config_generate #更改默认IP地址
         
-    - name: Load custom settings
-      run: |        
-        cd openwrt/package/lean/default-settings/files
-        sed -i '39s/echo/#echo/' zzz-default-settings
-        sed -i '40s/echo/#echo/' zzz-default-settings
-        sed -i '41s/echo/#echo/' zzz-default-settings
-        sed -i '42s/echo/#echo/' zzz-default-settings
-        sed -i '43s/echo/#echo/' zzz-default-settings
-
     - name: SSH connection to Actions
       uses: P3TERX/ssh2actions@v1.0.0
       if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
