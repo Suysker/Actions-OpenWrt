@@ -12,3 +12,22 @@
 
 # Modify default IP
 #sed -i 's/192.168.1.1/192.168.50.5/g' package/base-files/files/bin/config_generate
+cd package
+
+#更改默认IP地址
+sed -i '150s/192.168.1.1/192.168.2.1/' base-files/files/bin/config_generate
+
+#取消53端口防火墙规则
+sed -i '39s/echo/#echo/' lean/default-settings/files/zzz-default-settings
+sed -i '40s/echo/#echo/' lean/default-settings/files/zzz-default-settings
+sed -i '41s/echo/#echo/' lean/default-settings/files/zzz-default-settings
+sed -i '42s/echo/#echo/' lean/default-settings/files/zzz-default-settings
+sed -i '43s/echo/#echo/' lean/default-settings/files/zzz-default-settings
+
+#更改xray内核版本
+sed -i '4s/PKG_VERSION:=1.*/PKG_VERSION:=1.5.5/' feeds/small/xray-core/Makefile
+sed -i '9s/PKG_HASH:=.*/PKG_HASH:=3f8d04fef82a922c83bab43cac6c86a76386cf195eb510ccf1cc175982693893/' feeds/small/xray-core/Makefile
+
+#更改xray-plugin内核版本
+sed -i '8s/PKG_VERSION:=1.*/PKG_VERSION:=1.5.5/' feeds/small/xray-plugin/Makefile
+sed -i '13s/PKG_HASH:=.*/PKG_HASH:=0edc575765fc3523d475f9d28d14d42facf00060fc8ef60bb50f42e0a6730496/' feeds/small/xray-plugin/Makefile
