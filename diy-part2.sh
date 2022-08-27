@@ -31,3 +31,8 @@ sed -i '9s/PKG_HASH:=.*/PKG_HASH:=3f8d04fef82a922c83bab43cac6c86a76386cf195eb510
 #更改xray-plugin内核版本
 sed -i '8s/PKG_VERSION:=1.*/PKG_VERSION:=1.5.5/' feeds/small/xray-plugin/Makefile
 sed -i '13s/PKG_HASH:=.*/PKG_HASH:=0edc575765fc3523d475f9d28d14d42facf00060fc8ef60bb50f42e0a6730496/' feeds/small/xray-plugin/Makefile
+
+#更改haproxy内核版本
+sed -i '13s/PKG_VERSION:=2.*/PKG_VERSION:=2.6.4/' feeds/packages/haproxy/Makefile
+sed -i '18s/PKG_HASH:=.*/PKG_HASH:=f07d67ada2ff3a999fed4e34459c0489536331a549665ac90cb6a8df91f4a289/' feeds/packages/haproxy/Makefile
+sed -i '4s/BASE_TAG=v2.*/BASE_TAG=v2.6.4/' feeds/packages/haproxy/get-latest-patches.sh
