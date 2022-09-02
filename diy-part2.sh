@@ -36,3 +36,6 @@ sed -i '13s/PKG_HASH:=.*/PKG_HASH:=0edc575765fc3523d475f9d28d14d42facf00060fc8ef
 sed -i '13s/PKG_VERSION:=2.*/PKG_VERSION:=2.6.4/' feeds/packages/haproxy/Makefile
 sed -i '18s/PKG_HASH:=.*/PKG_HASH:=f07d67ada2ff3a999fed4e34459c0489536331a549665ac90cb6a8df91f4a289/' feeds/packages/haproxy/Makefile
 sed -i '4s/BASE_TAG=v2.*/BASE_TAG=v2.6.4/' feeds/packages/haproxy/get-latest-patches.sh
+
+#修复ipt2socks无法正确监听IPV6
+sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
