@@ -14,15 +14,11 @@
 #sed -i 's/192.168.1.1/192.168.50.5/g' package/base-files/files/bin/config_generate
 cd package
 
-#更改默认IP地址
-sed -i '150s/192.168.1.1/192.168.2.1/' base-files/files/bin/config_generate
+#更改默认IP地址（150行）
+sed -i 's/192.168.1.1/192.168.2.1/' base-files/files/bin/config_generate
 
-#取消53端口防火墙规则
-sed -i '39s/echo/#echo/' lean/default-settings/files/zzz-default-settings
-sed -i '40s/echo/#echo/' lean/default-settings/files/zzz-default-settings
-sed -i '41s/echo/#echo/' lean/default-settings/files/zzz-default-settings
-sed -i '42s/echo/#echo/' lean/default-settings/files/zzz-default-settings
-sed -i '43s/echo/#echo/' lean/default-settings/files/zzz-default-settings
+#取消53端口防火墙规则（40-43行）
+sed -i '39,43s/echo/#echo/' lean/default-settings/files/zzz-default-settings
 
 #更改xray内核版本
 sed -i '4s/PKG_VERSION:=1.*/PKG_VERSION:=1.5.5/' feeds/small/xray-core/Makefile
