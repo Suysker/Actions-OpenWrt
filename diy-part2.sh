@@ -43,4 +43,4 @@ sed -i 's/timeout connect         10s/timeout connect         2s/' feeds/kenzo/l
 sed -i 's/timeout check           10s/timeout check           1s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #最大并发连接数
 sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
-sed -i 's/check inter 1500 rise 1 fall 3/check inter 1000 rise 1 fall 2/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#sed -i 's/check inter 1500 rise 1 fall 3/check inter 1500 rise 1 fall 3/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
