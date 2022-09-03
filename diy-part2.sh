@@ -36,9 +36,9 @@ sed -i '4s/BASE_TAG=v2.*/BASE_TAG=v2.6.4/' feeds/packages/haproxy/get-latest-pat
 #修复ipt2socks无法正确监听IPV6，并开启双线程
 sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #客户端发送http请求的超时时间
-sed -i 's/timeout http-request    10s/timeout http-request    2.5s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i 's/timeout http-request    10s/timeout http-request    2s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #haproxy与后端服务器连接超时时间，如果在同一个局域网可设置较小的时间
-sed -i 's/timeout connect         10s/timeout connect         2.5s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i 's/timeout connect         10s/timeout connect         2s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #健康检测的时间的最大超时时间
 sed -i 's/timeout check           10s/timeout check           1s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #最大并发连接数
