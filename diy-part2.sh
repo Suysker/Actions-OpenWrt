@@ -33,5 +33,14 @@ sed -i '13s/PKG_VERSION:=2.*/PKG_VERSION:=2.6.4/' feeds/packages/haproxy/Makefil
 sed -i '18s/PKG_HASH:=.*/PKG_HASH:=f07d67ada2ff3a999fed4e34459c0489536331a549665ac90cb6a8df91f4a289/' feeds/packages/haproxy/Makefile
 sed -i '4s/BASE_TAG=v2.*/BASE_TAG=v2.6.4/' feeds/packages/haproxy/get-latest-patches.sh
 
-#修复ipt2socks无法正确监听IPV6
+#修复ipt2socks无法正确监听IPV6，并开启双线程
 sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#客户端发送http请求的超时时间
+sed -i 's/timeout http-request    10s/timeout http-request    2.5s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#haproxy与后端服务器连接超时时间，如果在同一个局域网可设置较小的时间
+sed -i 's/timeout connect         10s/timeout connect         2.5s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#健康检测的时间的最大超时时间
+sed -i 's/timeout check           10s/timeout check           1s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#最大并发连接数
+sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i 's/check inter 1500 rise 1 fall 3/check inter 1000 rise 1 fall 2/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
