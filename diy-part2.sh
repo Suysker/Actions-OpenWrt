@@ -51,4 +51,4 @@ sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/kenz
 #解除Adguardhome更新
 sed -i '/--no-check-update/d' feeds/kenzo/adguardhome/files/adguardhome.init
 #更改默认安装位置
-sed -i 's/PROG=.*/PROG=\/etc\/AdGuardHome\/AdGuardHome/' feeds/kenzo/adguardhome/files/adguardhome.init
+#sed -i 's/PROG=.*/PROG=\/etc\/AdGuardHome\/AdGuardHome/' feeds/kenzo/adguardhome/files/adguardhome.init
