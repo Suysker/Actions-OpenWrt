@@ -47,3 +47,6 @@ sed -i 's/timeout check           10s/timeout check           1s/' feeds/kenzo/l
 #最大并发连接数
 sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #sed -i 's/check inter 1500 rise 1 fall 3/check inter 1500 rise 1 fall 3/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+
+#解除Adguardhome更新
+sed -i '/--no-check-update/d' feeds/kenzo/adguardhome/files/adguardhome.init
