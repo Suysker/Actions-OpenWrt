@@ -51,8 +51,8 @@ sed -i 's/timeout check           10s/timeout check           1s/' feeds/kenzo/l
 sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #sed -i 's/check inter 1500 rise 1 fall 3/check inter 1500 rise 1 fall 3/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 
-sed -i  's/lport=${haproxy_port}/&\n               [ "$bip" = "127.0.0.1" ] \&\& {\n\				cat <<-EOF >> "${haproxy_file}"\n				    option tcp-check\n				    tcp-check connect\n				    tcp-check send-binary 05020002\n				    tcp-check expect binary 0500\n				    tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb\n				    tcp-check expect binary 05000001\n				EOF\n			}/' app.sh
-
+#sed -i  's/bind 0.0.0.0:$lport\n\\tEOF/&\n               [ "$bip" = "127.0.0.1" ] \&\& {\n                    cat <<-EOF >> "${haproxy_file}"\n                        option tcp-check\n                        tcp-check connect\n                        tcp-check send-binary 05020002\n                        tcp-check expect binary 0500\n                        tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb/' app.sh
+#sed -i  's/tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb/&\n                        tcp-check expect binary 05000001\n                    EOF\n               }/' app.sh
 
 #解除Adguardhome更新
 sed -i '/--no-check-update/d' feeds/kenzo/adguardhome/files/adguardhome.init
