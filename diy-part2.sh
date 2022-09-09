@@ -39,6 +39,8 @@ sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/kenzo/luci-app-passwall
 
 
 #sed -i 's/daemon/daemon\n              nbproc      4\n              nbthread    2/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#请求失败重试次数
+sed -i 's/retries                 2/retries                 1/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #客户端发送http请求的超时时间
 sed -i 's/timeout http-request    10s/timeout http-request    2s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #haproxy与后端服务器连接超时时间，如果在同一个局域网可设置较小的时间
