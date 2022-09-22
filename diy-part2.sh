@@ -21,12 +21,12 @@ sed -i 's/192.168.1.1/192.168.2.1/' base-files/files/bin/config_generate
 sed -i '39,43s/echo/#echo/' lean/default-settings/files/zzz-default-settings
 
 #更改xray内核版本
-sed -i '4s/PKG_VERSION:=1.*/PKG_VERSION:=1.5.5/' feeds/small/xray-core/Makefile
-sed -i '9s/PKG_HASH:=.*/PKG_HASH:=3f8d04fef82a922c83bab43cac6c86a76386cf195eb510ccf1cc175982693893/' feeds/small/xray-core/Makefile
+sed -i '4s/PKG_VERSION:=1.*/PKG_VERSION:=1.6.0/' feeds/small/xray-core/Makefile
+sed -i '9s/PKG_HASH:=.*/PKG_HASH:=b65375090a2d48d358a582837d485bfaa9572e4d1f5a649895b9fd83d0f69e43/' feeds/small/xray-core/Makefile
 
 #更改xray-plugin内核版本
-sed -i '8s/PKG_VERSION:=1.*/PKG_VERSION:=1.5.5/' feeds/small/xray-plugin/Makefile
-sed -i '13s/PKG_HASH:=.*/PKG_HASH:=0edc575765fc3523d475f9d28d14d42facf00060fc8ef60bb50f42e0a6730496/' feeds/small/xray-plugin/Makefile
+sed -i '8s/PKG_VERSION:=1.*/PKG_VERSION:=1.6.0/' feeds/small/xray-plugin/Makefile
+sed -i '13s/PKG_HASH:=.*/PKG_HASH:=2c8c07e9ba7d1cf67913ec57ecea29c752893a1d01f09f1776202bd6062c74d1/' feeds/small/xray-plugin/Makefile
 
 #更改haproxy内核版本
 sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.6.5/' feeds/packages/haproxy/Makefile
