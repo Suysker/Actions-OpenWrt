@@ -29,10 +29,10 @@ sed -i '8s/PKG_VERSION:=1.*/PKG_VERSION:=1.6.0/' feeds/small/xray-plugin/Makefil
 sed -i '13s/PKG_HASH:=.*/PKG_HASH:=2c8c07e9ba7d1cf67913ec57ecea29c752893a1d01f09f1776202bd6062c74d1/' feeds/small/xray-plugin/Makefile
 
 #更改haproxy内核版本
-sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.6.5/' feeds/packages/haproxy/Makefile
+sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.6.6/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=$(cat <(curl $(PKG_SOURCE_URL)\/$(PKG_NAME)-$(PKG_VERSION).tar.gz.sha256))/' feeds/packages/haproxy/Makefile
-sed -i 's/PKG_HASH:=.*/PKG_HASH:=ce9e19ebfcdd43e51af8a6090f1df8d512d972ddf742fa648a643bbb19056605/' feeds/packages/haproxy/Makefile
-sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.6.5/' feeds/packages/haproxy/get-latest-patches.sh
+sed -i 's/PKG_HASH:=.*/PKG_HASH:=d0c80c90c04ae79598b58b9749d53787f00f7b515175e7d8203f2796e6a6594d/' feeds/packages/haproxy/Makefile
+sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.6.6/' feeds/packages/haproxy/get-latest-patches.sh
 
 #修复ipt2socks无法正确监听IPV6，并开启双线程
 sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
