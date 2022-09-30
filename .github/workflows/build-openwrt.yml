@@ -56,11 +56,12 @@ jobs:
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
         
     - name: Cache
-      uses: klever1988/cachewrtbuild@main
+      uses: HiGarfield/cachewrtbuild@main
       with:
         ccache: 'true'
-        prefix: ${{ github.workspace }}/openwrt
-
+        mixkey: 'x86'
+        prefix: 'openwrt'
+        
     - name: Load custom feeds
       run: |
         [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
