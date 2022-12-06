@@ -50,7 +50,7 @@ sed -i 's/timeout check           10s/timeout check           500ms/' feeds/kenz
 #最大并发连接数
 sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #rise 3是3次正确认为服务器可用，fall 3是3次失败认为服务器不可用
-sed -i 's/check inter 1500 rise 1 fall 3/check inter 500 rise 2 fall 2/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i 's/check inter 1500 rise 1 fall 3/check inter 500 rise 3 fall 2/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 
 #socks健康检测
 sed -i  's/\t\t\tEOF/&\n\t\t\t[ "$bip" = "127.0.0.1" ] \&\& {\n\t\t\t\tcat <<-EOF >> "${haproxy_file}"\n\t\t\t\t    option tcp-check\n\t\t\t\t    tcp-check connect\n\t\t\t\t    tcp-check send-binary 05020002\n\t\t\t\t    tcp-check expect binary 0500\n\t\t\t\t    tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb\n\t\t\t\t    tcp-check expect binary 05000001\n\t\t\t\tEOF\n\t\t\t}/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
