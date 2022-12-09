@@ -21,8 +21,8 @@ sed -i 's/192.168.1.1/192.168.2.1/' base-files/files/bin/config_generate
 sed -i '39,43s/echo/#echo/' lean/default-settings/files/zzz-default-settings
 
 #更改xray内核版本
-sed -i '4s/PKG_VERSION:=1.*/PKG_VERSION:=1.6.1/' feeds/small/xray-core/Makefile
-sed -i '9s/PKG_HASH:=.*/PKG_HASH:=8b4cc89d83b0ded75630119d9e2456764530490c7fb5e8a27de0cdf9c57fef15/' feeds/small/xray-core/Makefile
+#sed -i '4s/PKG_VERSION:=1.*/PKG_VERSION:=1.6.1/' feeds/small/xray-core/Makefile
+#sed -i '9s/PKG_HASH:=.*/PKG_HASH:=8b4cc89d83b0ded75630119d9e2456764530490c7fb5e8a27de0cdf9c57fef15/' feeds/small/xray-core/Makefile
 
 #更改xray-plugin内核版本
 #sed -i '8s/PKG_VERSION:=1.*/PKG_VERSION:=1.6.1/' feeds/small/xray-plugin/Makefile
@@ -60,3 +60,9 @@ sed -i  's/\t\t\tEOF/&\n\t\t\t[ "$bip" = "127.0.0.1" ] \&\& {\n\t\t\t\tcat <<-EO
 sed -i '/--no-check-update/d' feeds/kenzo/adguardhome/files/adguardhome.init
 #更改默认安装位置
 #sed -i 's/PROG=.*/PROG=\/etc\/AdGuardHome\/AdGuardHome/' feeds/kenzo/adguardhome/files/adguardhome.init
+
+#mosdns默认配置
+#取消默认IPV4
+#sed -i '/_prefer_ipv4/d' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+sed -i 's/_prefer_ipv4/add_ecs/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+sed -i  's/plugins:/plugins:\n  - tag: "add_ecs"\n    type: "ecs"\n    args:\n      auto: false\n      ipv4: "133.1.0.0"\n      ipv6: "2001:268:83b::"\n      force_overwrite: true\n      mask4: 24\n      mask6: 48\n/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
