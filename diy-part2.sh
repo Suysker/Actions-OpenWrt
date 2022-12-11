@@ -80,4 +80,5 @@ sed -i  's/plugins:/plugins:\n  - tag: "add_ecs"\n    type: "ecs"\n    args:\n  
 sed -i 's/          fast_fallback: 200/          fast_fallback: 500\n          always_standby: true/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
 #本地dns
 sed -i 's/  - tag: "forward_local"\n    type: forward/  - tag: "forward_local"\n    type: fast_forward/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-sed -i 's/      bootstrap:\n        - "bootstrap_dns"/      #bootstrap:\n        #- "bootstrap_dns"/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+sed -i 's/        - addr: local_dns\n      bootstrap:\n        - "bootstrap_dns"/        - addr: local_dns\n          trusted: true\n      #bootstrap:\n        #- "bootstrap_dns"/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+sed -i 's/        - addr: remote_dns/        - addr: remote_dns\n          trusted: true/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
