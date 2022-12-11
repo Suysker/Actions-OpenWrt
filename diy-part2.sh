@@ -68,8 +68,16 @@ sed -i '/--no-check-update/d' feeds/kenzo/adguardhome/files/adguardhome.init
 #mosdns默认配置
 #取消默认IPV4
 #sed -i '/_prefer_ipv4/d' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+#国外+ecs
 sed -i 's/_prefer_ipv4/add_ecs/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-sed -i 's/        - primary:\n            - forward_local/        - primary:\n            - add_ecs\n            - forward_remote/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-sed -i 's/        - secondary:\n            - add_ecs\n            - forward_remote/        - secondary:\n            - forward_local/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+#sed -i 's/        - primary:\n            - forward_local/        - primary:\n            - add_ecs\n            - forward_remote/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+#sed -i 's/        - secondary:\n            - add_ecs\n            - forward_remote/        - secondary:\n            - forward_local/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+#国外+ecs
 sed -i 's/          exec:\n            - forward_remote/          exec:\n            - add_ecs\n            - forward_remote/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+#ecs
 sed -i  's/plugins:/plugins:\n  - tag: "add_ecs"\n    type: "ecs"\n    args:\n      auto: false\n      ipv4: "133.1.0.0"\n      ipv6: "2001:268:83b::"\n      force_overwrite: true\n      mask4: 24\n      mask6: 48\n/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+#fallback
+sed -i 's/          fast_fallback: 200/          fast_fallback: 500\n          always_standby: true/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+#本地dns
+sed -i 's/  - tag: "forward_local"\n    type: forward/  - tag: "forward_local"\n    type: fast_forward/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
+sed -i 's/      bootstrap:\n        - "bootstrap_dns"/      #bootstrap:\n        #- "bootstrap_dns"/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
