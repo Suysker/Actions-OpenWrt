@@ -32,11 +32,13 @@ sed -i '39,43s/echo/#echo/' lean/default-settings/files/zzz-default-settings
 sed -i 's/github.com\/v2fly\/geoip\/releases\/download\/$(GEOIP_VER)\//github.com\/Loyalsoldier\/v2ray-rules-dat\/releases\/latest\/download\//' feeds/small/v2ray-geodata/Makefile
 sed -i 's/github.com\/v2fly\/domain-list-community\/releases\/download\/$(GEOSITE_VER)\//github.com\/Loyalsoldier\/v2ray-rules-dat\/releases\/latest\/download\//' feeds/small/v2ray-geodata/Makefile
 sed -i 's/dlc.dat/geosite.dat/' feeds/small/v2ray-geodata/Makefile
+sed -i 's/HASH:=.*/HASH:=skip/' feeds/small/v2ray-geodata/Makefile
 
 #更改haproxy内核版本
 sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.6.8/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=$(cat <(curl $(PKG_SOURCE_URL)\/$(PKG_NAME)-$(PKG_VERSION).tar.gz.sha256))/' feeds/packages/haproxy/Makefile
-sed -i 's/PKG_HASH:=.*/PKG_HASH:=a02ad64550dd30a94b25fd0e225ba699649d0c4037bca3b36b20e8e3235bb86f/' feeds/packages/haproxy/Makefile
+#sed -i 's/PKG_HASH:=.*/PKG_HASH:=a02ad64550dd30a94b25fd0e225ba699649d0c4037bca3b36b20e8e3235bb86f/' feeds/packages/haproxy/Makefile
+sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/haproxy/Makefile
 sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.6.8/' feeds/packages/haproxy/get-latest-patches.sh
 
 #修复ipt2socks无法正确监听IPV6，并开启双线程
