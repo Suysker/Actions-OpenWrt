@@ -31,6 +31,7 @@ sed -i '39,43s/echo/#echo/' lean/default-settings/files/zzz-default-settings
 #更改默认geoip和geosite
 sed -i 's/github.com\/v2fly\/geoip\/releases\/download\/$(GEOIP_VER)\//github.com\/Loyalsoldier\/v2ray-rules-dat\/releases\/latest\/download\//' feeds/small/v2ray-geodata/Makefile
 sed -i 's/github.com\/v2fly\/domain-list-community\/releases\/download\/$(GEOSITE_VER)\//github.com\/Loyalsoldier\/v2ray-rules-dat\/releases\/latest\/download\//' feeds/small/v2ray-geodata/Makefile
+sed -i 's/dlc.dat/geosite.dat/' feeds/small/v2ray-geodata/Makefile
 
 #更改haproxy内核版本
 sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.6.8/' feeds/packages/haproxy/Makefile
