@@ -49,11 +49,13 @@ sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/kenzo/luci-app-passwall
 #请求失败重试次数
 sed -i 's/retries                 2/retries                 1/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #客户端发送http请求的超时时间
-sed -i 's/timeout http-request    10s/timeout http-request    1s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#sed -i 's/timeout http-request    10s/timeout http-request    1s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #haproxy与后端服务器连接超时时间，如果在同一个局域网可设置较小的时间
-sed -i 's/timeout connect         10s/timeout connect         1s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#sed -i 's/timeout connect         10s/timeout connect         1s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #健康检测的时间的最大超时时间
-sed -i 's/timeout check           10s/timeout check           500ms/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#sed -i 's/timeout check           10s/timeout check           500ms/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#健康检测的时间的最大超时时间
+sed -i 's/timeout server          1m/timeout server          1s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #最大并发连接数
 sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #rise 3是3次正确认为服务器可用，fall 3是3次失败认为服务器不可用
