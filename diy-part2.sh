@@ -18,7 +18,7 @@ cd package
 sed -i 's/192.168.1.1/192.168.2.1/' base-files/files/bin/config_generate
 
 #取消53端口防火墙规则（40-43行）
-sed -i '39,43s/echo/#echo/' lean/default-settings/files/zzz-default-settings
+sed -i '39,44s/echo/#echo/' lean/default-settings/files/zzz-default-settings
 
 #更改xray内核版本
 #sed -i '4s/PKG_VERSION:=1.*/PKG_VERSION:=1.6.1/' feeds/small/xray-core/Makefile
