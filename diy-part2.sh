@@ -55,6 +55,8 @@ sed -i 's/retries                 2/retries                 1/' feeds/kenzo/luci
 #健康检测的时间的最大超时时间
 #sed -i 's/timeout check           10s/timeout check           500ms/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #健康检测的时间的最大超时时间
+sed -i 's/timeout client          1m/timeout client          6m/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#健康检测的时间的最大超时时间
 #sed -i 's/timeout server          1m/timeout server          1s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #最大并发连接数
 sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
