@@ -68,7 +68,7 @@ sed -i  's/\t\t\tEOF/&\n\t\t\t[ "$bip" = "127.0.0.1" ] \&\& {\n\t\t\t\tcat <<-EO
 
 
 #解除Adguardhome更新
-sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.107.24' feeds/kenzo/adguardhome/Makefile
+sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.107.25' feeds/kenzo/adguardhome/Makefile
 #解除Adguardhome更新
 sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/kenzo/adguardhome/Makefile
 #解除Adguardhome更新
