@@ -46,7 +46,7 @@ sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.6.10/' feeds/packages/haproxy/get-latest-pat
 sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 
 
-sed -i '/mode                    tcp/a\\t\t    mode                    tcp-check' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i '/log                     global/a\\t\t    option                  tcp-check' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #sed -i 's/daemon/daemon\n              nbproc      4\n              nbthread    2/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #请求失败重试次数
 sed -i 's/retries                 2/retries                 1/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
