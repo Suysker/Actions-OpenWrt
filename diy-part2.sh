@@ -46,10 +46,10 @@ sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.6.10/' feeds/packages/haproxy/get-latest-pat
 sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 
 
-sed -i '/log                     global/a\\t\t    option                  tcp-check' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i '/log                     global/a\    option                  tcp-check' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 #sed -i 's/daemon/daemon\n              nbproc      4\n              nbthread    2/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #请求失败重试次数
-sed -i 's/retries                 2/retries                 1/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i 's/retries                 2/retries                 1/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 #客户端发送http请求的超时时间
 #sed -i 's/timeout http-request    10s/timeout http-request    1s/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #haproxy与后端服务器连接超时时间，如果在同一个局域网可设置较小的时间
@@ -57,18 +57,19 @@ sed -i 's/retries                 2/retries                 1/' feeds/kenzo/luci
 #健康检测的时间的最大超时时间
 #sed -i 's/timeout check           10s/timeout check           500ms/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
 #健康检测的时间的最大超时时间
-sed -i 's/timeout client          1m/timeout client          30m/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i 's/timeout client          1m/timeout client          30m/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 #健康检测的时间的最大超时时间
-sed -i 's/timeout server          1m/timeout server          6m/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i 's/timeout server          1m/timeout server          6m/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 #最大并发连接数
-sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 #rise 3是3次正确认为服务器可用，fall 3是3次失败认为服务器不可用
-sed -i 's/check inter 1500 rise 1 fall 3/check inter 1000 rise 30 fall 3/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i 's/inter 1500 rise 1 fall 3/inter 1000 rise 30 fall 3/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 
- sed -i 's/server \$remark:\$bport \$bip:\$bport weight \$lbweight check inter 1000 rise 30 fall 3 \$bbackup/& on-marked-down shutdown-sessions/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i 's/inter 1000 rise 30 fall 3 \%s/& on-marked-down shutdown-sessions/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
+#sed -i 's/server \$remark:\$bport \$bip:\$bport weight \$lbweight check inter 1000 rise 30 fall 3 \$bbackup/& on-marked-down shutdown-sessions/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 
 #socks健康检测
-sed -i  's/\t\t\tEOF/&\n\t\t\t[ "$bip" = "127.0.0.1" ] \&\& {\n\t\t\t\tcat <<-EOF >> "${haproxy_file}"\n\t\t\t\t    option tcp-check\n\t\t\t\t    tcp-check connect\n\t\t\t\t    tcp-check send-binary 05020002\n\t\t\t\t    tcp-check expect binary 0500\n\t\t\t\t    tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb\n\t\t\t\t    tcp-check expect binary 05000001\n\t\t\t\tEOF\n\t\t\t}/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
+#sed -i  's/\t\t\tEOF/&\n\t\t\t[ "$bip" = "127.0.0.1" ] \&\& {\n\t\t\t\tcat <<-EOF >> "${haproxy_file}"\n\t\t\t\t    option tcp-check\n\t\t\t\t    tcp-check connect\n\t\t\t\t    tcp-check send-binary 05020002\n\t\t\t\t    tcp-check expect binary 0500\n\t\t\t\t    tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb\n\t\t\t\t    tcp-check expect binary 05000001\n\t\t\t\tEOF\n\t\t\t}/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 
 
 #解除Adguardhome更新
