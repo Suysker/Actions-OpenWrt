@@ -14,6 +14,8 @@
 #sed -i 's/192.168.1.1/192.168.50.5/g' package/base-files/files/bin/config_generate
 cd package
 
+sed -i '$anet.core.rmem_max=2097152' base-files/files/etc/sysctl.d/10-default.conf
+
 #更改默认IP地址（150行）
 sed -i 's/192.168.1.1/192.168.2.1/' base-files/files/bin/config_generate
 
