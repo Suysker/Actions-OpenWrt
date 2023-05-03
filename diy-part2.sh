@@ -14,7 +14,7 @@
 #sed -i 's/192.168.1.1/192.168.50.5/g' package/base-files/files/bin/config_generate
 cd package
 
-sed -i '$anet.core.rmem_max=2097152' base-files/files/etc/sysctl.d/10-default.conf
+#sed -i '$anet.core.rmem_max=2097152' base-files/files/etc/sysctl.d/10-default.conf
 
 #更改默认IP地址（150行）
 sed -i 's/192.168.1.1/192.168.2.1/' base-files/files/bin/config_generate
@@ -38,7 +38,7 @@ sed -i 's/dlc.dat/geosite.dat/' feeds/small/v2ray-geodata/Makefile
 sed -i 's/HASH:=.*/HASH:=skip/' feeds/small/v2ray-geodata/Makefile
 
 #更改haproxy内核版本
-sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.6.12/' feeds/packages/haproxy/Makefile
+sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.6.13/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=$(cat <(curl $(PKG_SOURCE_URL)\/$(PKG_NAME)-$(PKG_VERSION).tar.gz.sha256))/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=a02ad64550dd30a94b25fd0e225ba699649d0c4037bca3b36b20e8e3235bb86f/' feeds/packages/haproxy/Makefile
 sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/haproxy/Makefile
