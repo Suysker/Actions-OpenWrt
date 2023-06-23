@@ -402,8 +402,19 @@ __PACKAGE__->register_method({
 	};
 
 	$res->{pveversion} = PVE::pvecfg::package() . "/" .
-	    PVE::pvecfg::version_text();
+	 PVE::pvecfg::version_text();
+    my $cpufreqs = `lscpu | grep MHz`;
+	my $corefreqs = `cat /proc/cpuinfo | grep -i  "cpu MHz"`;
+	$res->{cpu_frequency} = $cpufreqs . $corefreqs;
 
+    $res->{cpu_temperatures} = `sensors`;
+		
+	$res->{nvme_ssd1_temperatures} = `smartctl -a /dev/nvme0|grep -E "Model Number|Total NVM Capacity|Temperature:|Percentage|Data Unit|Power Cycles|Power On Hours|Unsafe Shutdowns"`;
+		
+	$res->{nvme_ssd2_temperatures} = `smartctl -a /dev/nvme1|grep -E "Model Number|Total NVM Capacity|Temperature:|Percentage|Data Unit|Power Cycles|Power On Hours|Unsafe Shutdowns"`;
+		
+	$res->{hdd_temperatures1} = `smartctl --all /dev/sda|grep -E "Model|Capacity|Power_On_Hours|Temperature"`;
+	
 	my $dinfo = df('/', 1);     # output is bytes
 
 	$res->{rootfs} = {
