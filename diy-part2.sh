@@ -45,7 +45,7 @@ sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/haproxy/Makefile
 sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.8.1/' feeds/packages/haproxy/get-latest-patches.sh
 
 #修复ipt2socks无法正确监听IPV6，并开启双线程
-sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
+#sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
 
 
 sed -i '/log                     global/a\	option                  tcp-check' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
