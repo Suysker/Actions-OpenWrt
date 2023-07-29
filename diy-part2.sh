@@ -45,7 +45,7 @@ sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/haproxy/Makefile
 sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.8.1/' feeds/packages/haproxy/get-latest-patches.sh
 
 #修复ipt2socks无法正确监听IPV6，并开启双线程
-#sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
+sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
 
 
 sed -i '/log                     global/a\	option                  tcp-check' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
@@ -66,12 +66,12 @@ sed -i 's/timeout server          1m/timeout server          6m/' feeds/passwall
 #sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 #rise 3是3次正确认为服务器可用，fall 3是3次失败认为服务器不可用
 #sed -i 's/inter 1500 rise 1 fall 3/inter 1000 rise 30 fall 3/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-sed -i 's/rise 1 fall 3 {{backup}}/rise 10 fall 1 {{backup}}  on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
+sed -i 's/rise 1 fall 3 {{backup}}/rise 6 fall 1 {{backup}}  on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 #sed -i 's/rise 1 fall 3 {{backup}}/& on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 #sed -i 's/server \$remark:\$bport \$bip:\$bport weight \$lbweight check inter 1000 rise 30 fall 3 \$bbackup/& on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 
 #socks健康检测
-sed -i  's/\t\t\tEOF/&\n\t\t\t[ "$bip" = "127.0.0.1" ] \&\& {\n\t\t\t\tcat <<-EOF >> "${haproxy_file}"\n\t\t\t\t    option tcp-check\n\t\t\t\t    tcp-check connect\n\t\t\t\t    tcp-check send-binary 05020002\n\t\t\t\t    tcp-check expect binary 0500\n\t\t\t\t    tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb\n\t\t\t\t    tcp-check expect binary 05000001\n\t\t\t\tEOF\n\t\t\t}/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
+#sed -i  's/\t\t\tEOF/&\n\t\t\t[ "$bip" = "127.0.0.1" ] \&\& {\n\t\t\t\tcat <<-EOF >> "${haproxy_file}"\n\t\t\t\t    option tcp-check\n\t\t\t\t    tcp-check connect\n\t\t\t\t    tcp-check send-binary 05020002\n\t\t\t\t    tcp-check expect binary 0500\n\t\t\t\t    tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb\n\t\t\t\t    tcp-check expect binary 05000001\n\t\t\t\tEOF\n\t\t\t}/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 
 
 #解除Adguardhome更新
