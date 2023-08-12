@@ -38,11 +38,11 @@ sed -i 's/dlc.dat/geosite.dat/' feeds/xiaorouji/v2ray-geodata/Makefile
 sed -i 's/HASH:=.*/HASH:=skip/' feeds/xiaorouji/v2ray-geodata/Makefile
 
 #更改haproxy内核版本
-sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.8.1/' feeds/packages/haproxy/Makefile
+sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.8.2/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=$(cat <(curl $(PKG_SOURCE_URL)\/$(PKG_NAME)-$(PKG_VERSION).tar.gz.sha256))/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=a02ad64550dd30a94b25fd0e225ba699649d0c4037bca3b36b20e8e3235bb86f/' feeds/packages/haproxy/Makefile
 sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/haproxy/Makefile
-sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.8.1/' feeds/packages/haproxy/get-latest-patches.sh
+sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.8.2/' feeds/packages/haproxy/get-latest-patches.sh
 
 #修复ipt2socks无法正确监听IPV6，并开启双线程
 sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
@@ -67,6 +67,7 @@ sed -i 's/timeout server          1m/timeout server          6m/' feeds/passwall
 #rise 3是3次正确认为服务器可用，fall 3是3次失败认为服务器不可用
 #sed -i 's/inter 1500 rise 1 fall 3/inter 1000 rise 30 fall 3/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 sed -i 's/rise 1 fall 3 {{backup}}/rise 6 fall 1 {{backup}}  on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
+sed -i 's/--connect-timeout 3 --retry 3/--connect-timeout 3 --retry 1/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy_check.lua
 #sed -i 's/rise 1 fall 3 {{backup}}/& on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 #sed -i 's/server \$remark:\$bport \$bip:\$bport weight \$lbweight check inter 1000 rise 30 fall 3 \$bbackup/& on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 
