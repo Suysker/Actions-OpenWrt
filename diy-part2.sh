@@ -84,7 +84,8 @@ sed -i '/--no-check-update/d' feeds/kenzo/adguardhome/files/adguardhome.init
 #更改默认安装位置
 #sed -i 's/PROG=.*/PROG=\/etc\/AdGuardHome\/AdGuardHome/' feeds/kenzo/adguardhome/files/adguardhome.init
 
-sed -i '/define Build\/Compile/,/endef/ s/\(\t\t$(call GoPackage\/Build\/Compile).*\)/\t\tnpm audit fix || exit 1 ; \\\n\t\tmake js-deps js-build || exit 1 ; \\\n\t\tpopd ; \\\n\t\tpushd $(PKG_BUILD_DIR) ; \\\n\t\tgo mod tidy || exit 1 ; \\\n\t\tpopd ; \\\n\1/' feeds/kenzo/adguardhome/Makefile
+sed -i '/define Build\/Compile/,/endef/ s/\(\t\t$(call GoPackage\/Build\/Compile).*\)/\t\tnpm install --package-lock-only || exit 1 ; \\\n\t\tnpm audit fix || exit 1 ; \\\n\t\tmake js-deps js-build || exit 1 ; \\\n\t\tpopd ; \\\n\t\tpushd $(PKG_BUILD_DIR) ; \\\n\t\tgo mod tidy || exit 1 ; \\\n\t\tpopd ; \\\n\1/' feeds/kenzo/adguardhome/Makefile
+
 
 
 #mosdns默认配置
