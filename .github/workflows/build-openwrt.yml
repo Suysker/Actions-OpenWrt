@@ -94,6 +94,13 @@ jobs:
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
+    - name: Fix Go mod and NPM vulnerabilities
+      run: |
+        cd openwrt/build_dir/target-x86_64_musl/adguardhome-0.107.39
+        go mod tidy
+        cd client
+        npm audit fix
+
     - name: Compile the firmware
       id: compile
       run: |
