@@ -67,7 +67,7 @@ sed -i 's/timeout server          1m/timeout server          6m/' feeds/passwall
 #rise 3是3次正确认为服务器可用，fall 3是3次失败认为服务器不可用
 #sed -i 's/inter 1500 rise 1 fall 3/inter 1000 rise 30 fall 3/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 sed -i 's/rise 1 fall 3 {{backup}}/rise 6 fall 1 {{backup}}  on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-sed -i 's/--connect-timeout 3 --retry 3/--connect-timeout 3 --retry 1/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy_check.lua
+sed -i 's/--connect-timeout 3 --retry 3/--connect-timeout 3 --retry 1/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy_check.sh
 #sed -i 's/rise 1 fall 3 {{backup}}/& on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 #sed -i 's/server \$remark:\$bport \$bip:\$bport weight \$lbweight check inter 1000 rise 30 fall 3 \$bbackup/& on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 
