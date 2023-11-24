@@ -38,11 +38,11 @@ sed -i 's/dlc.dat/geosite.dat/' feeds/xiaorouji/v2ray-geodata/Makefile
 sed -i 's/HASH:=.*/HASH:=skip/' feeds/xiaorouji/v2ray-geodata/Makefile
 
 #更改haproxy内核版本
-sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.8.3/' feeds/packages/haproxy/Makefile
+sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.8.4/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=$(cat <(curl $(PKG_SOURCE_URL)\/$(PKG_NAME)-$(PKG_VERSION).tar.gz.sha256))/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=a02ad64550dd30a94b25fd0e225ba699649d0c4037bca3b36b20e8e3235bb86f/' feeds/packages/haproxy/Makefile
 sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/haproxy/Makefile
-sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.8.3/' feeds/packages/haproxy/get-latest-patches.sh
+sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.8.4/' feeds/packages/haproxy/get-latest-patches.sh
 
 #修复ipt2socks无法正确监听IPV6，并开启双线程
 sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
