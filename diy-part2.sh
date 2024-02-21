@@ -85,8 +85,8 @@ sed -i '/--no-check-update/d' feeds/kenzo/adguardhome/files/adguardhome.init
 #sed -i 's/PROG=.*/PROG=\/etc\/AdGuardHome\/AdGuardHome/' feeds/kenzo/adguardhome/files/adguardhome.init
 
 sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/kenzo/adguardhome/Makefile
-#sed -i '/^\t\$(call Build\/Prepare\/Default)/a \\tif [ -d "$(BUILD_DIR)\/AdGuardHome-$(PKG_VERSION)" ]; then \\\n\t\tmv "$(BUILD_DIR)\/AdGuardHome-$(PKG_VERSION)\/"* "$(BUILD_DIR)\/adguardhome-$(PKG_VERSION)\/"; \\\n\tfi' feeds/kenzo/adguardhome/Makefile
-#sed -i '/gzip -dc $(DL_DIR)\/$(FRONTEND_FILE) | $(HOST_TAR) -C $(PKG_BUILD_DIR)\/ $(TAR_OPTIONS)/a \\t( cd "$(BUILD_DIR)\/adguardhome-$(PKG_VERSION)"; go mod tidy )' feeds/kenzo/adguardhome/Makefile
+sed -i '/^\t\$(call Build\/Prepare\/Default)/a \\tif [ -d "$(BUILD_DIR)\/AdGuardHome-$(PKG_VERSION)" ]; then \\\n\t\tmv "$(BUILD_DIR)\/AdGuardHome-$(PKG_VERSION)\/"* "$(BUILD_DIR)\/adguardhome-$(PKG_VERSION)\/"; \\\n\tfi' feeds/kenzo/adguardhome/Makefile
+sed -i '/gzip -dc $(DL_DIR)\/$(FRONTEND_FILE) | $(HOST_TAR) -C $(PKG_BUILD_DIR)\/ $(TAR_OPTIONS)/a \\t( cd "$(BUILD_DIR)\/adguardhome-$(PKG_VERSION)"; go mod tidy )' feeds/kenzo/adguardhome/Makefile
 
 
 #mosdns默认配置
