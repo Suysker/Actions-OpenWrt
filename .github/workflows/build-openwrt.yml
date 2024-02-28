@@ -93,7 +93,12 @@ jobs:
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
-
+    
+    - name: Set up Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: '1.22'
+        
     - name: Compile the firmware
       id: compile
       run: |
