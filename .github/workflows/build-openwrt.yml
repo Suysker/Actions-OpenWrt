@@ -35,14 +35,6 @@ jobs:
     - name: Checkout
       uses: actions/checkout@main
 
-    - name: Install specific version of Go
-      run: |
-        sudo rm -rf /usr/local/go
-        wget https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
-        sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
-        export PATH=/usr/local/go/bin:$PATH
-        go version
-
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -87,6 +79,8 @@ jobs:
 
     - name: Load custom configuration
       run: |
+        rm -rf feeds/packages/lang/golang
+        git clone https://github.com/sbwml/packages_lang_golang -b 22.x feeds/packages/lang/golang
         [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
