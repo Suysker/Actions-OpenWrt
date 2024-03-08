@@ -40,6 +40,9 @@ sed -i 's/github.com\/v2fly\/domain-list-community\/releases\/download\/$(GEOSIT
 sed -i 's/dlc.dat/geosite.dat/' feeds/xiaorouji/v2ray-geodata/Makefile
 sed -i 's/HASH:=.*/HASH:=skip/' feeds/xiaorouji/v2ray-geodata/Makefile
 
+sed -i 's/PKG_VERSION:=2024.03.07/PKG_VERSION:=2023.10.28/' feeds/xiaorouji/chinadns-ng/Makefile
+sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/xiaorouji/chinadns-ng/Makefile
+
 #更改haproxy内核版本
 sed -i 's/www.haproxy.org\/download\/2.6\/src/www.haproxy.org\/download\/2.8\/src/' feeds/packages/haproxy/Makefile
 sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.8.5/' feeds/packages/haproxy/Makefile
