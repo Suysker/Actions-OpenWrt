@@ -84,6 +84,7 @@ sed -i 's/--connect-timeout 3 --retry 3/--connect-timeout 3 --retry 1/' feeds/pa
 #socks健康检测
 #sed -i  's/\t\t\tEOF/&\n\t\t\t[ "$bip" = "127.0.0.1" ] \&\& {\n\t\t\t\tcat <<-EOF >> "${haproxy_file}"\n\t\t\t\t    option tcp-check\n\t\t\t\t    tcp-check connect\n\t\t\t\t    tcp-check send-binary 05020002\n\t\t\t\t    tcp-check expect binary 0500\n\t\t\t\t    tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb\n\t\t\t\t    tcp-check expect binary 05000001\n\t\t\t\tEOF\n\t\t\t}/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 
+sed -i 's/,"bing.com"//g' feeds/passwall/luci-app-passwall/root/usr/share/passwall/rule_update.lua
 
 #解除Adguardhome更新
 #sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.107.27' feeds/kenzo/adguardhome/Makefile
