@@ -24,5 +24,5 @@ sed -i '1i src-git xiaorouji https://github.com/xiaorouji/openwrt-passwall-packa
 sed -i '1i src-git passwall https://github.com/xiaorouji/openwrt-passwall' feeds.conf.default
 
 
-echo 'src-git opluci https://git.openwrt.org/project/luci.git' >>feeds.conf.default
+#echo 'src-git opluci https://git.openwrt.org/project/luci.git' >>feeds.conf.default
 #sed -i '1a src-git opluci https://git.openwrt.org/project/luci.git' feeds.conf.default
