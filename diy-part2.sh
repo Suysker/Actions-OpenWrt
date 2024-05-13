@@ -48,11 +48,11 @@ sed -i 's/HASH:=.*/HASH:=skip/' feeds/xiaorouji/v2ray-geodata/Makefile
 
 #更改haproxy内核版本
 sed -i 's/www.haproxy.org\/download\/2.6\/src/www.haproxy.org\/download\/2.8\/src/' feeds/packages/haproxy/Makefile
-sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.8.7/' feeds/packages/haproxy/Makefile
+sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=2.8.9/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=$(cat <(curl $(PKG_SOURCE_URL)\/$(PKG_NAME)-$(PKG_VERSION).tar.gz.sha256))/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=a02ad64550dd30a94b25fd0e225ba699649d0c4037bca3b36b20e8e3235bb86f/' feeds/packages/haproxy/Makefile
 sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/haproxy/Makefile
-sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.8.7/' feeds/packages/haproxy/get-latest-patches.sh
+sed -i 's/BASE_TAG=v2.*/BASE_TAG=v2.8.9/' feeds/packages/haproxy/get-latest-patches.sh
 
 #修复ipt2socks无法正确监听IPV6，并开启双线程
 sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
@@ -84,7 +84,11 @@ sed -i 's/--connect-timeout 3 --retry 3/--connect-timeout 3 --retry 1/' feeds/pa
 #socks健康检测
 #sed -i  's/\t\t\tEOF/&\n\t\t\t[ "$bip" = "127.0.0.1" ] \&\& {\n\t\t\t\tcat <<-EOF >> "${haproxy_file}"\n\t\t\t\t    option tcp-check\n\t\t\t\t    tcp-check connect\n\t\t\t\t    tcp-check send-binary 05020002\n\t\t\t\t    tcp-check expect binary 0500\n\t\t\t\t    tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb\n\t\t\t\t    tcp-check expect binary 05000001\n\t\t\t\tEOF\n\t\t\t}/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
 
-sed -i 's/,"bing.com"//g' feeds/passwall/luci-app-passwall/root/usr/share/passwall/rule_update.lua
+#sed -i 's/,"bing.com"//g' feeds/passwall/luci-app-passwall/root/usr/share/passwall/rule_update.lua
+
+sed -i '/domain:bing.com/d' feeds/sbwml/luci-app-mosdns/root/etc/mosdns/rule/whitelist.txt
+echo "domain:bing.com" >> feeds/sbwml/luci-app-mosdns/root/etc/mosdns/rule/greylist.txt
+
 
 #解除Adguardhome更新
 #sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.107.27' feeds/kenzo/adguardhome/Makefile
