@@ -32,7 +32,7 @@ sed -i '/REDIRECT --to-ports 53/d'  lean/default-settings/files/zzz-default-sett
 #sed -i '9s/PKG_HASH:=.*/PKG_HASH:=8b4cc89d83b0ded75630119d9e2456764530490c7fb5e8a27de0cdf9c57fef15/' feeds/small/xray-core/Makefile
 
 #防止不解析本机域名
-sed -i '/conf_out:write("no-resolv\\n")/d' feeds/passwall/luci-app-passwall/root/usr/share/passwall/helper_dnsmasq_add.lua
+sed -i '/conf_out:write("no-resolv\\n")/d; /tinsert(conf_lines, "no-resolv")/d' feeds/passwall/luci-app-passwall/root/usr/share/passwall/helper_dnsmasq.lua
 
 #更改xray-plugin内核版本
 #sed -i '8s/PKG_VERSION:=1.*/PKG_VERSION:=1.6.1/' feeds/small/xray-plugin/Makefile
