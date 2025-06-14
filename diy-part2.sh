@@ -48,42 +48,30 @@ sed -i 's/HASH:=.*/HASH:=skip/' feeds/xiaorouji/v2ray-geodata/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/xiaorouji/chinadns-ng/Makefile
 
 #更改haproxy内核版本
-sed -i 's/www.haproxy.org\/download\/2.6\/src/www.haproxy.org\/download\/3.0\/src/' feeds/packages/haproxy/Makefile
-sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=3.0.10/' feeds/packages/haproxy/Makefile
+sed -i 's/www.haproxy.org\/download\/2.6\/src/www.haproxy.org\/download\/3.2\/src/' feeds/packages/haproxy/Makefile
+sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=3.2.1/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=$(cat <(curl $(PKG_SOURCE_URL)\/$(PKG_NAME)-$(PKG_VERSION).tar.gz.sha256))/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=a02ad64550dd30a94b25fd0e225ba699649d0c4037bca3b36b20e8e3235bb86f/' feeds/packages/haproxy/Makefile
 sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/haproxy/Makefile
-sed -i 's/BASE_TAG=v2.*/BASE_TAG=v3.0.10/' feeds/packages/haproxy/get-latest-patches.sh
+sed -i 's/BASE_TAG=v2.*/BASE_TAG=v3.2.1/' feeds/packages/haproxy/get-latest-patches.sh
 
 #修复ipt2socks无法正确监听IPV6，并开启双线程
 sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
 
 
-sed -i '/log                     global/a\	option                  tcp-check' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-#sed -i 's/daemon/daemon\n              nbproc      4\n              nbthread    2/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/app.sh
-#请求失败重试次数
-sed -i 's/retries                 2/retries                 1/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-#客户端发送http请求的超时时间
-#sed -i 's/timeout http-request    10s/timeout http-request    1s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
-#haproxy与后端服务器连接超时时间，如果在同一个局域网可设置较小的时间
-#sed -i 's/timeout connect         10s/timeout connect         1s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
-#健康检测的时间的最大超时时间
-#sed -i 's/timeout check           10s/timeout check           500ms/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
-#健康检测的时间的最大超时时间
-sed -i 's/timeout client          1m/timeout client          30m/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-#健康检测的时间的最大超时时间
-sed -i 's/timeout server          1m/timeout server          6m/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-#最大并发连接数
-#sed -i 's/maxconn                 3000/maxconn                 6000/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-#rise 3是3次正确认为服务器可用，fall 3是3次失败认为服务器不可用
-#sed -i 's/inter 1500 rise 1 fall 3/inter 1000 rise 30 fall 3/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-sed -i 's/rise 1 fall 3 {{backup}}/rise 6 fall 1 {{backup}}  on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-sed -i 's/--connect-timeout 3 --retry 3/--connect-timeout 3 --retry 1/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy_check.sh
-#sed -i 's/rise 1 fall 3 {{backup}}/& on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-#sed -i 's/server \$remark:\$bport \$bip:\$bport weight \$lbweight check inter 1000 rise 30 fall 3 \$bbackup/& on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-
-#socks健康检测
-#sed -i  's/\t\t\tEOF/&\n\t\t\t[ "$bip" = "127.0.0.1" ] \&\& {\n\t\t\t\tcat <<-EOF >> "${haproxy_file}"\n\t\t\t\t    option tcp-check\n\t\t\t\t    tcp-check connect\n\t\t\t\t    tcp-check send-binary 05020002\n\t\t\t\t    tcp-check expect binary 0500\n\t\t\t\t    tcp-check send-binary 050100030d7777772e62616964752e636f6d01bb\n\t\t\t\t    tcp-check expect binary 05000001\n\t\t\t\tEOF\n\t\t\t}/' feeds/kenzo/luci-app-passwall/root/usr/share/passwall/haproxy.lua
+# ① 在 defaults 段落里插入 `option tcp-check`
+sed -i '/^[[:space:]]*option[[:space:]]\+tcplog/a\    option tcp-check' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
+# ② 把 retries 2 → 1（允许任意空格）
+sed -Ei 's/([[:space:]]retries[[:space:]]+)2/\11/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
+# ③ 把 timeout client 1m → 30m
+sed -Ei 's/(timeout[[:space:]]+client[[:space:]]+)1m/\130m/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
+# ④ 把 timeout server 1m → 6m
+sed -Ei 's/(timeout[[:space:]]+server[[:space:]]+)1m/\16m/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
+# ⑤ 保持原有 rise/fall 改写（仍然能匹配，留作备份）
+sed -i 's/rise[[:space:]]\+1[[:space:]]\+fall[[:space:]]\+3[[:space:]]\+{{backup}}/rise 6 fall 1 {{backup}}  on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
+# ⑥ haproxy_check.sh 里已经是 --retry 1，可不再改；
+#    若想保持脚本向后兼容，可写成“只要不是 1 就替换”
+sed -Ei 's/--connect-timeout 3 --retry +[0-9]+/--connect-timeout 3 --retry 1/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy_check.sh
 
 #sed -i 's/,"bing.com"//g' feeds/passwall/luci-app-passwall/root/usr/share/passwall/rule_update.lua
 
