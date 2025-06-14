@@ -48,7 +48,7 @@ sed -i 's/HASH:=.*/HASH:=skip/' feeds/xiaorouji/v2ray-geodata/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/xiaorouji/chinadns-ng/Makefile
 
 #更改haproxy内核版本
-sed -i 's/www.haproxy.org\/download\/2.6\/src/www.haproxy.org\/download\/3.2\/src/' feeds/packages/haproxy/Makefile
+sed -i 's/www.haproxy.org\/download\/2.8\/src/www.haproxy.org\/download\/3.2\/src/' feeds/packages/haproxy/Makefile
 sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=3.2.1/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=$(cat <(curl $(PKG_SOURCE_URL)\/$(PKG_NAME)-$(PKG_VERSION).tar.gz.sha256))/' feeds/packages/haproxy/Makefile
 #sed -i 's/PKG_HASH:=.*/PKG_HASH:=a02ad64550dd30a94b25fd0e225ba699649d0c4037bca3b36b20e8e3235bb86f/' feeds/packages/haproxy/Makefile
