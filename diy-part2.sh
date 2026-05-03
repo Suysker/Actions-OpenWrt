@@ -12,6 +12,13 @@
 
 cd package
 
+# Drop unused feed packages with broken upstream metadata before Kconfig scans package/.
+if [ -d feeds ]; then
+  find feeds -mindepth 2 -maxdepth 2 \
+    \( -name luci-app-fchomo -o -name luci-app-dockerman -o -name luci-theme-alpha \) \
+    -exec rm -rf {} +
+fi
+
 #sed -i '$anet.core.rmem_max=2097152' base-files/files/etc/sysctl.d/10-default.conf
 
 #更改默认IP地址（150行）

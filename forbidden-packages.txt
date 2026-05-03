@@ -6,10 +6,15 @@
 #   regex:<extended-regular-expression>
 #   <plain text> is treated like exact:<plain text>
 
-# Stale proxy/plugin menu selections that are not part of config.seed.
-regex:^luci-app-bypass_
-regex:^luci-app-ssr-plus_
-regex:^luci-app-rclone_
+# Proxy/plugin packages that are not part of config.seed.
+exact:luci-app-bypass
+exact:luci-app-ssr-plus
+exact:luci-app-rclone
+exact:sing-box
+exact:trojan-plus
+exact:simple-obfs
+exact:v2ray-plugin
+regex:^shadowsocks-
 exact:luci-proto-wireguard
 exact:kmod-wireguard
 exact:wireguard-tools
@@ -32,10 +37,10 @@ exact:usbutils
 exact:virtio-console-helper
 
 # USB, HID, removable storage and extra filesystem support.
+# FAT/NLS support is allowed because x86/EFI images may pull it in.
 regex:^kmod-usb
 regex:^kmod-hid
-regex:^kmod-fs-(exfat|ext4|f2fs|ntfs3|vfat)$
-regex:^kmod-nls-
+regex:^kmod-fs-(exfat|ext4|f2fs|ntfs3)$
 regex:^kmod-drm-
 regex:^kmod-sound-
 exact:kmod-mmc

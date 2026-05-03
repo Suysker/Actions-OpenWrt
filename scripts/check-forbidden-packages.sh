@@ -10,6 +10,8 @@ if [ ! -r "$config_path" ]; then
   exit 2
 fi
 
+config_dir="$(cd "$(dirname "$config_path")" && pwd -P)"
+
 if [ ! -r "$rules_path" ]; then
   echo "::error::Forbidden package rules not found: $rules_path" >&2
   exit 2
@@ -18,9 +20,31 @@ fi
 mkdir -p "$output_dir"
 package_list="$output_dir/package-list.txt"
 matches="$output_dir/forbidden-packages.detected.txt"
+selected_config="$(mktemp)"
+known_packages="$(mktemp)"
+trap 'rm -f "$selected_config" "$known_packages"' EXIT
 
-sed -n 's/^CONFIG_PACKAGE_\(.*\)=y$/\1/p' "$config_path" | sort -u > "$package_list"
+sed -n 's/^CONFIG_PACKAGE_\(.*\)=y$/\1/p' "$config_path" | sort -u > "$selected_config"
 : > "$matches"
+
+for metadata in \
+  "$config_dir/tmp/.packageinfo" \
+  "$config_dir/tmp/info/.packageinfo"* \
+  tmp/.packageinfo \
+  tmp/info/.packageinfo*; do
+  if [ -r "$metadata" ]; then
+    sed -n 's/^Package:[[:space:]]*//p' "$metadata" >> "$known_packages"
+  fi
+done
+
+sort -u -o "$known_packages" "$known_packages"
+
+if [ -s "$known_packages" ]; then
+  awk 'NR == FNR { known[$0] = 1; next } known[$0]' "$known_packages" "$selected_config" > "$package_list"
+else
+  cp "$selected_config" "$package_list"
+  echo "::warning::OpenWrt package metadata not found; checking all CONFIG_PACKAGE_* symbols." >&2
+fi
 
 while IFS= read -r raw_line || [ -n "$raw_line" ]; do
   line="${raw_line%$'\r'}"
