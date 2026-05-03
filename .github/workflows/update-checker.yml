@@ -65,6 +65,11 @@ jobs:
 
         record_ref "$REPO_URL" "refs/heads/$REPO_BRANCH" "openwrt"
 
+        while read -r label repo ref; do
+          [ -z "${label:-}" ] && continue
+          record_ref "$repo" "${ref:-HEAD}" "$label"
+        done < <(bash "$GITHUB_WORKSPACE/scripts/sync-official-golang.sh" refs)
+
         while read -r feed repo ref; do
           [ -z "${feed:-}" ] && continue
           record_ref "$repo" "${ref:-HEAD}" "feed:$feed"

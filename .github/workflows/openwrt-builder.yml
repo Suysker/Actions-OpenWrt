@@ -76,6 +76,9 @@ jobs:
     - name: Update feeds
       run: cd openwrt && ./scripts/feeds update -a
 
+    - name: Sync official Go toolchain
+      run: bash "$GITHUB_WORKSPACE/scripts/sync-official-golang.sh" apply openwrt
+
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 

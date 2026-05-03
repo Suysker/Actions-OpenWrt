@@ -55,10 +55,10 @@ sort -u -o "$names" "$names"
 while IFS= read -r name || [ -n "$name" ]; do
   while IFS= read -r package_dir; do
     [ -n "$package_dir" ] || continue
-    echo "Pruning package directory: $package_dir"
+    echo "Pruning package entry: $package_dir"
     rm -rf "$package_dir"
     removed_count=$((removed_count + 1))
-  done < <(find "$package_root" -type d -name "$name" -prune -print)
+  done < <(find "$package_root" \( -type d -o -type l \) -name "$name" -prune -print)
 done < "$names"
 
-echo "Pruned package directories: $removed_count"
+echo "Pruned package entries: $removed_count"
