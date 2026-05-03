@@ -29,7 +29,7 @@ add_name() {
   printf '%s\n' "$name" >> "$names"
 }
 
-# Exact forbidden package rules are pruned when their package directory basename
+# Exact forbidden package rules are pruned when their package entry basename
 # matches the package/source name. Regex rules remain check-only.
 while IFS= read -r raw_line || [ -n "$raw_line" ]; do
   line="${raw_line%$'\r'}"
@@ -55,6 +55,12 @@ sort -u -o "$names" "$names"
 while IFS= read -r name || [ -n "$name" ]; do
   while IFS= read -r package_dir; do
     [ -n "$package_dir" ] || continue
+
+    if [ ! -f "$package_dir/Makefile" ]; then
+      echo "Skipping non-package entry: $package_dir"
+      continue
+    fi
+
     echo "Pruning package entry: $package_dir"
     rm -rf "$package_dir"
     removed_count=$((removed_count + 1))
