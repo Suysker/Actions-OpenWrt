@@ -79,6 +79,13 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
+    - name: Prune unused packages
+      run: |
+        cd openwrt
+        bash "$GITHUB_WORKSPACE/scripts/prune-packages.sh" \
+          "$GITHUB_WORKSPACE/prune-packages.txt" \
+          "package"
+
     - name: Load custom configuration
       run: |
         [ -e files ] && mv files openwrt/files

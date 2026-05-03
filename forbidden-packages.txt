@@ -29,18 +29,15 @@ regex:^(amd64|intel)-microcode$
 
 # Firmware/data packages for unrelated physical hardware.
 regex:^[A-Za-z0-9_.+-]+-firmware$
-exact:pciids
-exact:pciutils
 exact:usbids
 exact:usbutils
 # This helper is not the VirtIO disk/net driver.
 exact:virtio-console-helper
 
 # USB, HID, removable storage and extra filesystem support.
-# FAT/NLS support is allowed because x86/EFI images may pull it in.
+# Filesystem modules are not hard-forbidden; x86 images may pull them in.
 regex:^kmod-usb
 regex:^kmod-hid
-regex:^kmod-fs-(exfat|ext4|f2fs|ntfs3)$
 regex:^kmod-drm-
 regex:^kmod-sound-
 exact:kmod-mmc
@@ -56,5 +53,3 @@ exact:mkf2fs
 exact:partx-utils
 
 # Sensors and nonessential maintenance tools.
-exact:lm-sensors
-exact:sysfsutils

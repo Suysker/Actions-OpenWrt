@@ -24,7 +24,33 @@ selected_config="$(mktemp)"
 known_packages="$(mktemp)"
 trap 'rm -f "$selected_config" "$known_packages"' EXIT
 
-sed -n 's/^CONFIG_PACKAGE_\(.*\)=y$/\1/p' "$config_path" | sort -u > "$selected_config"
+awk '
+  /^CONFIG_PACKAGE_[^=]+=/ {
+    name = $0
+    sub(/^CONFIG_PACKAGE_/, "", name)
+    sub(/=.*/, "", name)
+    value = $0
+    sub(/^[^=]+=/, "", value)
+    selected[name] = (value == "y")
+    next
+  }
+
+  /^# CONFIG_PACKAGE_[^[:space:]]+ is not set$/ {
+    name = $0
+    sub(/^# CONFIG_PACKAGE_/, "", name)
+    sub(/ is not set$/, "", name)
+    selected[name] = 0
+    next
+  }
+
+  END {
+    for (name in selected) {
+      if (selected[name]) {
+        print name
+      }
+    }
+  }
+' "$config_path" | sort -u > "$selected_config"
 : > "$matches"
 
 for metadata in \
