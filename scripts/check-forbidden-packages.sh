@@ -80,6 +80,10 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
   [ -z "$line" ] && continue
 
   case "$line" in
+    prune:*)
+      needle="${line#prune:}"
+      awk -v needle="$needle" '$0 == needle { print }' "$package_list" >> "$matches"
+      ;;
     exact:*)
       needle="${line#exact:}"
       awk -v needle="$needle" '$0 == needle { print }' "$package_list" >> "$matches"

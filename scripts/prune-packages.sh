@@ -29,8 +29,8 @@ add_name() {
   printf '%s\n' "$name" >> "$names"
 }
 
-# Exact forbidden package rules are pruned when their package entry basename
-# matches the package/source name. Regex rules remain check-only.
+# Prune rules remove known broken/unwanted package entries before OpenWrt scans
+# package menus. Exact and regex rules remain check-only.
 while IFS= read -r raw_line || [ -n "$raw_line" ]; do
   line="${raw_line%$'\r'}"
   line="${line%%#*}"
@@ -39,13 +39,12 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
   [ -z "$line" ] && continue
 
   case "$line" in
-    exact:*)
-      add_name "${line#exact:}"
+    prune:*)
+      add_name "${line#prune:}"
       ;;
-    regex:*)
+    exact:*|regex:*)
       ;;
     *)
-      add_name "$line"
       ;;
   esac
 done < "$rules_path"

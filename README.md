@@ -28,9 +28,9 @@ This fork keeps a minimal `config.seed` instead of maintaining a full generated 
 
 - Edit `config.seed` when you want to add or remove LuCI apps or package options.
 - Edit `feeds.custom.conf` when you want to add, remove, or change custom feed sources. Build and update-checker both read this file.
-- `forbidden-packages.txt` is the block policy. The prune step removes exact forbidden package entries with a `Makefile` before OpenWrt scans package menus, then the final config check fails if any forbidden package still appears.
+- `forbidden-packages.txt` is the block policy. `prune:` rules remove known broken/unwanted package entries with a `Makefile` before OpenWrt scans package menus; `exact:` and `regex:` rules only fail the final config check if those packages are selected.
 - Do not add dependency libraries or kernel modules manually unless you are deliberately overriding OpenWrt defaults. `make defconfig` expands real dependencies during the GitHub Actions build.
-- The build replaces only `feeds/packages/lang/golang` with OpenWrt official `openwrt/packages` `lang/golang`, so current Go-based packages can build without importing an extra third-party Go feed.
+- The build replaces only `feeds/packages/lang/golang` with OpenWrt official `openwrt/packages` `lang/golang`, then rebuilds the packages feed index so current Go-based packages can build without importing an extra third-party Go feed.
 - This profile enables OpenWrt's testing kernel option, so it follows the target's `KERNEL_TESTING_PATCHVER`.
 - This PVE VM profile keeps SeaBIOS and EFI images, VirtIO disk/net support through `CONFIG_VIRTIO_SUPPORT`, and Intel i225 passthrough through `kmod-igc`.
 - `diy-part2.sh` tracks the latest HAProxy LTS release automatically. Set `HAPROXY_VERSION` in the build workflow only when you need to pin or roll back temporarily.
