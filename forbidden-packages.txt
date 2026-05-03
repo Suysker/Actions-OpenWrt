@@ -2,11 +2,14 @@
 # Blank lines and comments are ignored.
 #
 # Formats:
-#   exact:<package-or-CONFIG_PACKAGE-option>
+#   exact:<package-or-source-directory-name>
 #   regex:<extended-regular-expression>
 #   <plain text> is treated like exact:<plain text>
 
 # Proxy/plugin packages that are not part of config.seed.
+exact:luci-app-fchomo
+exact:luci-app-dockerman
+exact:luci-theme-alpha
 exact:luci-app-bypass
 exact:luci-app-ssr-plus
 exact:luci-app-rclone
@@ -14,6 +17,7 @@ exact:sing-box
 exact:trojan-plus
 exact:simple-obfs
 exact:v2ray-plugin
+exact:shadowsocks-rust
 regex:^shadowsocks-
 exact:luci-proto-wireguard
 exact:kmod-wireguard

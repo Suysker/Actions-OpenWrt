@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-list_path="${1:-prune-packages.txt}"
+rules_path="${1:-forbidden-packages.txt}"
 package_root="${2:-package}"
 
-if [ ! -r "$list_path" ]; then
-  echo "::error::Prune package list not found: $list_path" >&2
+if [ ! -r "$rules_path" ]; then
+  echo "::error::Forbidden package rules not found: $rules_path" >&2
   exit 2
 fi
 
@@ -15,25 +15,50 @@ if [ ! -d "$package_root" ]; then
 fi
 
 removed_count=0
+names="$(mktemp)"
+trap 'rm -f "$names"' EXIT
 
-while IFS= read -r raw_line || [ -n "$raw_line" ]; do
-  name="${raw_line%$'\r'}"
-  name="${name%%#*}"
-  name="$(printf '%s' "$name" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
-
-  [ -z "$name" ] && continue
+add_name() {
+  local name="$1"
 
   if ! printf '%s\n' "$name" | grep -Eq '^[A-Za-z0-9_.+-]+$'; then
-    echo "::error::Invalid package directory name in $list_path: $name" >&2
+    echo "::error::Invalid package directory name: $name" >&2
     exit 2
   fi
 
+  printf '%s\n' "$name" >> "$names"
+}
+
+# Exact forbidden package rules are pruned when their package directory basename
+# matches the package/source name. Regex rules remain check-only.
+while IFS= read -r raw_line || [ -n "$raw_line" ]; do
+  line="${raw_line%$'\r'}"
+  line="${line%%#*}"
+  line="$(printf '%s' "$line" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+
+  [ -z "$line" ] && continue
+
+  case "$line" in
+    exact:*)
+      add_name "${line#exact:}"
+      ;;
+    regex:*)
+      ;;
+    *)
+      add_name "$line"
+      ;;
+  esac
+done < "$rules_path"
+
+sort -u -o "$names" "$names"
+
+while IFS= read -r name || [ -n "$name" ]; do
   while IFS= read -r package_dir; do
     [ -n "$package_dir" ] || continue
     echo "Pruning package directory: $package_dir"
     rm -rf "$package_dir"
     removed_count=$((removed_count + 1))
   done < <(find "$package_root" -type d -name "$name" -prune -print)
-done < "$list_path"
+done < "$names"
 
 echo "Pruned package directories: $removed_count"

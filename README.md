@@ -28,7 +28,7 @@ This fork keeps a minimal `config.seed` instead of maintaining a full generated 
 
 - Edit `config.seed` when you want to add or remove LuCI apps or package options.
 - Edit `feeds.custom.conf` when you want to add, remove, or change custom feed sources. Build and update-checker both read this file.
-- Edit `prune-packages.txt` only when a feed package has broken metadata or must be removed before OpenWrt scans package menus.
+- `forbidden-packages.txt` is the block policy. The prune step removes exact forbidden package/source directory names before OpenWrt scans package menus, then the final config check fails if any forbidden package still appears.
 - Do not add dependency libraries or kernel modules manually unless you are deliberately overriding OpenWrt defaults. `make defconfig` expands real dependencies during the GitHub Actions build.
 - This profile enables OpenWrt's testing kernel option, so it follows the target's `KERNEL_TESTING_PATCHVER`.
 - This PVE VM profile keeps SeaBIOS and EFI images, VirtIO disk/net support through `CONFIG_VIRTIO_SUPPORT`, and Intel i225 passthrough through `kmod-igc`.

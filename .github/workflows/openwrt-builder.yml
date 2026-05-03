@@ -83,7 +83,7 @@ jobs:
       run: |
         cd openwrt
         bash "$GITHUB_WORKSPACE/scripts/prune-packages.sh" \
-          "$GITHUB_WORKSPACE/prune-packages.txt" \
+          "$GITHUB_WORKSPACE/forbidden-packages.txt" \
           "package"
 
     - name: Load custom configuration
