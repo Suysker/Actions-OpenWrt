@@ -23,6 +23,8 @@ env:
   CONFIG_FILE: config.seed
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
+  # Empty means diy-part2.sh selects the latest HAProxy LTS automatically.
+  HAPROXY_VERSION: ''
   UPLOAD_BIN_DIR: false
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true

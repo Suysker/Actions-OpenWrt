@@ -10,12 +10,6 @@
 # See /LICENSE for more information.
 #
 
-#rm -rf feeds/packages/lang/golang
-#git clone https://github.com/sbwml/packages_lang_golang -b 22.x feeds/packages/lang/golang
-#git clone https://github.com/kenzok8/golang feeds/packages/lang/golang
-
-# Modify default IP
-#sed -i 's/192.168.1.1/192.168.50.5/g' package/base-files/files/bin/config_generate
 cd package
 
 #sed -i '$anet.core.rmem_max=2097152' base-files/files/etc/sysctl.d/10-default.conf
@@ -27,16 +21,8 @@ sed -i 's/192.168.1.1/192.168.2.1/' base-files/files/bin/config_generate
 sed -i '39,45s/echo/#echo/' lean/default-settings/files/zzz-default-settings
 sed -i '/REDIRECT --to-ports 53/d'  lean/default-settings/files/zzz-default-settings
 
-#更改xray内核版本
-#sed -i '4s/PKG_VERSION:=1.*/PKG_VERSION:=1.6.1/' feeds/small/xray-core/Makefile
-#sed -i '9s/PKG_HASH:=.*/PKG_HASH:=8b4cc89d83b0ded75630119d9e2456764530490c7fb5e8a27de0cdf9c57fef15/' feeds/small/xray-core/Makefile
-
 #防止不解析本机域名
 sed -i '/conf_out:write("no-resolv\\n")/d; /tinsert(conf_lines, "no-resolv")/d' feeds/passwall/luci-app-passwall/root/usr/share/passwall/helper_dnsmasq.lua
-
-#更改xray-plugin内核版本
-#sed -i '8s/PKG_VERSION:=1.*/PKG_VERSION:=1.6.1/' feeds/small/xray-plugin/Makefile
-#sed -i '13s/PKG_HASH:=.*/PKG_HASH:=5ae89aec07534c6bf39e2168ccf475ae481c88f650c4bc6dd542078952648b2a/' feeds/small/xray-plugin/Makefile
 
 #更改默认geoip和geosite
 sed -i 's/github.com\/v2fly\/geoip\/releases\/download\/$(GEOIP_VER)\//github.com\/Loyalsoldier\/v2ray-rules-dat\/releases\/latest\/download\//' feeds/xiaorouji/v2ray-geodata/Makefile
@@ -44,16 +30,68 @@ sed -i 's/github.com\/v2fly\/domain-list-community\/releases\/download\/$(GEOSIT
 sed -i 's/dlc.dat/geosite.dat/' feeds/xiaorouji/v2ray-geodata/Makefile
 sed -i 's/HASH:=.*/HASH:=skip/' feeds/xiaorouji/v2ray-geodata/Makefile
 
-#sed -i 's/PKG_VERSION:=2024.03.07/PKG_VERSION:=2023.10.28/' feeds/xiaorouji/chinadns-ng/Makefile
-#sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/xiaorouji/chinadns-ng/Makefile
+# 自动使用 HAProxy 官方下载目录里的最新 LTS 版。
+# HAProxy 偶数小版本分支是 LTS；奇数小版本 stable 分支自动跳过。
+# 如遇上游新版本编译失败，可在 workflow 里临时设置 HAPROXY_VERSION=3.2.x 固定版本。
+latest_haproxy_lts_version() {
+  local branch minor version
 
-#更改haproxy内核版本
-sed -i 's/www.haproxy.org\/download\/2.8\/src/www.haproxy.org\/download\/3.2\/src/' feeds/packages/haproxy/Makefile
-sed -i 's/PKG_VERSION:=2.*/PKG_VERSION:=3.2.6/' feeds/packages/haproxy/Makefile
-#sed -i 's/PKG_HASH:=.*/PKG_HASH:=$(cat <(curl $(PKG_SOURCE_URL)\/$(PKG_NAME)-$(PKG_VERSION).tar.gz.sha256))/' feeds/packages/haproxy/Makefile
-#sed -i 's/PKG_HASH:=.*/PKG_HASH:=a02ad64550dd30a94b25fd0e225ba699649d0c4037bca3b36b20e8e3235bb86f/' feeds/packages/haproxy/Makefile
-sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/packages/haproxy/Makefile
-sed -i 's/BASE_TAG=v2.*/BASE_TAG=v3.2.6/' feeds/packages/haproxy/get-latest-patches.sh
+  curl -fsSL https://www.haproxy.org/download/ |
+    sed -nE 's/.*href="([0-9]+\.[0-9]+)\/".*/\1/p' |
+    sort -Vr |
+    while read -r branch; do
+      minor="${branch#*.}"
+      if [ $((minor % 2)) -ne 0 ]; then
+        continue
+      fi
+
+      version="$(
+        curl -fsSL "https://www.haproxy.org/download/${branch}/src/" 2>/dev/null |
+          sed -nE 's/.*haproxy-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz".*/\1/p' |
+          sort -V |
+          tail -n 1
+      )"
+
+      if [ -n "$version" ]; then
+        printf '%s\n' "$version"
+        return 0
+      fi
+    done
+}
+
+update_haproxy_package() {
+  local makefile="feeds/packages/haproxy/Makefile"
+  local patch_script="feeds/packages/haproxy/get-latest-patches.sh"
+  local version="${HAPROXY_VERSION:-}"
+  local branch
+
+  if [ ! -f "$makefile" ]; then
+    echo "HAProxy Makefile not found: $makefile" >&2
+    exit 1
+  fi
+
+  if [ -z "$version" ]; then
+    version="$(latest_haproxy_lts_version)"
+  fi
+
+  if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "Unable to resolve latest HAProxy LTS version, got: $version" >&2
+    exit 1
+  fi
+
+  branch="${version%.*}"
+  echo "Using HAProxy ${version} from ${branch} branch"
+
+  sed -Ei "s#^PKG_VERSION:=.*#PKG_VERSION:=${version}#" "$makefile"
+  sed -Ei "s#^PKG_SOURCE_URL:=.*#PKG_SOURCE_URL:=https://www.haproxy.org/download/${branch}/src#" "$makefile"
+  sed -Ei 's#^PKG_HASH:=.*#PKG_HASH:=skip#' "$makefile"
+
+  if [ -f "$patch_script" ]; then
+    sed -Ei "s#^BASE_TAG=v.*#BASE_TAG=v${version}#" "$patch_script"
+  fi
+}
+
+update_haproxy_package
 
 #修复ipt2socks无法正确监听IPV6，并开启双线程
 sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
@@ -73,42 +111,9 @@ sed -i 's/rise[[:space:]]\+1[[:space:]]\+fall[[:space:]]\+3[[:space:]]\+{{backup
 #    若想保持脚本向后兼容，可写成“只要不是 1 就替换”
 sed -Ei 's/--connect-timeout 3 --retry +[0-9]+/--connect-timeout 3 --retry 1/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy_check.sh
 
-#sed -i 's/,"bing.com"//g' feeds/passwall/luci-app-passwall/root/usr/share/passwall/rule_update.lua
-
 sed -i '/domain:bing.com/d' feeds/sbwml/luci-app-mosdns/root/etc/mosdns/rule/whitelist.txt
 echo "domain:bing.com" >> feeds/sbwml/luci-app-mosdns/root/etc/mosdns/rule/greylist.txt
 
-
-#解除Adguardhome更新
-#sed -i 's/PKG_VERSION:=.*/PKG_VERSION:=0.107.27' feeds/kenzo/adguardhome/Makefile
-#解除Adguardhome更新
-#sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/kenzo/adguardhome/Makefile
 #解除Adguardhome更新
 sed -i '/--no-check-update/d' feeds/kenzo/adguardhome/files/adguardhome.init
-#更改默认安装位置
-#sed -i 's/PROG=.*/PROG=\/etc\/AdGuardHome\/AdGuardHome/' feeds/kenzo/adguardhome/files/adguardhome.init
-
 sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/kenzo/adguardhome/Makefile
-#sed -i '/^\t\$(call Build\/Prepare\/Default)/a \\tif [ -d "$(BUILD_DIR)\/AdGuardHome-$(PKG_VERSION)" ]; then \\\n\t\tmv "$(BUILD_DIR)\/AdGuardHome-$(PKG_VERSION)\/"* "$(BUILD_DIR)\/adguardhome-$(PKG_VERSION)\/"; \\\n\tfi' feeds/kenzo/adguardhome/Makefile
-#sed -i '/gzip -dc $(DL_DIR)\/$(FRONTEND_FILE) | $(HOST_TAR) -C $(PKG_BUILD_DIR)\/ $(TAR_OPTIONS)/a \\t( cd "$(BUILD_DIR)\/adguardhome-$(PKG_VERSION)"; go mod tidy )' feeds/kenzo/adguardhome/Makefile
-
-
-#mosdns默认配置
-#取消默认IPV4
-#sed -i '/_prefer_ipv4/d' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#国外+ecs
-#sed -i 's/_prefer_ipv4/add_ecs/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#sed -i 's/        - primary:\n            - forward_local/        - primary:\n            - add_ecs\n            - forward_remote/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#sed -i 's/        - secondary:\n            - add_ecs\n            - forward_remote/        - secondary:\n            - forward_local/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#国外+ecs
-#sed -i 's/            - forward_remote/            - add_ecs\n            - forward_remote/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#ecs
-#sed -i  's/plugins:/plugins:\n  - tag: "add_ecs"\n    type: "ecs"\n    args:\n      auto: false\n      ipv4: "133.1.0.0"\n      ipv6: "2001:268:83b::"\n      force_overwrite: true\n      mask4: 24\n      mask6: 48\n/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#fallback
-#sed -i 's/          fast_fallback: 200/          fast_fallback: 500\n          always_standby: true/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#本地dns
-#sed -i 's/    type: forward/    type: fast_forward/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#sed -i 's/      bootstrap:/      #bootstrap:/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#sed -i 's/        - "bootstrap_dns"/        #- "bootstrap_dns"/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#sed -i 's/        - addr: local_dns/        - addr: local_dns\n          trusted: true/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml
-#sed -i 's/        - addr: remote_dns/        - addr: remote_dns\n          trusted: true/' feeds/sbwml/luci-app-mosdns/root/usr/share/mosdns/default.yaml

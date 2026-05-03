@@ -31,6 +31,7 @@ This fork keeps a minimal `config.seed` instead of maintaining a full generated 
 - Do not add dependency libraries or kernel modules manually unless you are deliberately overriding OpenWrt defaults. `make defconfig` expands real dependencies during the GitHub Actions build.
 - This profile enables OpenWrt's testing kernel option, so it follows the target's `KERNEL_TESTING_PATCHVER`.
 - This PVE VM profile keeps SeaBIOS and EFI images, VirtIO disk/net support through `CONFIG_VIRTIO_SUPPORT`, and Intel i225 passthrough through `kmod-igc`.
+- `diy-part2.sh` tracks the latest HAProxy LTS release automatically. Set `HAPROXY_VERSION` in the build workflow only when you need to pin or roll back temporarily.
 - Edit `forbidden-packages.txt` when an upstream or Lean default package must be blocked from the image.
 - The build workflow writes the expanded diff to `config.effective` in the Actions log, so you can see what the latest upstream Kconfig resolved.
 - The build workflow writes the final built-in package selections to `package-list.txt`, uploads config reports, and fails when any forbidden package is selected.
