@@ -1,0 +1,5 @@
+.config
+config.effective
+package-list.txt
+forbidden-packages.detected.txt
+.source-state/

@@ -1,0 +1,55 @@
+# Forbidden package selections for the PVE OpenWrt VM image.
+# Blank lines and comments are ignored.
+#
+# Formats:
+#   exact:<package-or-CONFIG_PACKAGE-option>
+#   regex:<extended-regular-expression>
+#   <plain text> is treated like exact:<plain text>
+
+# Stale proxy/plugin menu selections that are not part of config.seed.
+regex:^luci-app-bypass_
+regex:^luci-app-ssr-plus_
+regex:^luci-app-rclone_
+exact:luci-proto-wireguard
+exact:kmod-wireguard
+exact:wireguard-tools
+exact:luci-proto-bonding
+exact:proto-bonding
+exact:kmod-bonding
+
+# Physical NIC drivers not needed by this PVE VM.
+# Keep CONFIG_VIRTIO_SUPPORT and kmod-igc in config.seed.
+regex:^kmod-(8139cp|8139too|alx|amazon-ena|amd-xgbe|atlantic|bnx2|bnx2x|e1000|e1000e|forcedeth|i40e|i40evf|iavf|igb|igbvf|ixgbe|mlx4-core|mlx5-core|mlxfw|pcnet32|r8125-rss|r8126-rss|r8168|tg3|tulip|via-velocity|vmxnet3)$
+regex:^(amd64|intel)-microcode$
+
+# Firmware/data packages for unrelated physical hardware.
+regex:^[A-Za-z0-9_.+-]+-firmware$
+exact:pciids
+exact:pciutils
+exact:usbids
+exact:usbutils
+# This helper is not the VirtIO disk/net driver.
+exact:virtio-console-helper
+
+# USB, HID, removable storage and extra filesystem support.
+regex:^kmod-usb
+regex:^kmod-hid
+regex:^kmod-fs-(exfat|ext4|f2fs|ntfs3|vfat)$
+regex:^kmod-nls-
+regex:^kmod-drm-
+regex:^kmod-sound-
+exact:kmod-mmc
+exact:kmod-sdhci
+exact:ntfs3-mount
+
+# Samba, automount and disk maintenance tools.
+regex:^(autosamba|autosamba_.*|.*samba.*|ksmbd.*)$
+exact:automount
+exact:cfdisk
+exact:e2fsprogs
+exact:mkf2fs
+exact:partx-utils
+
+# Sensors and nonessential maintenance tools.
+exact:lm-sensors
+exact:sysfsutils

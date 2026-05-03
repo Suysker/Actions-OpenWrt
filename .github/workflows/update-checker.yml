@@ -27,27 +27,66 @@ jobs:
 
     steps:
 
-    - name: Get Commit Hash
-      id: getHash
-      run: |
-        git clone --depth 1 $REPO_URL -b $REPO_BRANCH .
-        echo "commitHash=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+    - name: Checkout
+      uses: actions/checkout@main
 
-    - name: Compare Commit Hash
+    - name: Generate source fingerprint
+      id: sources
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        mkdir -p .source-state
+        : > .source-state/sources.txt
+
+        record_ref() {
+          local repo="$1"
+          local ref="${2:-HEAD}"
+          local label="${3:-$repo}"
+          local resolved_ref="$ref"
+          local sha=""
+          local output=""
+
+          if [ "$ref" = "HEAD" ]; then
+            output="$(git ls-remote --symref "$repo" HEAD)"
+            resolved_ref="$(printf '%s\n' "$output" | awk '/^ref:/ { print $2; exit }')"
+            sha="$(printf '%s\n' "$output" | awk '$2 == "HEAD" { print $1; exit }')"
+          else
+            sha="$(git ls-remote "$repo" "$ref" | awk 'NR == 1 { print $1 }')"
+          fi
+
+          if [ -z "$sha" ]; then
+            echo "::error::Cannot resolve $repo $ref"
+            exit 1
+          fi
+
+          printf '%s %s %s %s\n' "$label" "$repo" "${resolved_ref:-$ref}" "$sha" | tee -a .source-state/sources.txt
+        }
+
+        record_ref "$REPO_URL" "refs/heads/$REPO_BRANCH" "openwrt"
+
+        while read -r feed repo ref; do
+          [ -z "${feed:-}" ] && continue
+          record_ref "$repo" "${ref:-HEAD}" "feed:$feed"
+        done < <(bash "$GITHUB_WORKSPACE/scripts/manage-custom-feeds.sh" refs "$GITHUB_WORKSPACE/feeds.custom.conf")
+
+        fingerprint="$(sha256sum .source-state/sources.txt | awk '{ print $1 }')"
+        echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+    - name: Compare source fingerprint
       id: cacheHash
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
-        path: .commitHash
-        key: commitHash_${{ steps.getHash.outputs.commitHash }}
+        path: .source-state
+        key: source_${{ steps.sources.outputs.fingerprint }}
 
-    - name: Save New Commit Hash
+    - name: Show changed source fingerprint
       if: steps.cacheHash.outputs.cache-hit != 'true'
-      run: |
-        echo ${{ steps.getHash.outputs.commitHash }} | tee .commitHash
+      run: cat .source-state/sources.txt
 
     - name: Trigger build
       if: steps.cacheHash.outputs.cache-hit != 'true'
-      uses: peter-evans/repository-dispatch@v2
+      uses: peter-evans/repository-dispatch@v3
       with:
         token: ${{ github.token }}
         event-type: Source Code Update

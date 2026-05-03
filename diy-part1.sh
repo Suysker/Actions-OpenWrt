@@ -13,16 +13,9 @@
 # Uncomment a feed source
 #sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
 
-# Add a feed source
-#echo 'src-git helloworld https://github.com/fw876/helloworld' >>feeds.conf.default
-#echo 'src-git passwall https://github.com/xiaorouji/openwrt-passwall' >>feeds.conf.default
-sed -i '1i src-git golang https://github.com/kenzok8/golang' feeds/packages/lang/golang.git
-sed -i '1i src-git small https://github.com/kenzok8/small' feeds.conf.default
-sed -i '1i src-git kenzo https://github.com/kenzok8/openwrt-packages' feeds.conf.default
-sed -i '1i src-git sbwml https://github.com/sbwml/luci-app-mosdns' feeds.conf.default
-sed -i '1i src-git xiaorouji https://github.com/xiaorouji/openwrt-passwall-packages' feeds.conf.default
-#sed -i '1i src-git passwall https://github.com/xiaorouji/openwrt-passwall.git;luci' feeds.conf.default
-sed -i '1i src-git passwall https://github.com/xiaorouji/openwrt-passwall' feeds.conf.default
+# Add custom feed sources from the repository-level single source of truth.
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+bash "$REPO_DIR/scripts/manage-custom-feeds.sh" apply "$REPO_DIR/feeds.custom.conf" feeds.conf.default
 
 
 #echo 'src-git opluci https://git.openwrt.org/project/luci.git' >>feeds.conf.default
