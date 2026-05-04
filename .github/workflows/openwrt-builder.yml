@@ -107,7 +107,10 @@ jobs:
     - name: Load custom configuration
       run: |
         [ -e files ] && mv files openwrt/files
-        [ -e "$CONFIG_FILE" ] && mv "$CONFIG_FILE" openwrt/.config
+        test -f "$GITHUB_WORKSPACE/$CONFIG_FILE"
+        cp "$GITHUB_WORKSPACE/$CONFIG_FILE" openwrt/.config
+        echo "Loaded repository config target:"
+        grep '^CONFIG_TARGET' openwrt/.config || true
         chmod +x "$DIY_P2_SH"
         cd openwrt
         "$GITHUB_WORKSPACE/$DIY_P2_SH"
@@ -117,6 +120,11 @@ jobs:
       run: |
         cd openwrt
         make defconfig
+        if ! grep -q '^CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r4s=y$' .config; then
+          echo "::error::Resolved OpenWrt target is not NanoPi R4S. Current target selection:"
+          grep '^CONFIG_TARGET.*=y' .config || true
+          exit 1
+        fi
         ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/config.effective"
         bash "$GITHUB_WORKSPACE/scripts/check-forbidden-packages.sh" \
           ".config" \

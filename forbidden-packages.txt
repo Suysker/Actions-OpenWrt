@@ -10,12 +10,16 @@
 # Broken/unwanted LuCI entries that should be removed before package menus.
 prune:luci-app-fchomo
 prune:luci-app-dockerman
+prune:luci-theme-alpha
 prune:luci-app-bypass
 prune:luci-app-ddns
 prune:luci-app-ssr-plus
 prune:luci-app-rclone
 prune:luci-app-vlmcsd
 prune:luci-app-vsftpd
+prune:mihomo
+prune:mihomo-alpha
+prune:mihomo-meta
 
 # Applications intentionally excluded from the R4S lean profile.
 exact:luci-app-docker
@@ -53,6 +57,8 @@ regex:^ddns-scripts_
 
 # Proxy stacks not selected in config.seed.
 exact:mihomo
+exact:mihomo-alpha
+exact:mihomo-meta
 exact:sing-box
 exact:trojan-plus
 exact:simple-obfs
