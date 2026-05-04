@@ -10,16 +10,18 @@
 # See /LICENSE for more information.
 #
 
-name: OpenWrt Builder
+name: OpenWrt R4S Builder
 
 on:
   repository_dispatch:
   workflow_dispatch:
 
 env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master
-  FEEDS_CONF: feeds.conf.default
+  R4S_SCRIPT_REPO: https://github.com/sbwml/r4s_build_script
+  R4S_SCRIPT_REF: master
+  R4S_RELEASE: rc2
+  R4S_BOARD: nanopi-r4s
+  LAN_IP: 192.168.2.1
   CONFIG_FILE: config.seed
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
@@ -52,29 +54,39 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    - name: Clone source code
+    - name: Bootstrap R4S source
       working-directory: /workdir
       run: |
-        df -hT $PWD
-        git clone $REPO_URL -b $REPO_BRANCH openwrt
-        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+        df -hT "$PWD"
+        git clone --depth 1 --branch "$R4S_SCRIPT_REF" "$R4S_SCRIPT_REPO" r4s_build_script
+        cd r4s_build_script/openwrt
+        BUILD=n git_name=private git_password=private LAN="$LAN_IP" bash build.sh "$R4S_RELEASE" "$R4S_BOARD"
+        rm -rf /workdir/openwrt
+        mv openwrt /workdir/openwrt
+        ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
 
     - name: Cache
       uses: HiGarfield/cachewrtbuild@main
       with:
         ccache: 'true'
-        mixkey: 'x86'
+        mixkey: 'r4s'
         prefix: 'openwrt'
 
     - name: Load custom feeds
       run: |
-        [ -e $FEEDS_CONF ] && mv $FEEDS_CONF openwrt/feeds.conf.default
-        chmod +x $DIY_P1_SH
+        chmod +x "$DIY_P1_SH"
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
+        "$GITHUB_WORKSPACE/$DIY_P1_SH"
 
-    - name: Update feeds
-      run: cd openwrt && ./scripts/feeds update -a
+    - name: Update custom feeds
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd openwrt
+        mapfile -t custom_feeds < <(bash "$GITHUB_WORKSPACE/scripts/manage-custom-feeds.sh" refs "$GITHUB_WORKSPACE/feeds.custom.conf" | awk '{ print $1 }')
+        if [ "${#custom_feeds[@]}" -gt 0 ]; then
+          ./scripts/feeds update "${custom_feeds[@]}"
+        fi
 
     - name: Sync official Go toolchain
       run: |
@@ -95,10 +107,10 @@ jobs:
     - name: Load custom configuration
       run: |
         [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
-        chmod +x $DIY_P2_SH
+        [ -e "$CONFIG_FILE" ] && mv "$CONFIG_FILE" openwrt/.config
+        chmod +x "$DIY_P2_SH"
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
+        "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
     - name: Download package
       id: package
@@ -168,8 +180,7 @@ jobs:
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
         echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        touch release.txt
-        [ ${UPLOAD_GOFILE} = true && ${{ steps.gofile.outputs.url }} ] && echo "🔗 [GoFile](${{ steps.gofile.outputs.url }})" >> release.txt
+        : > release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware to release

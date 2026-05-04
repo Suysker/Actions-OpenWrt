@@ -15,7 +15,10 @@
 
 # Add custom feed sources from the repository-level single source of truth.
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-bash "$REPO_DIR/scripts/manage-custom-feeds.sh" apply "$REPO_DIR/feeds.custom.conf" feeds.conf.default
+FEEDS_FILE="feeds.conf.default"
+[ -f feeds.conf ] && FEEDS_FILE="feeds.conf"
+
+bash "$REPO_DIR/scripts/manage-custom-feeds.sh" apply "$REPO_DIR/feeds.custom.conf" "$FEEDS_FILE"
 
 
 #echo 'src-git opluci https://git.openwrt.org/project/luci.git' >>feeds.conf.default

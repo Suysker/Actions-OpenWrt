@@ -13,8 +13,9 @@
 name: Update Checker
 
 env:
-  REPO_URL: https://github.com/coolsnowwolf/lede
-  REPO_BRANCH: master
+  R4S_SCRIPT_REPO: https://github.com/sbwml/r4s_build_script
+  R4S_SCRIPT_REF: master
+  R4S_RELEASE_TAG_URL: https://init.cooluc.com/tags/v25
 
 on:
   workflow_dispatch:
@@ -63,7 +64,12 @@ jobs:
           printf '%s %s %s %s\n' "$label" "$repo" "${resolved_ref:-$ref}" "$sha" | tee -a .source-state/sources.txt
         }
 
-        record_ref "$REPO_URL" "refs/heads/$REPO_BRANCH" "openwrt"
+        record_ref "$R4S_SCRIPT_REPO" "refs/heads/$R4S_SCRIPT_REF" "r4s-script"
+
+        release_version="$(curl -fsSL "$R4S_RELEASE_TAG_URL" | tr -d '[:space:]')"
+        release_tag="v${release_version#v}"
+        printf '%s %s %s\n' "r4s-release" "$R4S_RELEASE_TAG_URL" "$release_tag" | tee -a .source-state/sources.txt
+        record_ref "https://github.com/openwrt/openwrt.git" "refs/tags/$release_tag" "openwrt:$release_tag"
 
         while read -r label repo ref; do
           [ -z "${label:-}" ] && continue

@@ -10,29 +10,78 @@
 # See /LICENSE for more information.
 #
 
+set -e
+
 cd package
 
-#sed -i '$anet.core.rmem_max=2097152' base-files/files/etc/sysctl.d/10-default.conf
+sed_if_file() {
+  local file="$1"
+  shift
 
-#更改默认IP地址（150行）
-sed -i 's/192.168.1.1/192.168.2.1/' base-files/files/bin/config_generate
+  if [ -f "$file" ]; then
+    sed -i "$@" "$file"
+  else
+    echo "Skipping missing file: $file"
+  fi
+}
 
-#取消53端口防火墙规则（40-43行）
-sed -i '39,45s/echo/#echo/' lean/default-settings/files/zzz-default-settings
-sed -i '/REDIRECT --to-ports 53/d'  lean/default-settings/files/zzz-default-settings
+sed_ext_if_file() {
+  local file="$1"
+  shift
 
-#防止不解析本机域名
-sed -i '/conf_out:write("no-resolv\\n")/d; /tinsert(conf_lines, "no-resolv")/d' feeds/passwall/luci-app-passwall/root/usr/share/passwall/helper_dnsmasq.lua
+  if [ -f "$file" ]; then
+    sed -Ei "$@" "$file"
+  else
+    echo "Skipping missing file: $file"
+  fi
+}
 
-#更改默认geoip和geosite
-sed -i 's/github.com\/v2fly\/geoip\/releases\/download\/$(GEOIP_VER)\//github.com\/Loyalsoldier\/v2ray-rules-dat\/releases\/latest\/download\//' feeds/xiaorouji/v2ray-geodata/Makefile
-sed -i 's/github.com\/v2fly\/domain-list-community\/releases\/download\/$(GEOSITE_VER)\//github.com\/Loyalsoldier\/v2ray-rules-dat\/releases\/latest\/download\//' feeds/xiaorouji/v2ray-geodata/Makefile
-sed -i 's/dlc.dat/geosite.dat/' feeds/xiaorouji/v2ray-geodata/Makefile
-sed -i 's/HASH:=.*/HASH:=skip/' feeds/xiaorouji/v2ray-geodata/Makefile
+first_existing_file() {
+  local file
 
-# 自动使用 HAProxy 官方下载目录里的最新 LTS 版。
-# HAProxy 偶数小版本分支是 LTS；奇数小版本 stable 分支自动跳过。
-# 如遇上游新版本编译失败，可在 workflow 里临时设置 HAPROXY_VERSION=3.2.x 固定版本。
+  for file in "$@"; do
+    if [ -f "$file" ]; then
+      printf '%s\n' "$file"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+# Default LAN IP. sbwml bootstrap also receives LAN=192.168.2.1; this keeps the
+# setting stable after our config seed replaces the bootstrap .config.
+sed_if_file base-files/files/bin/config_generate 's/192.168.1.1/192.168.2.1/g; s/10.0.0.1/192.168.2.1/g'
+
+# Lean-only default DNS redirect rules are absent in the R4S tree, so these are
+# guarded for branch portability.
+sed_if_file lean/default-settings/files/zzz-default-settings '39,45s/echo/#echo/'
+sed_if_file lean/default-settings/files/zzz-default-settings '/REDIRECT --to-ports 53/d'
+
+# Prevent PassWall from disabling local hostname resolution when the helper
+# exists in the selected feed.
+sed_if_file feeds/passwall/luci-app-passwall/root/usr/share/passwall/helper_dnsmasq.lua \
+  '/conf_out:write("no-resolv\\n")/d; /tinsert(conf_lines, "no-resolv")/d'
+
+# Use Loyalsoldier geodata mirrors and skip hash churn.
+v2ray_geodata_makefile="$(
+  first_existing_file \
+    feeds/xiaorouji/v2ray-geodata/Makefile \
+    feeds/packages/v2ray-geodata/Makefile \
+    new/helloworld/v2ray-geodata/Makefile || true
+)"
+if [ -n "$v2ray_geodata_makefile" ]; then
+  sed -i 's#github.com/v2fly/geoip/releases/download/$(GEOIP_VER)/#github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/#' "$v2ray_geodata_makefile"
+  sed -i 's#github.com/v2fly/domain-list-community/releases/download/$(GEOSITE_VER)/#github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/#' "$v2ray_geodata_makefile"
+  sed -i 's/dlc.dat/geosite.dat/' "$v2ray_geodata_makefile"
+  sed -i 's/HASH:=.*/HASH:=skip/' "$v2ray_geodata_makefile"
+else
+  echo "Skipping missing v2ray-geodata Makefile"
+fi
+
+# Automatically use the latest HAProxy official LTS release.
+# HAProxy even minor branches are LTS; odd minor stable branches are skipped.
+# Set HAPROXY_VERSION in the workflow only to pin or roll back temporarily.
 latest_haproxy_lts_version() {
   local branch minor version
 
@@ -60,15 +109,21 @@ latest_haproxy_lts_version() {
 }
 
 update_haproxy_package() {
-  local makefile="feeds/packages/haproxy/Makefile"
-  local patch_script="feeds/packages/haproxy/get-latest-patches.sh"
-  local version="${HAPROXY_VERSION:-}"
-  local branch
+  local makefile patch_script version branch
 
-  if [ ! -f "$makefile" ]; then
-    echo "HAProxy Makefile not found: $makefile" >&2
-    exit 1
+  makefile="$(
+    first_existing_file \
+      feeds/packages/haproxy/Makefile \
+      feeds/packages/net/haproxy/Makefile || true
+  )"
+
+  if [ -z "$makefile" ]; then
+    echo "Skipping missing HAProxy Makefile"
+    return 0
   fi
+
+  patch_script="$(dirname "$makefile")/get-latest-patches.sh"
+  version="${HAPROXY_VERSION:-}"
 
   if [ -z "$version" ]; then
     version="$(latest_haproxy_lts_version)"
@@ -93,27 +148,35 @@ update_haproxy_package() {
 
 update_haproxy_package
 
-#修复ipt2socks无法正确监听IPV6，并开启双线程
-sed -i 's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh
+# PassWall runtime tuning.
+sed_if_file feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh \
+  's/-b 0.0.0.0 -s/-b 0.0.0.0 -B :: -j 2 -s/'
 
+passwall_haproxy_lua="feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua"
+sed_if_file "$passwall_haproxy_lua" '/^[[:space:]]*option[[:space:]]\+tcplog/a\    option tcp-check'
+sed_ext_if_file "$passwall_haproxy_lua" 's/([[:space:]]retries[[:space:]]+)2/\11/'
+sed_ext_if_file "$passwall_haproxy_lua" 's/(timeout[[:space:]]+client[[:space:]]+)1m/\130m/'
+sed_ext_if_file "$passwall_haproxy_lua" 's/(timeout[[:space:]]+server[[:space:]]+)1m/\16m/'
+sed_if_file "$passwall_haproxy_lua" 's/rise[[:space:]]\+1[[:space:]]\+fall[[:space:]]\+3[[:space:]]\+{{backup}}/rise 6 fall 1 {{backup}}  on-marked-down shutdown-sessions/'
+sed_ext_if_file feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy_check.sh \
+  's/--connect-timeout 3 --retry +[0-9]+/--connect-timeout 3 --retry 1/'
 
-# ① 在 defaults 段落里插入 `option tcp-check`
-sed -i '/^[[:space:]]*option[[:space:]]\+tcplog/a\    option tcp-check' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-# ② 把 retries 2 → 1（允许任意空格）
-sed -Ei 's/([[:space:]]retries[[:space:]]+)2/\11/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-# ③ 把 timeout client 1m → 30m
-sed -Ei 's/(timeout[[:space:]]+client[[:space:]]+)1m/\130m/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-# ④ 把 timeout server 1m → 6m
-sed -Ei 's/(timeout[[:space:]]+server[[:space:]]+)1m/\16m/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-# ⑤ 保持原有 rise/fall 改写（仍然能匹配，留作备份）
-sed -i 's/rise[[:space:]]\+1[[:space:]]\+fall[[:space:]]\+3[[:space:]]\+{{backup}}/rise 6 fall 1 {{backup}}  on-marked-down shutdown-sessions/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy.lua
-# ⑥ haproxy_check.sh 里已经是 --retry 1，可不再改；
-#    若想保持脚本向后兼容，可写成“只要不是 1 就替换”
-sed -Ei 's/--connect-timeout 3 --retry +[0-9]+/--connect-timeout 3 --retry 1/' feeds/passwall/luci-app-passwall/root/usr/share/passwall/haproxy_check.sh
+# MosDNS rule tweak when the sbwml LuCI package is present.
+mosdns_root="$(
+  for dir in feeds/sbwml/luci-app-mosdns new/mosdns; do
+    if [ -d "$dir/root/etc/mosdns/rule" ]; then
+      printf '%s\n' "$dir/root/etc/mosdns"
+      break
+    fi
+  done
+)"
+if [ -n "$mosdns_root" ]; then
+  sed_if_file "$mosdns_root/rule/whitelist.txt" '/domain:bing.com/d'
+  echo "domain:bing.com" >> "$mosdns_root/rule/greylist.txt"
+else
+  echo "Skipping missing MosDNS rule directory"
+fi
 
-sed -i '/domain:bing.com/d' feeds/sbwml/luci-app-mosdns/root/etc/mosdns/rule/whitelist.txt
-echo "domain:bing.com" >> feeds/sbwml/luci-app-mosdns/root/etc/mosdns/rule/greylist.txt
-
-#解除Adguardhome更新
-sed -i '/--no-check-update/d' feeds/kenzo/adguardhome/files/adguardhome.init
-sed -i 's/PKG_HASH:=.*/PKG_HASH:=skip/' feeds/kenzo/adguardhome/Makefile
+# Allow AdGuardHome in-firmware updater and follow current upstream binary hash.
+sed_if_file feeds/kenzo/adguardhome/files/adguardhome.init '/--no-check-update/d'
+sed_if_file feeds/kenzo/adguardhome/Makefile 's/PKG_HASH:=.*/PKG_HASH:=skip/'

@@ -22,22 +22,24 @@ A template for building OpenWrt with GitHub Actions
 - It may take a long time to expand a config and build the OpenWrt firmware. Thus, before create repository to build your own firmware, you may check out if others have already built it which meet your needs by simply [search `Actions-Openwrt` in GitHub](https://github.com/search?q=Actions-openwrt).
 - Add some meta info of your built firmware (such as firmware architecture and installed packages) to your repository introduction, this will save others' time.
 
-## Config workflow
+## R4S config workflow
 
 This fork keeps a minimal `config.seed` instead of maintaining a full generated `.config`.
 
-- Edit `config.seed` when you want to add or remove LuCI apps or package options.
+- This branch builds a NanoPi R4S 4GB SD image. It bootstraps OpenWrt through `sbwml/r4s_build_script` with `BUILD=n git_name=private git_password=private LAN=192.168.2.1 bash build.sh rc2 nanopi-r4s`, then replaces the generated config with this repository's `config.seed`.
+- Edit `config.seed` when you want to add or remove LuCI apps or package options. The R4S seed keeps the hardware/performance pieces from the R4S build path, including `autocore-arm`, LuCI CPU frequency control, PWM fan, RTL8152 USB NIC, USB2/USB3, zram, R4S kernel CFLAGS, and an 8-thread CoreMark setting.
 - Edit `feeds.custom.conf` when you want to add, remove, or change custom feed sources. Build and update-checker both read this file.
 - `forbidden-packages.txt` is the block policy. `prune:` rules remove known broken/unwanted package entries with a `Makefile` before OpenWrt scans package menus; `exact:` and `regex:` rules only fail the final config check if those packages are selected.
 - Do not add dependency libraries or kernel modules manually unless you are deliberately overriding OpenWrt defaults. `make defconfig` expands real dependencies during the GitHub Actions build.
 - The build replaces only `feeds/packages/lang/golang` with OpenWrt official `openwrt/packages` `lang/golang`, then rebuilds the packages feed index so current Go-based packages can build without importing an extra third-party Go feed.
-- This profile enables OpenWrt's testing kernel option, so it follows the target's `KERNEL_TESTING_PATCHVER`.
-- This PVE VM profile keeps SeaBIOS and EFI images, VirtIO disk/net support through `CONFIG_VIRTIO_SUPPORT`, and Intel i225 passthrough through `kmod-igc`.
+- This R4S profile keeps the same lean application set used by the x86 profile: PassWall, MosDNS, SmartDNS, AdGuardHome, ddns-go, nlbwmon, arpbind, autoreboot, ramfree, ttyd, turboacc, upnp, wol, coremark, lsof, and `openssh-sftp-server`.
+- The R4S branch intentionally does not inherit sbwml common's full application list. Docker, Samba, legacy `ddns-scripts`, VLMCS, vsftpd, openlist, qbittorrent, zerotier, homeproxy, nikki, mihomo, and similar non-target packages are blocked.
+- The R4S blacklist allows board-required USB core, USB3, RTL8152, MMC/SDHCI, cpufreq, fan, zram, and router network stack packages, while continuing to reject x86-only NICs, VirtIO, GRUB, USB storage/audio, disk utilities, and non-target applications.
 - `diy-part2.sh` tracks the latest HAProxy LTS release automatically. Set `HAPROXY_VERSION` in the build workflow only when you need to pin or roll back temporarily.
 - Edit `forbidden-packages.txt` when an upstream or Lean default package must be blocked from the image.
 - The build workflow writes the expanded diff to `config.effective` in the Actions log, so you can see what the latest upstream Kconfig resolved.
 - The build workflow writes the final built-in package selections to `package-list.txt`, uploads config reports, and fails when any forbidden package is selected.
-- The update checker tracks Lean's source plus the external feeds in `feeds.custom.conf`; source or plugin feed updates trigger a rebuild automatically.
+- The update checker tracks `sbwml/r4s_build_script`, the `init.cooluc.com/tags/v25` release pointer, OpenWrt's resolved release tag, the official Go feed source, and the external feeds in `feeds.custom.conf`; source or plugin feed updates trigger a rebuild automatically.
 - The root `.config` file is ignored on purpose. It is a generated local/OpenWrt build artifact, not the repository config source.
 
 Feed lines use OpenWrt's normal format. A `;branch` suffix tracks that branch, while a URL without suffix tracks the remote default branch:

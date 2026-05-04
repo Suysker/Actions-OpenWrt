@@ -1,4 +1,4 @@
-# Forbidden package selections for the PVE OpenWrt VM image.
+# Forbidden package selections for the NanoPi R4S OpenWrt image.
 # Blank lines and comments are ignored.
 #
 # Formats:
@@ -7,26 +7,56 @@
 #   regex:<extended-regular-expression>
 #   <plain text> is treated like exact:<plain text>
 
-# Proxy/plugin packages that are not part of config.seed.
+# Broken/unwanted LuCI entries that should be removed before package menus.
 prune:luci-app-fchomo
 prune:luci-app-dockerman
-prune:luci-theme-alpha
 prune:luci-app-bypass
 prune:luci-app-ddns
 prune:luci-app-ssr-plus
 prune:luci-app-rclone
 prune:luci-app-vlmcsd
 prune:luci-app-vsftpd
+
+# Applications intentionally excluded from the R4S lean profile.
+exact:luci-app-docker
+exact:luci-app-diskman
+exact:luci-app-filemanager
+exact:luci-app-homeproxy
+exact:luci-app-nikki
+exact:luci-app-openlist
+exact:luci-app-openlist2
+exact:luci-app-qbittorrent
+exact:luci-app-samba4
+exact:luci-app-store
+exact:luci-app-quickstart
+exact:luci-app-vlmcsd
+exact:luci-app-vsftpd
+exact:luci-app-zerotier
+exact:docker
+exact:dockerd
+exact:containerd
+exact:runc
+exact:homeproxy
+exact:nikki
+exact:openlist
+exact:openlist2
+exact:qbittorrent
+regex:^(autosamba|autosamba_.*|.*samba.*|ksmbd.*)$
+exact:vlmcsd
+exact:vsftpd
+exact:zerotier
+
+# Keep ddns-go only; block old LuCI/DDNS scripts.
 exact:ddns-scripts
 exact:ddns-scripts-services
 regex:^ddns-scripts_
+
+# Proxy stacks not selected in config.seed.
 exact:mihomo
 exact:sing-box
 exact:trojan-plus
 exact:simple-obfs
 exact:v2ray-plugin
-exact:vlmcsd
-exact:vsftpd
 exact:shadowsocks-rust
 regex:^shadowsocks-
 exact:luci-proto-wireguard
@@ -36,34 +66,31 @@ exact:luci-proto-bonding
 exact:proto-bonding
 exact:kmod-bonding
 
-# Physical NIC drivers not needed by this PVE VM.
-# Keep CONFIG_VIRTIO_SUPPORT and kmod-igc in config.seed.
-regex:^kmod-(8139cp|8139too|alx|amazon-ena|amd-xgbe|atlantic|bnx2|bnx2x|e1000|e1000e|forcedeth|i40e|i40evf|iavf|igb|igbvf|ixgbe|mlx4-core|mlx5-core|mlxfw|pcnet32|r8125-rss|r8126-rss|r8168|tg3|tulip|via-velocity|vmxnet3)$
+# Physical NIC drivers not needed by R4S.
+# Keep native Rockchip networking and USB RTL8152 support.
+regex:^kmod-(8139cp|8139too|alx|amazon-ena|amd-xgbe|atlantic|bnx2|bnx2x|e1000|e1000e|forcedeth|i40e|i40evf|iavf|igb|igbvf|igc|ixgbe|mlx4-core|mlx5-core|mlxfw|pcnet32|r8125-rss|r8126-rss|r8168|tg3|tulip|via-velocity|vmxnet3)$
 regex:^(amd64|intel)-microcode$
+exact:virtio-console-helper
+regex:^kmod-virtio
 
 # Firmware/data packages for unrelated physical hardware.
 regex:^[A-Za-z0-9_.+-]+-firmware$
 exact:usbids
 exact:usbutils
-# This helper is not the VirtIO disk/net driver.
-exact:virtio-console-helper
 
-# USB, HID, removable storage and extra filesystem support.
-# Filesystem modules are not hard-forbidden; x86 images may pull them in.
-regex:^kmod-usb
-regex:^kmod-hid
-regex:^kmod-drm-
+# R4S needs USB core/USB3/RTL8152, MMC and SDHCI. Block only storage, audio
+# and display/GPU modules that are not needed for this router profile.
+exact:kmod-usb-storage
+exact:kmod-usb-storage-extras
+exact:kmod-usb-storage-uas
+exact:kmod-usb-audio
 regex:^kmod-sound-
-exact:kmod-mmc
-exact:kmod-sdhci
+regex:^kmod-drm-
 exact:ntfs3-mount
 
-# Samba, automount and disk maintenance tools.
-regex:^(autosamba|autosamba_.*|.*samba.*|ksmbd.*)$
+# Disk maintenance tools should not be selected into the image.
 exact:automount
 exact:cfdisk
 exact:e2fsprogs
 exact:mkf2fs
 exact:partx-utils
-
-# Sensors and nonessential maintenance tools.

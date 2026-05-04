@@ -1,27 +1,47 @@
-# Minimal OpenWrt config seed.
-# Build jobs expand this file with "make defconfig" against the latest source.
+# Minimal OpenWrt config seed for NanoPi R4S 4GB SD.
+# Build jobs expand this file with "make defconfig" after sbwml R4S bootstrap.
 # Edit this file instead of the generated full .config.
 
-CONFIG_TARGET_x86=y
-CONFIG_TARGET_x86_64=y
-CONFIG_TARGET_x86_64_DEVICE_generic=y
-CONFIG_TESTING_KERNEL=y
+CONFIG_TARGET_rockchip=y
+CONFIG_TARGET_rockchip_armv8=y
+CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r4s=y
 
-# PVE VM image: x86_64 squashfs EFI image.
+# Keep the R4S image lean; do not build every kmod/nonshared package.
+# CONFIG_ALL_KMODS is not set
+# CONFIG_ALL_NONSHARED is not set
+
+# R4S release image: squashfs SD/sysupgrade image.
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
 # CONFIG_TARGET_ROOTFS_EXT4FS is not set
 # CONFIG_TARGET_ROOTFS_TARGZ is not set
-CONFIG_GRUB_EFI_IMAGES=y
-CONFIG_GRUB_IMAGES=y
-CONFIG_GRUB_CONSOLE=y
-CONFIG_GRUB_TIMEOUT="0"
 CONFIG_TARGET_IMAGES_GZIP=y
 CONFIG_TARGET_KERNEL_PARTSIZE=32
-CONFIG_TARGET_ROOTFS_PARTSIZE=365
-CONFIG_VIRTIO_SUPPORT=y
+CONFIG_TARGET_ROOTFS_PARTSIZE=944
+
+# R4S kernel/performance defaults from sbwml's R4S profile.
+CONFIG_KERNEL_BUILD_DOMAIN="cooluc.com"
+CONFIG_KERNEL_BUILD_USER="admin"
+CONFIG_KERNEL_CFLAGS="-march=armv8-a+crypto+crc -mcpu=cortex-a72+crypto+crc -mtune=cortex-a72"
+CONFIG_COREMARK_NUMBER_OF_THREADS=8
+CONFIG_PACKAGE_autocore-arm=y
+CONFIG_PACKAGE_default-settings=y
+CONFIG_PACKAGE_coremark=y
+CONFIG_PACKAGE_lsof=y
+
+# CPU frequency, fan and R4S hardware support.
+CONFIG_PACKAGE_luci-app-cpufreq=y
+CONFIG_PACKAGE_luci-i18n-cpufreq-zh-cn=y
+CONFIG_PACKAGE_kmod-hwmon-pwmfan=y
+CONFIG_PACKAGE_kmod-usb2=y
+CONFIG_PACKAGE_kmod-usb3=y
+CONFIG_PACKAGE_kmod-usb-net=y
+CONFIG_PACKAGE_kmod-usb-net-rtl8152-vendor=y
+CONFIG_PACKAGE_zram-swap=y
+CONFIG_PACKAGE_kmod-zram=y
+CONFIG_ZRAM_DEF_COMP_LZ4=y
 
 # Use dnsmasq-full for ipset/tproxy DNS modes without carrying old stale
-# proxy-plugin selections from the generated .config.
+# proxy-plugin selections from generated configs.
 # CONFIG_PACKAGE_dnsmasq is not set
 CONFIG_PACKAGE_dnsmasq-full=y
 CONFIG_PACKAGE_dnsmasq_full_dhcp=y
@@ -29,115 +49,54 @@ CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
 CONFIG_PACKAGE_dnsmasq_full_ipset=y
 
 # Main-router network stack.
-CONFIG_PACKAGE_firewall=y
+CONFIG_PACKAGE_firewall4=y
 CONFIG_PACKAGE_ip-full=y
 CONFIG_PACKAGE_ipset=y
 CONFIG_PACKAGE_iptables=y
-CONFIG_PACKAGE_iptables-mod-extra=y
-CONFIG_PACKAGE_iptables-mod-fullconenat=y
-CONFIG_PACKAGE_iptables-mod-tproxy=y
 CONFIG_PACKAGE_ip6tables=y
+CONFIG_PACKAGE_nftables=y
+CONFIG_PACKAGE_kmod-nft-fullcone=y
+CONFIG_PACKAGE_kmod-nft-offload=y
+CONFIG_PACKAGE_kmod-nft-socket=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+CONFIG_PACKAGE_natflow=y
+CONFIG_PACKAGE_kmod-tcp-bbr3=y
+CONFIG_PACKAGE_kmod-tcp-brutal=y
+CONFIG_PACKAGE_kmod-tun=y
 CONFIG_PACKAGE_ppp=y
 CONFIG_PACKAGE_ppp-mod-pppoe=y
 CONFIG_PACKAGE_odhcp6c=y
 CONFIG_PACKAGE_odhcpd-ipv6only=y
 CONFIG_PACKAGE_ipv6helper=y
 
-# PVE VM hardware:
-# - VirtIO SCSI disk and VirtIO net are enabled by CONFIG_VIRTIO_SUPPORT.
-# - Intel i225 passthrough uses kmod-igc.
-CONFIG_PACKAGE_kmod-scsi-core=y
-CONFIG_PACKAGE_kmod-igc=y
-CONFIG_PACKAGE_kmod-ipt-fullconenat=y
-
-# Block unwanted Lean/x86 default packages. If one of these becomes a real
-# dependency later, forbidden-packages.txt will make the CI failure explicit.
-# CONFIG_PACKAGE_amd64-microcode is not set
-# CONFIG_PACKAGE_intel-microcode is not set
-# CONFIG_PACKAGE_partx-utils is not set
-# CONFIG_PACKAGE_mkf2fs is not set
-# CONFIG_PACKAGE_e2fsprogs is not set
-# CONFIG_PACKAGE_cfdisk is not set
-# CONFIG_PACKAGE_automount is not set
-# CONFIG_PACKAGE_autosamba is not set
-# CONFIG_PACKAGE_autosamba_INCLUDE_KSMBD is not set
-# CONFIG_PACKAGE_luci-app-bypass is not set
-# CONFIG_PACKAGE_luci-app-ddns is not set
-# CONFIG_PACKAGE_luci-app-rclone is not set
-# CONFIG_PACKAGE_luci-app-ssr-plus is not set
+# Block unwanted default packages. If one becomes a real dependency later,
+# forbidden-packages.txt will make the CI failure explicit.
+# CONFIG_PACKAGE_luci-app-dockerman is not set
+# CONFIG_PACKAGE_luci-app-docker is not set
+# CONFIG_PACKAGE_luci-app-homeproxy is not set
+# CONFIG_PACKAGE_luci-app-nikki is not set
+# CONFIG_PACKAGE_luci-app-openlist2 is not set
+# CONFIG_PACKAGE_luci-app-qbittorrent is not set
+# CONFIG_PACKAGE_luci-app-samba4 is not set
 # CONFIG_PACKAGE_luci-app-vlmcsd is not set
 # CONFIG_PACKAGE_luci-app-vsftpd is not set
+# CONFIG_PACKAGE_luci-app-zerotier is not set
+# CONFIG_PACKAGE_luci-app-ddns is not set
 # CONFIG_PACKAGE_ddns-scripts is not set
 # CONFIG_PACKAGE_ddns-scripts-services is not set
 # CONFIG_PACKAGE_ddns-scripts_aliyun is not set
 # CONFIG_PACKAGE_ddns-scripts_dnspod is not set
-# CONFIG_PACKAGE_bnx2-firmware is not set
-# CONFIG_PACKAGE_bnx2x-firmware is not set
-# CONFIG_PACKAGE_usbids is not set
-# CONFIG_PACKAGE_usbutils is not set
-# CONFIG_PACKAGE_virtio-console-helper is not set
-# CONFIG_PACKAGE_kmod-8139cp is not set
-# CONFIG_PACKAGE_kmod-8139too is not set
-# CONFIG_PACKAGE_kmod-alx is not set
-# CONFIG_PACKAGE_kmod-amazon-ena is not set
-# CONFIG_PACKAGE_kmod-amd-xgbe is not set
-# CONFIG_PACKAGE_kmod-atlantic is not set
-# CONFIG_PACKAGE_kmod-bnx2 is not set
-# CONFIG_PACKAGE_kmod-bnx2x is not set
-# CONFIG_PACKAGE_kmod-e1000 is not set
-# CONFIG_PACKAGE_kmod-e1000e is not set
-# CONFIG_PACKAGE_kmod-forcedeth is not set
-# CONFIG_PACKAGE_kmod-i40e is not set
-# CONFIG_PACKAGE_kmod-i40evf is not set
-# CONFIG_PACKAGE_kmod-iavf is not set
-# CONFIG_PACKAGE_kmod-igb is not set
-# CONFIG_PACKAGE_kmod-igbvf is not set
-# CONFIG_PACKAGE_kmod-ixgbe is not set
-# CONFIG_PACKAGE_kmod-mlx4-core is not set
-# CONFIG_PACKAGE_kmod-mlx5-core is not set
-# CONFIG_PACKAGE_kmod-mlxfw is not set
-# CONFIG_PACKAGE_kmod-pcnet32 is not set
-# CONFIG_PACKAGE_kmod-r8125-rss is not set
-# CONFIG_PACKAGE_kmod-r8126-rss is not set
-# CONFIG_PACKAGE_kmod-r8168 is not set
-# CONFIG_PACKAGE_kmod-tg3 is not set
-# CONFIG_PACKAGE_kmod-tulip is not set
-# CONFIG_PACKAGE_kmod-via-velocity is not set
-# CONFIG_PACKAGE_kmod-vmxnet3 is not set
-# CONFIG_PACKAGE_kmod-hid is not set
-# CONFIG_PACKAGE_kmod-hid-generic is not set
-# CONFIG_PACKAGE_kmod-mmc is not set
-# CONFIG_PACKAGE_kmod-sdhci is not set
-# CONFIG_PACKAGE_kmod-usb-audio is not set
-# CONFIG_PACKAGE_kmod-usb-core is not set
-# CONFIG_PACKAGE_kmod-usb-hid is not set
-# CONFIG_PACKAGE_kmod-usb-net is not set
-# CONFIG_PACKAGE_kmod-usb-net-aqc111 is not set
-# CONFIG_PACKAGE_kmod-usb-net-asix-ax88179 is not set
-# CONFIG_PACKAGE_kmod-usb-net-rtl8150 is not set
-# CONFIG_PACKAGE_kmod-usb-net-rtl8152-vendor is not set
+# CONFIG_PACKAGE_mihomo is not set
+# CONFIG_PACKAGE_sing-box is not set
+# CONFIG_PACKAGE_vlmcsd is not set
+# CONFIG_PACKAGE_vsftpd is not set
+# CONFIG_PACKAGE_kmod-igc is not set
 # CONFIG_PACKAGE_kmod-usb-storage is not set
 # CONFIG_PACKAGE_kmod-usb-storage-extras is not set
 # CONFIG_PACKAGE_kmod-usb-storage-uas is not set
-# CONFIG_PACKAGE_kmod-drm-amdgpu is not set
-# CONFIG_PACKAGE_kmod-drm-i915 is not set
-# CONFIG_PACKAGE_kmod-sound-hda-core is not set
-# CONFIG_PACKAGE_kmod-sound-hda-codec-realtek is not set
-# CONFIG_PACKAGE_kmod-sound-hda-codec-via is not set
-# CONFIG_PACKAGE_kmod-sound-hda-codec-hdmi is not set
-# CONFIG_PACKAGE_kmod-sound-hda-intel is not set
-# CONFIG_PACKAGE_kmod-sound-i8x0 is not set
-# CONFIG_PACKAGE_kmod-sound-via82xx is not set
-# CONFIG_PACKAGE_ntfs3-mount is not set
-CONFIG_PACKAGE_coremark=y
-CONFIG_PACKAGE_lsof=y
-# CONFIG_PACKAGE_mihomo is not set
-# CONFIG_PACKAGE_shadowsocks-rust-sslocal is not set
-# CONFIG_PACKAGE_shadowsocks-rust-ssserver is not set
-# CONFIG_PACKAGE_shadowsocks-rust-ssservice is not set
-# CONFIG_PACKAGE_shadowsocks-rust-ssurl is not set
-# CONFIG_PACKAGE_vlmcsd is not set
-# CONFIG_PACKAGE_vsftpd is not set
+# CONFIG_PACKAGE_kmod-usb-audio is not set
+# CONFIG_PACKAGE_kmod-drm-rockchip is not set
+# CONFIG_PACKAGE_kmod-drm-panfrost is not set
 
 # LuCI base.
 CONFIG_PACKAGE_luci=y
@@ -155,7 +114,7 @@ CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy=y
 CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy=y
 CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Hysteria=y
 CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geodata=y
-CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geoview=y
+CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Geoview=y
 CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y
 # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Client is not set
 # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_ShadowsocksR_Libev_Server is not set
@@ -190,7 +149,7 @@ CONFIG_PACKAGE_luci-i18n-adguardhome-zh_Hans=y
 CONFIG_PACKAGE_luci-i18n-adguardhome-zh-cn=y
 CONFIG_PACKAGE_adguardhome=y
 
-# Small management plugins kept from the current .config.
+# Small management plugins kept in sync with the x86 profile.
 CONFIG_PACKAGE_luci-app-ddns-go=y
 CONFIG_PACKAGE_luci-i18n-ddns-go-zh_Hans=y
 CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
@@ -218,7 +177,7 @@ CONFIG_PACKAGE_luci-i18n-wol-zh-cn=y
 CONFIG_PACKAGE_wol=y
 CONFIG_PACKAGE_etherwake=y
 
-# CLI tools that are useful in a PVE/OpenWrt maintenance shell.
+# CLI tools that are useful in a router maintenance shell.
 CONFIG_PACKAGE_htop=y
 # CONFIG_HTOP_LMSENSORS is not set
 CONFIG_PACKAGE_openssh-sftp-server=y
