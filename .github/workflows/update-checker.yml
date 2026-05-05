@@ -33,7 +33,9 @@ jobs:
         set -euo pipefail
 
         profile="${{ matrix.profile }}"
-        source "profiles/${profile}/profile.env"
+        merged_env="$RUNNER_TEMP/profile-${profile}.env"
+        bash scripts/render-profile.sh env "$profile" > "$merged_env"
+        source "$merged_env"
 
         mkdir -p ".source-state/${profile}"
         sources_file=".source-state/${profile}/sources.txt"
@@ -64,21 +66,19 @@ jobs:
         }
 
         case "$BOOTSTRAP_KIND" in
-          git)
-            record_ref "$REPO_URL" "refs/heads/$REPO_BRANCH" "openwrt:${profile}"
-            ;;
-          r4s_script)
-            record_ref "$R4S_SCRIPT_REPO" "refs/heads/$R4S_SCRIPT_REF" "r4s-script"
-            release_version="$(curl -fsSL "$R4S_RELEASE_TAG_URL" | tr -d '[:space:]')"
-            release_tag="v${release_version#v}"
-            printf '%s %s %s\n' "r4s-release" "$R4S_RELEASE_TAG_URL" "$release_tag" | tee -a "$sources_file"
-            record_ref "https://github.com/openwrt/openwrt.git" "refs/tags/$release_tag" "openwrt:$release_tag"
-            ;;
+          git) ;;
           *)
             echo "::error::Unknown bootstrap kind: $BOOTSTRAP_KIND"
             exit 2
             ;;
         esac
+
+        case "$REPO_REF" in
+          refs/*) openwrt_ref="$REPO_REF" ;;
+          *) openwrt_ref="refs/heads/$REPO_REF" ;;
+        esac
+
+        record_ref "$REPO_URL" "$openwrt_ref" "openwrt:${profile}"
 
         while read -r label repo ref; do
           [ -z "${label:-}" ] && continue
@@ -94,9 +94,21 @@ jobs:
           sha256sum \
             "profiles/common/config.seed" \
             "profiles/common/forbidden-packages.txt" \
+            "profiles/common/profile.env" \
+            "profiles/common/required-packages.txt" \
             "profiles/${profile}/config.seed" \
             "profiles/${profile}/forbidden-packages.txt" \
-            "profiles/${profile}/profile.env"
+            "profiles/${profile}/profile.env" \
+            "profiles/${profile}/required-packages.txt" \
+            "feeds.custom.conf" \
+            "diy-part1.sh" \
+            "diy-part2.sh" \
+            "scripts/render-profile.sh" \
+            "scripts/check-forbidden-packages.sh" \
+            "scripts/check-required-packages.sh" \
+            "scripts/prune-packages.sh" \
+            "scripts/manage-custom-feeds.sh" \
+            "scripts/sync-official-golang.sh"
         } | sha256sum | awk -v profile="$profile" '{ print "profile-files " profile " " $1 }' | tee -a "$sources_file"
 
         fingerprint="$(sha256sum "$sources_file" | awk '{ print $1 }')"

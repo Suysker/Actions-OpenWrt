@@ -6,6 +6,7 @@ usage() {
 Usage:
   render-profile.sh config <profile> <output>
   render-profile.sh forbidden <profile> <output>
+  render-profile.sh required <profile> <output>
   render-profile.sh env <profile>
   render-profile.sh list
 EOF
@@ -57,6 +58,49 @@ render_pair() {
   } > "$output"
 }
 
+render_env() {
+  local profile="$1"
+  local pdir
+
+  pdir="$(profile_dir "$profile")"
+
+  if [ ! -r "$repo_root/profiles/common/profile.env" ]; then
+    echo "::error::Missing common profile env" >&2
+    exit 2
+  fi
+
+  if [ ! -r "$pdir/profile.env" ]; then
+    echo "::error::Missing profile env: $pdir/profile.env" >&2
+    exit 2
+  fi
+
+  awk -F= '
+    /^[[:space:]]*($|#)/ { next }
+
+    /^[A-Za-z_][A-Za-z0-9_]*=/ {
+      key = $1
+      value = substr($0, index($0, "=") + 1)
+      if (!(key in seen)) {
+        order[++count] = key
+      }
+      seen[key] = value
+      next
+    }
+
+    {
+      printf "::error::Invalid env line in %s:%d: %s\n", FILENAME, FNR, $0 > "/dev/stderr"
+      exit 2
+    }
+
+    END {
+      for (i = 1; i <= count; i++) {
+        key = order[i]
+        print key "=" seen[key]
+      }
+    }
+  ' "$repo_root/profiles/common/profile.env" "$pdir/profile.env"
+}
+
 case "$cmd" in
   list)
     find "$repo_root/profiles" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' |
@@ -67,12 +111,7 @@ case "$cmd" in
   env)
     profile="${2:-}"
     [ -n "$profile" ] || { usage; exit 2; }
-    pdir="$(profile_dir "$profile")"
-    if [ ! -r "$pdir/profile.env" ]; then
-      echo "::error::Missing profile env: $pdir/profile.env" >&2
-      exit 2
-    fi
-    cat "$pdir/profile.env"
+    render_env "$profile"
     ;;
 
   config)
@@ -87,6 +126,13 @@ case "$cmd" in
     output="${3:-}"
     [ -n "$profile" ] && [ -n "$output" ] || { usage; exit 2; }
     render_pair "forbidden-packages.txt" "$profile" "$output"
+    ;;
+
+  required)
+    profile="${2:-}"
+    output="${3:-}"
+    [ -n "$profile" ] && [ -n "$output" ] || { usage; exit 2; }
+    render_pair "required-packages.txt" "$profile" "$output"
     ;;
 
   *)

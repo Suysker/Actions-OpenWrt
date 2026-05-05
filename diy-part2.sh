@@ -49,8 +49,7 @@ first_existing_file() {
   return 1
 }
 
-# Default LAN IP. sbwml bootstrap also receives LAN=192.168.2.1; this keeps the
-# setting stable after our config seed replaces the bootstrap .config.
+# Default LAN IP for both public-source profiles.
 sed_if_file base-files/files/bin/config_generate 's/192.168.1.1/192.168.2.1/g; s/10.0.0.1/192.168.2.1/g'
 
 # Lean-only default DNS redirect rules are absent in the R4S tree, so these are

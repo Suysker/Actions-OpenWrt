@@ -12,6 +12,7 @@ prune:luci-app-fchomo
 prune:luci-app-dockerman
 prune:luci-theme-alpha
 prune:luci-app-bypass
+prune:luci-app-clashoo
 prune:luci-app-ddns
 prune:luci-app-homeproxy
 prune:luci-app-nikki
@@ -33,6 +34,7 @@ prune:openlist2
 prune:qbittorrent
 
 # Applications intentionally excluded from the lean profiles.
+exact:luci-app-clashoo
 exact:luci-app-docker
 exact:luci-app-diskman
 exact:luci-app-filemanager
@@ -61,6 +63,17 @@ exact:vlmcsd
 exact:vsftpd
 exact:zerotier
 
+# Both maintained profiles intentionally use firewall3/iptables, not nftables.
+exact:firewall4
+exact:nftables
+exact:iptables-nft
+exact:xtables-nft
+exact:miniupnpd-nftables
+exact:natflow
+exact:kmod-natflow
+exact:luci-app-natflow
+regex:^kmod-nft-
+
 # Keep ddns-go only; block old LuCI/DDNS scripts.
 exact:ddns-scripts
 exact:ddns-scripts-services
@@ -70,6 +83,7 @@ regex:^ddns-scripts_
 exact:mihomo
 exact:mihomo-alpha
 exact:mihomo-meta
+exact:clashoo
 exact:sing-box
 exact:trojan-plus
 exact:simple-obfs

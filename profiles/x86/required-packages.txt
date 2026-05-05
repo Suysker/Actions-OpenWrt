@@ -1,0 +1,22 @@
+# x86 PVE VM critical packages/config symbols.
+
+config:CONFIG_TARGET_x86_64_DEVICE_generic
+config:CONFIG_VIRTIO_SUPPORT
+
+package:dnsmasq-full
+package:firewall
+package:iptables
+package:iptables-mod-fullconenat
+package:iptables-mod-tproxy
+package:ip6tables
+package:ipset
+package:ppp
+package:ppp-mod-pppoe
+package:odhcp6c
+package:odhcpd-ipv6only
+package:ipv6helper
+
+package:kmod-scsi-core
+package:kmod-igc
+package:kmod-ipt-fullconenat
+package:miniupnpd

@@ -30,20 +30,23 @@ This fork keeps minimal profile fragments instead of maintaining a full generate
 - `master` is the only active maintenance branch. Old `X86` and `R4S` branches are kept as read-only references.
 - Edit `profiles/common/config.seed` when you want to add or remove shared LuCI apps or package options.
 - Edit `profiles/x86/config.seed` or `profiles/r4s/config.seed` only for target, image size, hardware drivers, kernel settings, and firewall/network-stack differences.
+- Edit `profiles/common/profile.env` for shared build metadata such as LAN IP, bootstrap mode, feeds update mode, and the official Go feed source. Profile env files only define source repo/ref, target validation, and profile names.
 - Edit `profiles/common/forbidden-packages.txt` for shared block/prune policy, and profile-specific forbidden files only for hardware differences.
-- The build renders `profiles/common/*` plus `profiles/<profile>/*` into temporary `.config` and forbidden package files; root-level `config.seed` and `forbidden-packages.txt` are intentionally not maintained.
+- Edit `profiles/common/required-packages.txt` or `profiles/<profile>/required-packages.txt` when a package/config symbol is critical and the build must fail if Kconfig drops it.
+- The build renders `profiles/common/*` plus `profiles/<profile>/*` into temporary `.config`, env, forbidden, and required package files; root-level `config.seed` and `forbidden-packages.txt` are intentionally not maintained.
 - Edit `feeds.custom.conf` when you want to add, remove, or change custom feed sources. Build and update-checker both read this file.
 - `prune:` rules remove known broken/unwanted package entries with a `Makefile` before OpenWrt scans package menus; `exact:` and `regex:` rules fail the final config check if those packages are selected.
 - Do not add dependency libraries or kernel modules manually unless you are deliberately overriding OpenWrt defaults. `make defconfig` expands real dependencies during the GitHub Actions build.
 - The build replaces only `feeds/packages/lang/golang` with OpenWrt official `openwrt/packages` `lang/golang`, then rebuilds the packages feed index so current Go-based packages can build without importing an extra third-party Go feed.
 - Shared packages currently include PassWall, MosDNS, SmartDNS, AdGuardHome, ddns-go, nlbwmon, arpbind, autoreboot, ramfree, ttyd, turboacc, upnp, wol, coremark, lsof, and `openssh-sftp-server`.
 - The x86 profile builds `coolsnowwolf/lede master` for the PVE VM image and keeps VirtIO plus `kmod-igc`.
-- The R4S profile bootstraps through `sbwml/r4s_build_script` with `BUILD=n git_name=private git_password=private LAN=192.168.2.1 bash build.sh rc2 nanopi-r4s`, then applies the rendered profile config.
+- The R4S profile builds the public OpenWrt `openwrt-25.12` branch for `friendlyarm_nanopi-r4s`, uses the 25.12 LTS kernel line, and keeps only public-source R4S hardware support such as cpufreq, pwmfan, R8169, RTL8152, USB, MMC/SDHCI, and zram.
+- Both maintained profiles intentionally use firewall3/iptables. `firewall4`, nftables packages, nft UPnP, and natflow are blocked.
 - Docker, Samba, legacy `ddns-scripts`, VLMCS, vsftpd, openlist, qbittorrent, zerotier, homeproxy, nikki, mihomo, and similar non-target packages are blocked before or after Kconfig resolution.
 - `diy-part2.sh` tracks the latest HAProxy LTS release automatically. Set `HAPROXY_VERSION` in the build workflow only when you need to pin or roll back temporarily.
 - The build workflow writes the expanded diff to `config.effective` in the Actions log, so you can see what the latest upstream Kconfig resolved.
-- The build workflow writes the final built-in package selections to `package-list.txt`, uploads config reports, and fails when any forbidden package is selected.
-- The update checker runs once per profile. x86 tracks Lean, official Go, custom feeds, and local profile fragments. R4S tracks `sbwml/r4s_build_script`, `init.cooluc.com/tags/v25`, OpenWrt's resolved release tag, official Go, custom feeds, and local profile fragments.
+- The build workflow writes the final built-in package selections to `package-list.txt`, uploads config reports, fails when any forbidden package is selected, and fails when any required package/config symbol is missing.
+- The update checker runs once per profile. x86 tracks Lean, while R4S tracks public OpenWrt `openwrt-25.12`; both also track official Go, custom feeds, shared profile files, profile-specific fragments, and build helper scripts.
 - The root `.config` file is ignored on purpose. It is a generated local/OpenWrt build artifact, not the repository config source.
 
 Feed lines use OpenWrt's normal format. A `;branch` suffix tracks that branch, while a URL without suffix tracks the remote default branch:

@@ -70,21 +70,24 @@ jobs:
       uses: actions/checkout@main
 
     - name: Load profile metadata
+      id: profile
       shell: bash
       run: |
         set -euo pipefail
 
         profile="${{ matrix.profile }}"
-        profile_env="profiles/${profile}/profile.env"
-        if [ ! -r "$profile_env" ]; then
-          echo "::error::Missing profile env: $profile_env"
-          exit 2
-        fi
+        merged_env="$RUNNER_TEMP/profile-${profile}.env"
+        bash scripts/render-profile.sh env "$profile" > "$merged_env"
 
         echo "PROFILE=$profile" >> "$GITHUB_ENV"
-        grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$profile_env" >> "$GITHUB_ENV"
+        grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$merged_env" >> "$GITHUB_ENV"
+        awk -F= '
+          $1 == "CACHE_PREFIX" { print "cache_prefix=" substr($0, index($0, "=") + 1) }
+          $1 == "CACHE_MIXKEY" { print "cache_mixkey=" substr($0, index($0, "=") + 1) }
+          $1 == "ARTIFACT_PREFIX" { print "artifact_prefix=" substr($0, index($0, "=") + 1) }
+        ' "$merged_env" >> "$GITHUB_OUTPUT"
         echo "Loaded profile metadata for $profile"
-        cat "$profile_env"
+        cat "$merged_env"
 
     - name: Initialization environment
       env:
@@ -107,17 +110,11 @@ jobs:
         set -euo pipefail
 
         df -hT "$PWD"
-        rm -rf /workdir/openwrt /workdir/r4s_build_script
+        rm -rf /workdir/openwrt
 
         case "$BOOTSTRAP_KIND" in
           git)
-            git clone "$REPO_URL" -b "$REPO_BRANCH" openwrt
-            ;;
-          r4s_script)
-            git clone --depth 1 --branch "$R4S_SCRIPT_REF" "$R4S_SCRIPT_REPO" r4s_build_script
-            cd r4s_build_script/openwrt
-            BUILD=n git_name=private git_password=private LAN="${LAN_IP:-192.168.2.1}" bash build.sh "$R4S_RELEASE" "$R4S_BOARD"
-            mv openwrt /workdir/openwrt
+            git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" openwrt
             ;;
           *)
             echo "::error::Unknown bootstrap kind: $BOOTSTRAP_KIND"
@@ -131,8 +128,8 @@ jobs:
       uses: HiGarfield/cachewrtbuild@main
       with:
         ccache: 'true'
-        mixkey: ${{ matrix.profile }}
-        prefix: 'openwrt'
+        mixkey: ${{ steps.profile.outputs.cache_mixkey }}
+        prefix: ${{ steps.profile.outputs.cache_prefix }}
 
     - name: Load custom feeds
       run: |
@@ -181,9 +178,11 @@ jobs:
 
         bash "$GITHUB_WORKSPACE/scripts/render-profile.sh" config "$PROFILE" "$profile_dir/.config"
         bash "$GITHUB_WORKSPACE/scripts/render-profile.sh" forbidden "$PROFILE" "$profile_dir/forbidden-packages.txt"
+        bash "$GITHUB_WORKSPACE/scripts/render-profile.sh" required "$PROFILE" "$profile_dir/required-packages.txt"
 
         echo "PROFILE_CONFIG=$profile_dir/.config" >> "$GITHUB_ENV"
         echo "PROFILE_FORBIDDEN=$profile_dir/forbidden-packages.txt" >> "$GITHUB_ENV"
+        echo "PROFILE_REQUIRED=$profile_dir/required-packages.txt" >> "$GITHUB_ENV"
         echo "Rendered profile config target:"
         grep '^CONFIG_TARGET' "$profile_dir/.config" || true
 
@@ -220,6 +219,10 @@ jobs:
           ".config" \
           "$PROFILE_FORBIDDEN" \
           "$GITHUB_WORKSPACE"
+        bash "$GITHUB_WORKSPACE/scripts/check-required-packages.sh" \
+          ".config" \
+          "$PROFILE_REQUIRED" \
+          "$GITHUB_WORKSPACE/package-list.txt"
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
@@ -228,7 +231,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: always()
       with:
-        name: OpenWrt_config_reports_${{ matrix.profile }}
+        name: ${{ steps.profile.outputs.artifact_prefix }}_config_reports_${{ matrix.profile }}
         path: |
           config.effective
           package-list.txt
@@ -254,7 +257,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
-        name: OpenWrt_bin_${{ matrix.profile }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: ${{ steps.profile.outputs.artifact_prefix }}_bin_${{ matrix.profile }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: openwrt/bin
 
     - name: Organize files
@@ -270,7 +273,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_firmware_${{ matrix.profile }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: ${{ steps.profile.outputs.artifact_prefix }}_firmware_${{ matrix.profile }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
     - name: Generate release tag
