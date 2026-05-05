@@ -67,6 +67,7 @@ exact:zerotier
 exact:firewall4
 exact:nftables
 exact:iptables-nft
+exact:ip6tables-nft
 exact:xtables-nft
 exact:miniupnpd-nftables
 exact:natflow
@@ -101,7 +102,4 @@ exact:kmod-bonding
 regex:^(autosamba|autosamba_.*|.*samba.*|ksmbd.*)$
 exact:automount
 exact:cfdisk
-exact:e2fsprogs
-exact:mkf2fs
-exact:partx-utils
 exact:ntfs3-mount

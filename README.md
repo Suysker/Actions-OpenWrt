@@ -40,8 +40,8 @@ This fork keeps minimal profile fragments instead of maintaining a full generate
 - The build replaces only `feeds/packages/lang/golang` with OpenWrt official `openwrt/packages` `lang/golang`, then rebuilds the packages feed index so current Go-based packages can build without importing an extra third-party Go feed.
 - Shared packages currently include PassWall, MosDNS, SmartDNS, AdGuardHome, ddns-go, nlbwmon, arpbind, autoreboot, ramfree, ttyd, turboacc, upnp, wol, coremark, lsof, and `openssh-sftp-server`.
 - The x86 profile builds `coolsnowwolf/lede master` for the PVE VM image and keeps VirtIO plus `kmod-igc`.
-- The R4S profile builds the public OpenWrt `openwrt-25.12` branch for `friendlyarm_nanopi-r4s`, uses the 25.12 LTS kernel line, and keeps only public-source R4S hardware support such as cpufreq, pwmfan, R8169, RTL8152, USB, MMC/SDHCI, and zram.
-- Both maintained profiles intentionally use firewall3/iptables. `firewall4`, nftables packages, nft UPnP, and natflow are blocked.
+- The R4S profile builds the public OpenWrt `openwrt-25.12` branch for `friendlyarm_nanopi-r4s`, uses the 25.12 LTS kernel line, and keeps only public-source R4S hardware support such as cpufreq, pwmfan, R8169, RTL8152, USB, MMC/SDHCI, NIC firmware, zram, and SD-image maintenance dependencies.
+- Both maintained profiles intentionally use firewall3/iptables. `firewall4`, nftables packages, nft UPnP, and natflow are blocked; R4S explicitly selects the iptables/legacy UPnP variant where OpenWrt offers multiple package variants.
 - Docker, Samba, legacy `ddns-scripts`, VLMCS, vsftpd, openlist, qbittorrent, zerotier, homeproxy, nikki, mihomo, and similar non-target packages are blocked before or after Kconfig resolution.
 - `diy-part2.sh` tracks the latest HAProxy LTS release automatically. Set `HAPROXY_VERSION` in the build workflow only when you need to pin or roll back temporarily.
 - The build workflow writes the expanded diff to `config.effective` in the Actions log, so you can see what the latest upstream Kconfig resolved.

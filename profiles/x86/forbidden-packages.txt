@@ -20,3 +20,8 @@ regex:^kmod-drm-
 regex:^kmod-sound-
 exact:kmod-mmc
 exact:kmod-sdhci
+
+# x86 PVE VM does not need in-firmware disk maintenance tools.
+exact:e2fsprogs
+exact:mkf2fs
+exact:partx-utils

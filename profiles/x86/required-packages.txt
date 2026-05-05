@@ -20,3 +20,9 @@ package:kmod-scsi-core
 package:kmod-igc
 package:kmod-ipt-fullconenat
 package:miniupnpd
+
+package:luci-app-arpbind
+package:luci-app-autoreboot
+package:luci-app-ramfree
+package:luci-app-turboacc
+package:wol

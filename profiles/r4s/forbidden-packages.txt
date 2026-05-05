@@ -8,7 +8,19 @@ exact:virtio-console-helper
 regex:^kmod-virtio
 
 # Firmware/data packages for unrelated physical hardware.
-regex:^[A-Za-z0-9_.+-]+-firmware$
+# R4S needs r8152-firmware/r8169-firmware for the selected NIC drivers.
+exact:amdgpu-firmware
+exact:i915-firmware
+exact:i915-firmware-dmc
+exact:i915-firmware-gsc
+exact:i915-firmware-guc
+exact:i915-firmware-huc
+exact:bnx2-firmware
+exact:bnx2x-firmware
+exact:airoha-en8811h-firmware
+exact:eip197-mini-firmware
+exact:kmod-mt7981-firmware
+exact:mt7981-wo-firmware
 exact:usbids
 exact:usbutils
 
