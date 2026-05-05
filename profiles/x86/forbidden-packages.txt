@@ -1,0 +1,22 @@
+# x86 PVE VM hardware blacklist.
+
+# Physical NIC drivers not needed by this PVE VM.
+# Keep CONFIG_VIRTIO_SUPPORT and kmod-igc in profiles/x86/config.seed.
+regex:^kmod-(8139cp|8139too|alx|amazon-ena|amd-xgbe|atlantic|bnx2|bnx2x|e1000|e1000e|forcedeth|i40e|i40evf|iavf|igb|igbvf|ixgbe|mlx4-core|mlx5-core|mlxfw|pcnet32|r8125-rss|r8126-rss|r8168|tg3|tulip|via-velocity|vmxnet3)$
+regex:^(amd64|intel)-microcode$
+
+# Firmware/data packages for unrelated physical hardware.
+regex:^[A-Za-z0-9_.+-]+-firmware$
+exact:usbids
+exact:usbutils
+
+# This helper is not the VirtIO disk/net driver.
+exact:virtio-console-helper
+
+# USB, HID, removable storage and display/audio support.
+regex:^kmod-usb
+regex:^kmod-hid
+regex:^kmod-drm-
+regex:^kmod-sound-
+exact:kmod-mmc
+exact:kmod-sdhci

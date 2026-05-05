@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-config_path="${1:-openwrt/.config}"
-rules_path="${2:-forbidden-packages.txt}"
+if [ "$#" -lt 2 ]; then
+  echo "Usage: $0 <openwrt-config> <forbidden-rules-file> [output-dir]" >&2
+  exit 2
+fi
+
+config_path="$1"
+rules_path="$2"
 output_dir="${3:-.}"
 
 if [ ! -r "$config_path" ]; then

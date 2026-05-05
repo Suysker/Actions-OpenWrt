@@ -4,18 +4,8 @@
 # File: .github/workflows/update-checker.yml
 # Description: Source code update checker
 #
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
 
 name: Update Checker
-
-env:
-  R4S_SCRIPT_REPO: https://github.com/sbwml/r4s_build_script
-  R4S_SCRIPT_REF: master
-  R4S_RELEASE_TAG_URL: https://init.cooluc.com/tags/v25
 
 on:
   workflow_dispatch:
@@ -25,9 +15,14 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        profile:
+          - x86
+          - r4s
 
     steps:
-
     - name: Checkout
       uses: actions/checkout@main
 
@@ -37,8 +32,12 @@ jobs:
       run: |
         set -euo pipefail
 
-        mkdir -p .source-state
-        : > .source-state/sources.txt
+        profile="${{ matrix.profile }}"
+        source "profiles/${profile}/profile.env"
+
+        mkdir -p ".source-state/${profile}"
+        sources_file=".source-state/${profile}/sources.txt"
+        : > "$sources_file"
 
         record_ref() {
           local repo="$1"
@@ -61,15 +60,25 @@ jobs:
             exit 1
           fi
 
-          printf '%s %s %s %s\n' "$label" "$repo" "${resolved_ref:-$ref}" "$sha" | tee -a .source-state/sources.txt
+          printf '%s %s %s %s\n' "$label" "$repo" "${resolved_ref:-$ref}" "$sha" | tee -a "$sources_file"
         }
 
-        record_ref "$R4S_SCRIPT_REPO" "refs/heads/$R4S_SCRIPT_REF" "r4s-script"
-
-        release_version="$(curl -fsSL "$R4S_RELEASE_TAG_URL" | tr -d '[:space:]')"
-        release_tag="v${release_version#v}"
-        printf '%s %s %s\n' "r4s-release" "$R4S_RELEASE_TAG_URL" "$release_tag" | tee -a .source-state/sources.txt
-        record_ref "https://github.com/openwrt/openwrt.git" "refs/tags/$release_tag" "openwrt:$release_tag"
+        case "$BOOTSTRAP_KIND" in
+          git)
+            record_ref "$REPO_URL" "refs/heads/$REPO_BRANCH" "openwrt:${profile}"
+            ;;
+          r4s_script)
+            record_ref "$R4S_SCRIPT_REPO" "refs/heads/$R4S_SCRIPT_REF" "r4s-script"
+            release_version="$(curl -fsSL "$R4S_RELEASE_TAG_URL" | tr -d '[:space:]')"
+            release_tag="v${release_version#v}"
+            printf '%s %s %s\n' "r4s-release" "$R4S_RELEASE_TAG_URL" "$release_tag" | tee -a "$sources_file"
+            record_ref "https://github.com/openwrt/openwrt.git" "refs/tags/$release_tag" "openwrt:$release_tag"
+            ;;
+          *)
+            echo "::error::Unknown bootstrap kind: $BOOTSTRAP_KIND"
+            exit 2
+            ;;
+        esac
 
         while read -r label repo ref; do
           [ -z "${label:-}" ] && continue
@@ -81,19 +90,29 @@ jobs:
           record_ref "$repo" "${ref:-HEAD}" "feed:$feed"
         done < <(bash "$GITHUB_WORKSPACE/scripts/manage-custom-feeds.sh" refs "$GITHUB_WORKSPACE/feeds.custom.conf")
 
-        fingerprint="$(sha256sum .source-state/sources.txt | awk '{ print $1 }')"
+        {
+          sha256sum \
+            "profiles/common/config.seed" \
+            "profiles/common/forbidden-packages.txt" \
+            "profiles/${profile}/config.seed" \
+            "profiles/${profile}/forbidden-packages.txt" \
+            "profiles/${profile}/profile.env"
+        } | sha256sum | awk -v profile="$profile" '{ print "profile-files " profile " " $1 }' | tee -a "$sources_file"
+
+        fingerprint="$(sha256sum "$sources_file" | awk '{ print $1 }')"
         echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+        echo "sources_file=$sources_file" >> "$GITHUB_OUTPUT"
 
     - name: Compare source fingerprint
       id: cacheHash
       uses: actions/cache@v4
       with:
-        path: .source-state
-        key: source_${{ steps.sources.outputs.fingerprint }}
+        path: .source-state/${{ matrix.profile }}
+        key: source_${{ matrix.profile }}_${{ steps.sources.outputs.fingerprint }}
 
     - name: Show changed source fingerprint
       if: steps.cacheHash.outputs.cache-hit != 'true'
-      run: cat .source-state/sources.txt
+      run: cat "${{ steps.sources.outputs.sources_file }}"
 
     - name: Trigger build
       if: steps.cacheHash.outputs.cache-hit != 'true'
@@ -101,6 +120,7 @@ jobs:
       with:
         token: ${{ github.token }}
         event-type: Source Code Update
+        client-payload: '{"profile":"${{ matrix.profile }}"}'
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@v2

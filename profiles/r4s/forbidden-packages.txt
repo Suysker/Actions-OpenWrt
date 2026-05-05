@@ -1,0 +1,22 @@
+# NanoPi R4S hardware blacklist.
+
+# Physical NIC drivers not needed by R4S.
+# Keep native Rockchip/R8169 networking and USB RTL8152 support.
+regex:^kmod-(8139cp|8139too|alx|amazon-ena|amd-xgbe|atlantic|bnx2|bnx2x|e1000|e1000e|forcedeth|i40e|i40evf|iavf|igb|igbvf|igc|ixgbe|mlx4-core|mlx5-core|mlxfw|pcnet32|r8125-rss|r8126-rss|r8168|tg3|tulip|via-velocity|vmxnet3)$
+regex:^(amd64|intel)-microcode$
+exact:virtio-console-helper
+regex:^kmod-virtio
+
+# Firmware/data packages for unrelated physical hardware.
+regex:^[A-Za-z0-9_.+-]+-firmware$
+exact:usbids
+exact:usbutils
+
+# R4S needs USB core/USB3/RTL8152, MMC and SDHCI. Block only storage, audio
+# and display/GPU modules that are not needed for this router profile.
+exact:kmod-usb-storage
+exact:kmod-usb-storage-extras
+exact:kmod-usb-storage-uas
+exact:kmod-usb-audio
+regex:^kmod-sound-
+regex:^kmod-drm-

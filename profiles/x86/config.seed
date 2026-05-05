@@ -1,0 +1,74 @@
+# x86 PVE VM profile: target, image layout, hardware and firewall backend.
+
+CONFIG_TARGET_x86=y
+CONFIG_TARGET_x86_64=y
+CONFIG_TARGET_x86_64_DEVICE_generic=y
+CONFIG_TESTING_KERNEL=y
+
+# PVE VM image: x86_64 squashfs EFI image.
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+# CONFIG_TARGET_ROOTFS_EXT4FS is not set
+# CONFIG_TARGET_ROOTFS_TARGZ is not set
+CONFIG_GRUB_EFI_IMAGES=y
+CONFIG_GRUB_IMAGES=y
+CONFIG_GRUB_CONSOLE=y
+CONFIG_GRUB_TIMEOUT="0"
+CONFIG_TARGET_IMAGES_GZIP=y
+CONFIG_TARGET_KERNEL_PARTSIZE=32
+CONFIG_TARGET_ROOTFS_PARTSIZE=365
+CONFIG_VIRTIO_SUPPORT=y
+
+# dnsmasq-full for ipset/tproxy DNS modes.
+# CONFIG_PACKAGE_dnsmasq is not set
+CONFIG_PACKAGE_dnsmasq-full=y
+CONFIG_PACKAGE_dnsmasq_full_dhcp=y
+CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
+CONFIG_PACKAGE_dnsmasq_full_ipset=y
+
+# Main-router network stack for Lean/x86 iptables firewall.
+CONFIG_PACKAGE_firewall=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_ipset=y
+CONFIG_PACKAGE_iptables=y
+CONFIG_PACKAGE_iptables-mod-extra=y
+CONFIG_PACKAGE_iptables-mod-fullconenat=y
+CONFIG_PACKAGE_iptables-mod-tproxy=y
+CONFIG_PACKAGE_ip6tables=y
+CONFIG_PACKAGE_ppp=y
+CONFIG_PACKAGE_ppp-mod-pppoe=y
+CONFIG_PACKAGE_odhcp6c=y
+CONFIG_PACKAGE_odhcpd-ipv6only=y
+CONFIG_PACKAGE_ipv6helper=y
+
+# PVE VM hardware:
+# - VirtIO SCSI disk and VirtIO net are enabled by CONFIG_VIRTIO_SUPPORT.
+# - Intel i225 passthrough uses kmod-igc.
+CONFIG_PACKAGE_kmod-scsi-core=y
+CONFIG_PACKAGE_kmod-igc=y
+CONFIG_PACKAGE_kmod-ipt-fullconenat=y
+CONFIG_PACKAGE_miniupnpd=y
+
+# x86-only exclusions.
+# CONFIG_PACKAGE_amd64-microcode is not set
+# CONFIG_PACKAGE_intel-microcode is not set
+# CONFIG_PACKAGE_bnx2-firmware is not set
+# CONFIG_PACKAGE_bnx2x-firmware is not set
+# CONFIG_PACKAGE_usbids is not set
+# CONFIG_PACKAGE_usbutils is not set
+# CONFIG_PACKAGE_virtio-console-helper is not set
+# CONFIG_PACKAGE_kmod-usb-core is not set
+# CONFIG_PACKAGE_kmod-usb-net is not set
+# CONFIG_PACKAGE_kmod-usb-net-aqc111 is not set
+# CONFIG_PACKAGE_kmod-usb-net-asix-ax88179 is not set
+# CONFIG_PACKAGE_kmod-usb-net-rtl8150 is not set
+# CONFIG_PACKAGE_kmod-usb-net-rtl8152-vendor is not set
+# CONFIG_PACKAGE_kmod-usb-storage is not set
+# CONFIG_PACKAGE_kmod-usb-storage-extras is not set
+# CONFIG_PACKAGE_kmod-usb-storage-uas is not set
+# CONFIG_PACKAGE_kmod-hid is not set
+# CONFIG_PACKAGE_kmod-hid-generic is not set
+# CONFIG_PACKAGE_kmod-mmc is not set
+# CONFIG_PACKAGE_kmod-sdhci is not set
+# CONFIG_PACKAGE_kmod-drm-amdgpu is not set
+# CONFIG_PACKAGE_kmod-drm-i915 is not set
+# CONFIG_PACKAGE_ntfs3-mount is not set

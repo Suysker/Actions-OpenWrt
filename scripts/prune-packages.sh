@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-rules_path="${1:-forbidden-packages.txt}"
+if [ "$#" -lt 1 ]; then
+  echo "Usage: $0 <forbidden-rules-file> [package-root]" >&2
+  exit 2
+fi
+
+rules_path="$1"
 package_root="${2:-package}"
 
 if [ ! -r "$rules_path" ]; then

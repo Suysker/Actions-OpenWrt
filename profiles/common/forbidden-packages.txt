@@ -1,4 +1,4 @@
-# Forbidden package selections for the NanoPi R4S OpenWrt image.
+# Shared forbidden package selections for all OpenWrt profiles.
 # Blank lines and comments are ignored.
 #
 # Formats:
@@ -32,7 +32,7 @@ prune:openlist
 prune:openlist2
 prune:qbittorrent
 
-# Applications intentionally excluded from the R4S lean profile.
+# Applications intentionally excluded from the lean profiles.
 exact:luci-app-docker
 exact:luci-app-diskman
 exact:luci-app-filemanager
@@ -83,31 +83,11 @@ exact:luci-proto-bonding
 exact:proto-bonding
 exact:kmod-bonding
 
-# Physical NIC drivers not needed by R4S.
-# Keep native Rockchip networking and USB RTL8152 support.
-regex:^kmod-(8139cp|8139too|alx|amazon-ena|amd-xgbe|atlantic|bnx2|bnx2x|e1000|e1000e|forcedeth|i40e|i40evf|iavf|igb|igbvf|igc|ixgbe|mlx4-core|mlx5-core|mlxfw|pcnet32|r8125-rss|r8126-rss|r8168|tg3|tulip|via-velocity|vmxnet3)$
-regex:^(amd64|intel)-microcode$
-exact:virtio-console-helper
-regex:^kmod-virtio
-
-# Firmware/data packages for unrelated physical hardware.
-regex:^[A-Za-z0-9_.+-]+-firmware$
-exact:usbids
-exact:usbutils
-
-# R4S needs USB core/USB3/RTL8152, MMC and SDHCI. Block only storage, audio
-# and display/GPU modules that are not needed for this router profile.
-exact:kmod-usb-storage
-exact:kmod-usb-storage-extras
-exact:kmod-usb-storage-uas
-exact:kmod-usb-audio
-regex:^kmod-sound-
-regex:^kmod-drm-
-exact:ntfs3-mount
-
-# Disk maintenance tools should not be selected into the image.
+# Samba, automount and disk maintenance tools.
+regex:^(autosamba|autosamba_.*|.*samba.*|ksmbd.*)$
 exact:automount
 exact:cfdisk
 exact:e2fsprogs
 exact:mkf2fs
 exact:partx-utils
+exact:ntfs3-mount

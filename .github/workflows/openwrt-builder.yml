@@ -4,25 +4,24 @@
 # File: .github/workflows/openwrt-bulder.yml
 # Description: Build OpenWrt using GitHub Actions
 #
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
 
-name: OpenWrt R4S Builder
+name: OpenWrt Builder
 
 on:
   repository_dispatch:
   workflow_dispatch:
+    inputs:
+      profile:
+        description: Firmware profile to build
+        required: true
+        default: x86
+        type: choice
+        options:
+          - x86
+          - r4s
+          - all
 
 env:
-  R4S_SCRIPT_REPO: https://github.com/sbwml/r4s_build_script
-  R4S_SCRIPT_REF: master
-  R4S_RELEASE: rc2
-  R4S_BOARD: nanopi-r4s
-  LAN_IP: 192.168.2.1
-  CONFIG_FILE: config.seed
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
   # Empty means diy-part2.sh selects the latest HAProxy LTS automatically.
@@ -33,12 +32,59 @@ env:
   TZ: Asia/Shanghai
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Select build profiles
+        id: matrix
+        shell: bash
+        env:
+          WORKFLOW_PROFILE: ${{ github.event.inputs.profile }}
+          DISPATCH_PROFILE: ${{ github.event.client_payload.profile }}
+        run: |
+          set -euo pipefail
+
+          profile="${WORKFLOW_PROFILE:-${DISPATCH_PROFILE:-x86}}"
+          case "$profile" in
+            x86) echo 'matrix={"profile":["x86"]}' >> "$GITHUB_OUTPUT" ;;
+            r4s) echo 'matrix={"profile":["r4s"]}' >> "$GITHUB_OUTPUT" ;;
+            all) echo 'matrix={"profile":["x86","r4s"]}' >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::Unknown profile: $profile"
+              exit 2
+              ;;
+          esac
+
   build:
+    needs: prepare
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    name: Build ${{ matrix.profile }}
 
     steps:
     - name: Checkout
       uses: actions/checkout@main
+
+    - name: Load profile metadata
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        profile="${{ matrix.profile }}"
+        profile_env="profiles/${profile}/profile.env"
+        if [ ! -r "$profile_env" ]; then
+          echo "::error::Missing profile env: $profile_env"
+          exit 2
+        fi
+
+        echo "PROFILE=$profile" >> "$GITHUB_ENV"
+        grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$profile_env" >> "$GITHUB_ENV"
+        echo "Loaded profile metadata for $profile"
+        cat "$profile_env"
 
     - name: Initialization environment
       env:
@@ -54,22 +100,38 @@ jobs:
         sudo mkdir -p /workdir
         sudo chown $USER:$GROUPS /workdir
 
-    - name: Bootstrap R4S source
+    - name: Bootstrap source
       working-directory: /workdir
+      shell: bash
       run: |
+        set -euo pipefail
+
         df -hT "$PWD"
-        git clone --depth 1 --branch "$R4S_SCRIPT_REF" "$R4S_SCRIPT_REPO" r4s_build_script
-        cd r4s_build_script/openwrt
-        BUILD=n git_name=private git_password=private LAN="$LAN_IP" bash build.sh "$R4S_RELEASE" "$R4S_BOARD"
-        rm -rf /workdir/openwrt
-        mv openwrt /workdir/openwrt
+        rm -rf /workdir/openwrt /workdir/r4s_build_script
+
+        case "$BOOTSTRAP_KIND" in
+          git)
+            git clone "$REPO_URL" -b "$REPO_BRANCH" openwrt
+            ;;
+          r4s_script)
+            git clone --depth 1 --branch "$R4S_SCRIPT_REF" "$R4S_SCRIPT_REPO" r4s_build_script
+            cd r4s_build_script/openwrt
+            BUILD=n git_name=private git_password=private LAN="${LAN_IP:-192.168.2.1}" bash build.sh "$R4S_RELEASE" "$R4S_BOARD"
+            mv openwrt /workdir/openwrt
+            ;;
+          *)
+            echo "::error::Unknown bootstrap kind: $BOOTSTRAP_KIND"
+            exit 2
+            ;;
+        esac
+
         ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
 
     - name: Cache
       uses: HiGarfield/cachewrtbuild@main
       with:
         ccache: 'true'
-        mixkey: 'r4s'
+        mixkey: ${{ matrix.profile }}
         prefix: 'openwrt'
 
     - name: Load custom feeds
@@ -78,15 +140,27 @@ jobs:
         cd openwrt
         "$GITHUB_WORKSPACE/$DIY_P1_SH"
 
-    - name: Update custom feeds
+    - name: Update feeds
       shell: bash
       run: |
         set -euo pipefail
         cd openwrt
-        mapfile -t custom_feeds < <(bash "$GITHUB_WORKSPACE/scripts/manage-custom-feeds.sh" refs "$GITHUB_WORKSPACE/feeds.custom.conf" | awk '{ print $1 }')
-        if [ "${#custom_feeds[@]}" -gt 0 ]; then
-          ./scripts/feeds update "${custom_feeds[@]}"
-        fi
+
+        case "$FEEDS_UPDATE_MODE" in
+          all)
+            ./scripts/feeds update -a
+            ;;
+          custom)
+            mapfile -t custom_feeds < <(bash "$GITHUB_WORKSPACE/scripts/manage-custom-feeds.sh" refs "$GITHUB_WORKSPACE/feeds.custom.conf" | awk '{ print $1 }')
+            if [ "${#custom_feeds[@]}" -gt 0 ]; then
+              ./scripts/feeds update "${custom_feeds[@]}"
+            fi
+            ;;
+          *)
+            echo "::error::Unknown feeds update mode: $FEEDS_UPDATE_MODE"
+            exit 2
+            ;;
+        esac
 
     - name: Sync official Go toolchain
       run: |
@@ -97,38 +171,54 @@ jobs:
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
 
+    - name: Render profile inputs
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        profile_dir="$RUNNER_TEMP/openwrt-profile-${PROFILE}"
+        mkdir -p "$profile_dir"
+
+        bash "$GITHUB_WORKSPACE/scripts/render-profile.sh" config "$PROFILE" "$profile_dir/.config"
+        bash "$GITHUB_WORKSPACE/scripts/render-profile.sh" forbidden "$PROFILE" "$profile_dir/forbidden-packages.txt"
+
+        echo "PROFILE_CONFIG=$profile_dir/.config" >> "$GITHUB_ENV"
+        echo "PROFILE_FORBIDDEN=$profile_dir/forbidden-packages.txt" >> "$GITHUB_ENV"
+        echo "Rendered profile config target:"
+        grep '^CONFIG_TARGET' "$profile_dir/.config" || true
+
     - name: Prune unused packages
       run: |
         cd openwrt
         bash "$GITHUB_WORKSPACE/scripts/prune-packages.sh" \
-          "$GITHUB_WORKSPACE/forbidden-packages.txt" \
+          "$PROFILE_FORBIDDEN" \
           "package"
 
     - name: Load custom configuration
       run: |
         [ -e files ] && mv files openwrt/files
-        test -f "$GITHUB_WORKSPACE/$CONFIG_FILE"
-        cp "$GITHUB_WORKSPACE/$CONFIG_FILE" openwrt/.config
-        echo "Loaded repository config target:"
-        grep '^CONFIG_TARGET' openwrt/.config || true
+        cp "$PROFILE_CONFIG" openwrt/.config
         chmod +x "$DIY_P2_SH"
         cd openwrt
         "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
     - name: Download package
       id: package
+      shell: bash
       run: |
+        set -euo pipefail
+
         cd openwrt
         make defconfig
-        if ! grep -q '^CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r4s=y$' .config; then
-          echo "::error::Resolved OpenWrt target is not NanoPi R4S. Current target selection:"
+        if ! grep -Eq "$TARGET_CHECK_REGEX" .config; then
+          echo "::error::Resolved OpenWrt target does not match profile $PROFILE. Current target selection:"
           grep '^CONFIG_TARGET.*=y' .config || true
           exit 1
         fi
         ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/config.effective"
         bash "$GITHUB_WORKSPACE/scripts/check-forbidden-packages.sh" \
           ".config" \
-          "$GITHUB_WORKSPACE/forbidden-packages.txt" \
+          "$PROFILE_FORBIDDEN" \
           "$GITHUB_WORKSPACE"
         make download -j8
         find dl -size -1024c -exec ls -l {} \;
@@ -138,7 +228,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: always()
       with:
-        name: OpenWrt_config_reports
+        name: OpenWrt_config_reports_${{ matrix.profile }}
         path: |
           config.effective
           package-list.txt
@@ -164,7 +254,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
       with:
-        name: OpenWrt_bin${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: OpenWrt_bin_${{ matrix.profile }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: openwrt/bin
 
     - name: Organize files
@@ -180,14 +270,14 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
-        name: OpenWrt_firmware${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
+        name: OpenWrt_firmware_${{ matrix.profile }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        echo "release_tag=${PROFILE}-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         : > release.txt
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -211,7 +301,7 @@ jobs:
       uses: dev-drprasad/delete-older-releases@master
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
-        keep_latest: 3
+        keep_latest: 6
         delete_tags: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

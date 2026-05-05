@@ -11,10 +11,11 @@ A template for building OpenWrt with GitHub Actions
 ## Usage
 
 - Click the [Use this template](https://github.com/P3TERX/Actions-OpenWrt/generate) button to create a new repository.
-- Edit `config.seed` to choose the target and packages. ( You can change the source repository through environment variables in the workflow file. )
-- Push `config.seed` to the GitHub repository.
-- Select `Build OpenWrt` on the Actions page.
+- Edit files under `profiles/` to choose shared packages or per-device target settings.
+- Push the profile changes to the GitHub repository.
+- Select `OpenWrt Builder` on the Actions page.
 - Click the `Run workflow` button.
+- Choose `x86`, `r4s`, or `all` in the `profile` input.
 - When the build is complete, click the `Artifacts` button in the upper right corner of the Actions page to download the binaries.
 
 ## Tips
@@ -22,24 +23,27 @@ A template for building OpenWrt with GitHub Actions
 - It may take a long time to expand a config and build the OpenWrt firmware. Thus, before create repository to build your own firmware, you may check out if others have already built it which meet your needs by simply [search `Actions-Openwrt` in GitHub](https://github.com/search?q=Actions-openwrt).
 - Add some meta info of your built firmware (such as firmware architecture and installed packages) to your repository introduction, this will save others' time.
 
-## R4S config workflow
+## Profile workflow
 
-This fork keeps a minimal `config.seed` instead of maintaining a full generated `.config`.
+This fork keeps minimal profile fragments instead of maintaining a full generated `.config`.
 
-- This branch builds a NanoPi R4S 4GB SD image. It bootstraps OpenWrt through `sbwml/r4s_build_script` with `BUILD=n git_name=private git_password=private LAN=192.168.2.1 bash build.sh rc2 nanopi-r4s`, then replaces the generated config with this repository's `config.seed`.
-- Edit `config.seed` when you want to add or remove LuCI apps or package options. The R4S seed keeps the hardware/performance pieces from the R4S build path, including `autocore-arm`, LuCI CPU frequency control, PWM fan, RTL8152 USB NIC, USB2/USB3, zram, R4S kernel CFLAGS, and an 8-thread CoreMark setting.
+- `master` is the only active maintenance branch. Old `X86` and `R4S` branches are kept as read-only references.
+- Edit `profiles/common/config.seed` when you want to add or remove shared LuCI apps or package options.
+- Edit `profiles/x86/config.seed` or `profiles/r4s/config.seed` only for target, image size, hardware drivers, kernel settings, and firewall/network-stack differences.
+- Edit `profiles/common/forbidden-packages.txt` for shared block/prune policy, and profile-specific forbidden files only for hardware differences.
+- The build renders `profiles/common/*` plus `profiles/<profile>/*` into temporary `.config` and forbidden package files; root-level `config.seed` and `forbidden-packages.txt` are intentionally not maintained.
 - Edit `feeds.custom.conf` when you want to add, remove, or change custom feed sources. Build and update-checker both read this file.
-- `forbidden-packages.txt` is the block policy. `prune:` rules remove known broken/unwanted package entries with a `Makefile` before OpenWrt scans package menus; `exact:` and `regex:` rules only fail the final config check if those packages are selected.
+- `prune:` rules remove known broken/unwanted package entries with a `Makefile` before OpenWrt scans package menus; `exact:` and `regex:` rules fail the final config check if those packages are selected.
 - Do not add dependency libraries or kernel modules manually unless you are deliberately overriding OpenWrt defaults. `make defconfig` expands real dependencies during the GitHub Actions build.
 - The build replaces only `feeds/packages/lang/golang` with OpenWrt official `openwrt/packages` `lang/golang`, then rebuilds the packages feed index so current Go-based packages can build without importing an extra third-party Go feed.
-- This R4S profile keeps the same lean application set used by the x86 profile: PassWall, MosDNS, SmartDNS, AdGuardHome, ddns-go, nlbwmon, arpbind, autoreboot, ramfree, ttyd, turboacc, upnp, wol, coremark, lsof, and `openssh-sftp-server`.
-- The R4S branch intentionally does not inherit sbwml common's full application list. Docker, Samba, legacy `ddns-scripts`, VLMCS, vsftpd, openlist, qbittorrent, zerotier, homeproxy, nikki, mihomo, and similar non-target packages are blocked.
-- The R4S blacklist allows board-required USB core, USB3, RTL8152, MMC/SDHCI, cpufreq, fan, zram, and router network stack packages, while continuing to reject x86-only NICs, VirtIO, GRUB, USB storage/audio, disk utilities, and non-target applications.
+- Shared packages currently include PassWall, MosDNS, SmartDNS, AdGuardHome, ddns-go, nlbwmon, arpbind, autoreboot, ramfree, ttyd, turboacc, upnp, wol, coremark, lsof, and `openssh-sftp-server`.
+- The x86 profile builds `coolsnowwolf/lede master` for the PVE VM image and keeps VirtIO plus `kmod-igc`.
+- The R4S profile bootstraps through `sbwml/r4s_build_script` with `BUILD=n git_name=private git_password=private LAN=192.168.2.1 bash build.sh rc2 nanopi-r4s`, then applies the rendered profile config.
+- Docker, Samba, legacy `ddns-scripts`, VLMCS, vsftpd, openlist, qbittorrent, zerotier, homeproxy, nikki, mihomo, and similar non-target packages are blocked before or after Kconfig resolution.
 - `diy-part2.sh` tracks the latest HAProxy LTS release automatically. Set `HAPROXY_VERSION` in the build workflow only when you need to pin or roll back temporarily.
-- Edit `forbidden-packages.txt` when an upstream or Lean default package must be blocked from the image.
 - The build workflow writes the expanded diff to `config.effective` in the Actions log, so you can see what the latest upstream Kconfig resolved.
 - The build workflow writes the final built-in package selections to `package-list.txt`, uploads config reports, and fails when any forbidden package is selected.
-- The update checker tracks `sbwml/r4s_build_script`, the `init.cooluc.com/tags/v25` release pointer, OpenWrt's resolved release tag, the official Go feed source, and the external feeds in `feeds.custom.conf`; source or plugin feed updates trigger a rebuild automatically.
+- The update checker runs once per profile. x86 tracks Lean, official Go, custom feeds, and local profile fragments. R4S tracks `sbwml/r4s_build_script`, `init.cooluc.com/tags/v25`, OpenWrt's resolved release tag, official Go, custom feeds, and local profile fragments.
 - The root `.config` file is ignored on purpose. It is a generated local/OpenWrt build artifact, not the repository config source.
 
 Feed lines use OpenWrt's normal format. A `;branch` suffix tracks that branch, while a URL without suffix tracks the remote default branch:
@@ -49,12 +53,12 @@ src-git passwall https://github.com/Openwrt-Passwall/openwrt-passwall.git;main
 src-git small https://github.com/kenzok8/small.git
 ```
 
-To refresh the seed from a full config inside an OpenWrt source tree:
+To refresh a profile seed from a full config inside an OpenWrt source tree:
 
 ```sh
 cp /path/to/full/.config .config
 make defconfig
-./scripts/diffconfig.sh > /path/to/Actions-OpenWrt/config.seed
+./scripts/diffconfig.sh > /path/to/Actions-OpenWrt/profiles/<profile>/config.seed
 ```
 
 ## Credits
