@@ -13,13 +13,24 @@ prune:luci-app-dockerman
 prune:luci-theme-alpha
 prune:luci-app-bypass
 prune:luci-app-ddns
+prune:luci-app-homeproxy
+prune:luci-app-nikki
+prune:luci-app-openlist
+prune:luci-app-openlist2
+prune:luci-app-qbittorrent
 prune:luci-app-ssr-plus
 prune:luci-app-rclone
 prune:luci-app-vlmcsd
 prune:luci-app-vsftpd
+prune:clashoo
+prune:homeproxy
 prune:mihomo
 prune:mihomo-alpha
 prune:mihomo-meta
+prune:nikki
+prune:openlist
+prune:openlist2
+prune:qbittorrent
 
 # Applications intentionally excluded from the R4S lean profile.
 exact:luci-app-docker
