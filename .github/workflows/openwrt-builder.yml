@@ -127,13 +127,6 @@ jobs:
 
         ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
 
-    - name: Apply profile patchset
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        bash "$GITHUB_WORKSPACE/scripts/apply-profile-patches.sh" "$PROFILE" "/workdir/openwrt"
-
     - name: Cache
       uses: HiGarfield/cachewrtbuild@main
       with:
@@ -177,6 +170,13 @@ jobs:
 
     - name: Install feeds
       run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Apply profile patchset
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        bash "$GITHUB_WORKSPACE/scripts/apply-profile-patches.sh" "$PROFILE" "/workdir/openwrt"
 
     - name: Render profile inputs
       shell: bash

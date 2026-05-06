@@ -32,7 +32,7 @@ This fork keeps minimal profile fragments instead of maintaining a full generate
 - Edit `profiles/common/config.seed` when you want to add or remove shared LuCI apps or package options.
 - Edit `profiles/x86/config.seed` or `profiles/r4s/config.seed` only for target, image size, hardware drivers, kernel settings, and device-specific tuning.
 - Edit `profiles/common/profile.env` for shared build metadata such as LAN IP, bootstrap mode, feeds update mode, and the official Go feed source. Profile env files only define source repo/ref, target validation, and profile names.
-- Optional profile patchsets are selected with `PROFILE_PATCHSET` in a profile env file. The build calls a generic patch hook before feeds are updated; profiles without a patchset skip this step.
+- Optional profile patchsets are selected with `PROFILE_PATCHSET` in a profile env file. The build calls a generic patch hook after feeds are installed; profiles without a patchset skip this step.
 - Edit `profiles/common/forbidden-packages.txt` for shared block/prune policy, and profile-specific forbidden files only for hardware differences.
 - Edit `profiles/common/required-packages.txt` or `profiles/<profile>/required-packages.txt` when a package/config symbol is critical and the build must fail if Kconfig drops it.
 - The build renders `profiles/common/*` plus `profiles/<profile>/*` into temporary `.config`, env, forbidden, and required package files; root-level `config.seed` and `forbidden-packages.txt` are intentionally not maintained.
@@ -45,7 +45,7 @@ This fork keeps minimal profile fragments instead of maintaining a full generate
 - The x86 profile builds the PVE VM image and keeps VirtIO plus `kmod-igc`.
 - The R4S profile builds `friendlyarm_nanopi-r4s` and keeps only R4S hardware support such as cpufreq, pwmfan, R8168, RTL8152, USB, MMC/SDHCI, NIC firmware, zram, and SD-image maintenance dependencies.
 - Both maintained profiles intentionally use the same common main-router stack: firewall3/iptables, `dnsmasq-full`, PPPoE, IPv6, fullcone, TUN, BBR and UPnP. `firewall4`, nftables packages, nft UPnP, and natflow are blocked.
-- The experimental `experiment/sbwml-public-r4s` branch lets the R4S profile opt in to `sbwml-public-mainline`. That patchset only uses public sbwml GitHub files and fails early if private `git.cooluc.com` target trees are required.
+- The experimental `experiment/sbwml-public-r4s` branch lets the R4S profile opt in to `sbwml-public-mainline`. That patchset only applies restricted kernel/target patch material from sbwml sources; private `git.cooluc.com` target repositories must be mapped to explicit public replacements or the build fails before patching.
 - Docker, Samba, legacy `ddns-scripts`, VLMCS, vsftpd, openlist, qbittorrent, zerotier, homeproxy, nikki, mihomo, and similar non-target packages are blocked before or after Kconfig resolution.
 - `diy-part2.sh` tracks the latest HAProxy LTS release automatically. Set `HAPROXY_VERSION` in the build workflow only when you need to pin or roll back temporarily.
 - The build workflow writes the expanded diff to `config.effective` in the Actions log, so you can see what the latest upstream Kconfig resolved.

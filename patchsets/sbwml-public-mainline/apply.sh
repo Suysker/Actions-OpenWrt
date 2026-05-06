@@ -6,8 +6,8 @@ usage() {
 Usage:
   patchsets/sbwml-public-mainline/apply.sh <openwrt-dir>
 
-Applies the public portion of sbwml's mainline kernel patch chain.
-Private git.cooluc.com target trees are intentionally not used.
+Restricted sbwml patch applier. It uses sbwml's public patch files as source
+material, but never runs sbwml build scripts, feeds commands, or config loaders.
 EOF
 }
 
@@ -17,11 +17,18 @@ openwrt_dir="${1:-}"
 
 openwrt_dir="$(cd "$openwrt_dir" && pwd)"
 source_ref="${PATCHSET_SOURCE_REF:-master}"
-script_repo="${PATCHSET_SOURCE_REPO:-https://github.com/sbwml/r4s_build_script.git}"
+source_repo="${PATCHSET_SOURCE_REPO:-https://github.com/sbwml/r4s_build_script.git}"
 raw_base="${PATCHSET_RAW_BASE:-https://raw.githubusercontent.com/sbwml/r4s_build_script/refs/heads/$source_ref}"
 raw_base="${raw_base%/}"
+target_rockchip_repo="${PATCHSET_TARGET_ROCKCHIP_REPO:-}"
+target_rockchip_ref="${PATCHSET_TARGET_ROCKCHIP_REF:-v6.18}"
+target_generic_repo="${PATCHSET_TARGET_GENERIC_REPO:-}"
+target_generic_ref="${PATCHSET_TARGET_GENERIC_REF:-openwrt-25.12}"
+kernel_patch_dirs="${PATCHSET_KERNEL_PATCH_DIRS:-bbr3 lrng btf arm64 net}"
 work_dir="${PATCHSET_WORK_DIR:-$openwrt_dir/.profile-patches/sbwml-public-mainline}"
-script_tree="$work_dir/r4s_build_script"
+source_tree="$work_dir/r4s_build_script"
+rockchip_tree="$work_dir/target-linux-rockchip"
+generic_tree="$work_dir/target-linux-generic"
 
 retry() {
   local attempt max_attempts delay
@@ -41,9 +48,15 @@ retry() {
   return 1
 }
 
-clone_script_repo() {
-  rm -rf "$script_tree"
-  git clone --depth 1 --branch "$source_ref" "$script_repo" "$script_tree"
+clone_repo() {
+  local repo="$1"
+  local ref="$2"
+  local dest="$3"
+  local label="$4"
+
+  rm -rf "$dest"
+  git clone --depth 1 --branch "$ref" "$repo" "$dest"
+  echo "Cloned $label: $repo ($ref)"
 }
 
 fetch() {
@@ -54,105 +67,120 @@ fetch() {
   retry curl -fsSL --retry 3 --retry-delay 2 "$url" -o "$output"
 }
 
-apply_git_patch() {
-  local patch_file="$1"
-  local label="$2"
-
-  if git -C "$openwrt_dir" apply --check "$patch_file"; then
-    git -C "$openwrt_dir" apply "$patch_file"
-    echo "Applied $label"
-    return 0
-  fi
-
-  if git -C "$openwrt_dir" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
-    echo "Patch already applied: $label"
-    return 0
-  fi
-
-  echo "::error::Failed to apply public sbwml patch: $label" >&2
-  echo "Patch file: $patch_file" >&2
-  git -C "$openwrt_dir" apply --check "$patch_file" || true
-  exit 1
-}
-
-copy_patch_dir() {
-  local source_dir="$1"
-  local target_dir="$2"
-  local label="$3"
-
-  if [ ! -d "$source_dir" ]; then
-    echo "::error::Missing public sbwml patch directory: $source_dir" >&2
-    exit 1
-  fi
-
-  mkdir -p "$target_dir"
-  find "$source_dir" -maxdepth 1 -type f -name '*.patch' -print0 |
-    while IFS= read -r -d '' patch_file; do
-      cp -f "$patch_file" "$target_dir/"
-    done
-  echo "Copied $label patches into ${target_dir#$openwrt_dir/}"
-}
-
-require_public_mainline_target() {
+preflight() {
   local missing=()
 
-  [ -r "$openwrt_dir/target/linux/generic/config-6.18" ] || missing+=("target/linux/generic/config-6.18")
-  [ -r "$openwrt_dir/target/linux/rockchip/armv8/config-6.18" ] || missing+=("target/linux/rockchip/armv8/config-6.18")
+  [ -d "$openwrt_dir/target/linux/generic" ] ||
+    missing+=("OpenWrt source target/linux/generic")
+  [ -n "$target_rockchip_repo" ] ||
+    missing+=("PATCHSET_TARGET_ROCKCHIP_REPO public replacement for target_linux_rockchip-6.x")
+  [ -n "$target_generic_repo" ] ||
+    missing+=("PATCHSET_TARGET_GENERIC_REPO public replacement for target_linux_generic")
 
   if [ "${#missing[@]}" -gt 0 ]; then
     {
-      echo "::error::sbwml public patchset is incomplete for this Lean tree."
-      echo "The public scripts require target files normally supplied by private git.cooluc.com repositories."
-      echo "Missing after applying public patches:"
+      echo "::error::Missing inputs for restricted sbwml patch application."
+      echo "This patchset only applies patch/source-tree material under our own build flow."
+      echo "It does not execute sbwml scripts or access private git.cooluc.com repositories."
+      echo
+      echo "Missing:"
       printf '  - %s\n' "${missing[@]}"
       echo
-      echo "Intentionally not used:"
-      echo "  - https://git.cooluc.com/sbwml/target_linux_generic"
-      echo "  - https://git.cooluc.com/sbwml/target_linux_rockchip-6.x"
-      echo "  - https://git.cooluc.com/sbwml/target_linux_armsr"
-      echo
-      echo "Stopping here instead of silently producing a partial or fake 6.18 R4S build."
+      echo "Expected public replacements:"
+      echo "  - PATCHSET_TARGET_ROCKCHIP_REPO for git.cooluc.com/sbwml/target_linux_rockchip-6.x"
+      echo "  - PATCHSET_TARGET_GENERIC_REPO for git.cooluc.com/sbwml/target_linux_generic"
     } >&2
     exit 1
   fi
 }
 
-echo "Using public sbwml script repository: $script_repo"
-echo "Using public sbwml source ref: $source_ref"
-echo "Using public sbwml raw source: $raw_base"
-echo "Private git.cooluc.com target repositories are not accessed by this patchset."
+validate_target_trees() {
+  local missing=()
+
+  [ -r "$rockchip_tree/Makefile" ] || missing+=("rockchip replacement Makefile")
+  [ -r "$rockchip_tree/armv8/config-6.18" ] || missing+=("rockchip replacement armv8/config-6.18")
+  [ -r "$generic_tree/config-6.18" ] || missing+=("generic replacement config-6.18")
+
+  if [ "${#missing[@]}" -gt 0 ]; then
+    {
+      echo "::error::Public target replacements do not look like sbwml target trees."
+      printf '  - %s\n' "${missing[@]}"
+    } >&2
+    exit 1
+  fi
+}
+
+install_target_trees() {
+  rm -rf "$openwrt_dir/target/linux/rockchip"
+  mkdir -p "$openwrt_dir/target/linux/rockchip" "$openwrt_dir/target/linux/generic"
+
+  cp -a "$rockchip_tree"/. "$openwrt_dir/target/linux/rockchip/"
+  cp -a "$generic_tree"/. "$openwrt_dir/target/linux/generic/"
+
+  echo "Installed restricted target/linux replacements:"
+  echo "  - target/linux/rockchip from PATCHSET_TARGET_ROCKCHIP_REPO"
+  echo "  - target/linux/generic overlay from PATCHSET_TARGET_GENERIC_REPO"
+}
+
+install_kernel_tag() {
+  local kernel_tag
+  kernel_tag="$work_dir/kernel-6.18"
+
+  fetch "$raw_base/tags/kernel-6.18" "$kernel_tag"
+  if [ ! -s "$kernel_tag" ]; then
+    echo "::error::Downloaded kernel tag is empty: $raw_base/tags/kernel-6.18" >&2
+    exit 1
+  fi
+
+  install -m 0644 "$kernel_tag" "$openwrt_dir/target/linux/generic/kernel-6.18"
+  echo "Installed target/linux/generic/kernel-6.18"
+}
+
+copy_public_kernel_patch_dirs() {
+  local dir source_dir target_dir patch_count
+
+  for dir in $kernel_patch_dirs; do
+    source_dir="$source_tree/openwrt/patch/kernel-6.18/$dir"
+    if [ ! -d "$source_dir" ]; then
+      echo "::error::Missing public sbwml kernel patch directory: $source_dir" >&2
+      exit 1
+    fi
+
+    case "$dir" in
+      bbr3)
+        target_dir="$openwrt_dir/target/linux/generic/backport-6.18"
+        ;;
+      lrng|btf|arm64|net)
+        target_dir="$openwrt_dir/target/linux/generic/hack-6.18"
+        ;;
+      *)
+        echo "::error::Kernel patch directory '$dir' is not in the restricted allowlist" >&2
+        exit 1
+        ;;
+    esac
+
+    mkdir -p "$target_dir"
+    patch_count="$(find "$source_dir" -maxdepth 1 -type f -name '*.patch' | wc -l | tr -d ' ')"
+    find "$source_dir" -maxdepth 1 -type f -name '*.patch' -exec cp -f {} "$target_dir/" \;
+    echo "Copied $patch_count public $dir patches into ${target_dir#$openwrt_dir/}"
+  done
+}
+
+echo "Using restricted sbwml patch source: $source_repo ($source_ref)"
+echo "Using sbwml raw patch source: $raw_base"
+echo "Allowed kernel patch directories: $kernel_patch_dirs"
+echo "No sbwml scripts, feeds commands, package lists, or .config fragments are executed."
 
 rm -rf "$work_dir"
 mkdir -p "$work_dir"
-retry clone_script_repo
 
-kernel_tag="$work_dir/kernel-6.18"
-fetch "$raw_base/tags/kernel-6.18" "$kernel_tag"
+preflight
+retry clone_repo "$source_repo" "$source_ref" "$source_tree" "sbwml patch source"
+retry clone_repo "$target_rockchip_repo" "$target_rockchip_ref" "$rockchip_tree" "rockchip target replacement"
+retry clone_repo "$target_generic_repo" "$target_generic_ref" "$generic_tree" "generic target replacement"
+validate_target_trees
+install_target_trees
+install_kernel_tag
+copy_public_kernel_patch_dirs
 
-if [ ! -s "$kernel_tag" ]; then
-  echo "::error::Downloaded kernel-6.18 tag is empty: $raw_base/tags/kernel-6.18" >&2
-  exit 1
-fi
-
-if [ ! -d "$openwrt_dir/target/linux/generic" ]; then
-  echo "::error::OpenWrt tree has no target/linux/generic directory" >&2
-  exit 1
-fi
-
-install -m 0644 "$kernel_tag" "$openwrt_dir/target/linux/generic/kernel-6.18"
-echo "Installed public kernel version metadata: target/linux/generic/kernel-6.18"
-
-generic_patch="$script_tree/openwrt/patch/kernel-6.18/openwrt/linux-6.18-target-linux-generic.patch"
-[ -r "$generic_patch" ] || { echo "::error::Missing public sbwml generic patch: $generic_patch" >&2; exit 1; }
-apply_git_patch "$generic_patch" "linux-6.18 target/linux/generic metadata"
-
-require_public_mainline_target
-
-copy_patch_dir "$script_tree/openwrt/patch/kernel-6.18/bbr3" "$openwrt_dir/target/linux/generic/backport-6.18" "BBR3"
-copy_patch_dir "$script_tree/openwrt/patch/kernel-6.18/lrng" "$openwrt_dir/target/linux/generic/hack-6.18" "LRNG"
-copy_patch_dir "$script_tree/openwrt/patch/kernel-6.18/linux-rt" "$openwrt_dir/target/linux/generic/hack-6.18" "PREEMPT_RT"
-copy_patch_dir "$script_tree/openwrt/patch/kernel-6.18/btf" "$openwrt_dir/target/linux/generic/hack-6.18" "BTF"
-copy_patch_dir "$script_tree/openwrt/patch/kernel-6.18/arm64" "$openwrt_dir/target/linux/generic/hack-6.18" "arm64"
-copy_patch_dir "$script_tree/openwrt/patch/kernel-6.18/net" "$openwrt_dir/target/linux/generic/hack-6.18" "netfilter/network"
-
-echo "sbwml public mainline patchset applied."
+echo "Restricted sbwml patch application completed."
