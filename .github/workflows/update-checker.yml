@@ -86,37 +86,6 @@ jobs:
 
         record_ref "$REPO_URL" "$openwrt_ref" "openwrt:${profile}"
 
-        while read -r label repo ref; do
-          [ -z "${label:-}" ] && continue
-          record_ref "$repo" "${ref:-HEAD}" "$label"
-        done < <(bash "$GITHUB_WORKSPACE/scripts/sync-official-golang.sh" refs)
-
-        while read -r feed repo ref; do
-          [ -z "${feed:-}" ] && continue
-          record_ref "$repo" "${ref:-HEAD}" "feed:$feed"
-        done < <(bash "$GITHUB_WORKSPACE/scripts/manage-custom-feeds.sh" refs "$GITHUB_WORKSPACE/feeds.custom.conf")
-
-        {
-          sha256sum \
-            "profiles/common/config.seed" \
-            "profiles/common/forbidden-packages.txt" \
-            "profiles/common/profile.env" \
-            "profiles/common/required-packages.txt" \
-            "profiles/${profile}/config.seed" \
-            "profiles/${profile}/forbidden-packages.txt" \
-            "profiles/${profile}/profile.env" \
-            "profiles/${profile}/required-packages.txt" \
-            "feeds.custom.conf" \
-            "diy-part1.sh" \
-            "diy-part2.sh" \
-            "scripts/render-profile.sh" \
-            "scripts/check-forbidden-packages.sh" \
-            "scripts/check-required-packages.sh" \
-            "scripts/prune-packages.sh" \
-            "scripts/manage-custom-feeds.sh" \
-            "scripts/sync-official-golang.sh"
-        } | sha256sum | awk -v profile="$profile" '{ print "profile-files " profile " " $1 }' | tee -a "$sources_file"
-
         fingerprint="$(sha256sum "$sources_file" | awk '{ print $1 }')"
         echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
         echo "sources_file=$sources_file" >> "$GITHUB_OUTPUT"

@@ -35,7 +35,7 @@ This fork keeps minimal profile fragments instead of maintaining a full generate
 - Edit `profiles/common/forbidden-packages.txt` for shared block/prune policy, and profile-specific forbidden files only for hardware differences.
 - Edit `profiles/common/required-packages.txt` or `profiles/<profile>/required-packages.txt` when a package/config symbol is critical and the build must fail if Kconfig drops it.
 - The build renders `profiles/common/*` plus `profiles/<profile>/*` into temporary `.config`, env, forbidden, and required package files; root-level `config.seed` and `forbidden-packages.txt` are intentionally not maintained.
-- Edit `feeds.custom.conf` when you want to add, remove, or change custom feed sources. Build and update-checker both read this file.
+- Edit `feeds.custom.conf` when you want to add, remove, or change custom feed sources. Builds read this file; scheduled update checks intentionally ignore custom feed changes.
 - `prune:` rules remove known broken/unwanted package entries with a `Makefile` before OpenWrt scans package menus; `exact:` and `regex:` rules fail the final config check if those packages are selected.
 - Do not add dependency libraries or kernel modules manually unless you are deliberately overriding OpenWrt defaults. `make defconfig` expands real dependencies during the GitHub Actions build.
 - The build replaces only `feeds/packages/lang/golang` with OpenWrt official `openwrt/packages` `lang/golang`, then rebuilds the packages feed index so current Go-based packages can build without importing an extra third-party Go feed.
@@ -49,7 +49,7 @@ This fork keeps minimal profile fragments instead of maintaining a full generate
 - The build workflow writes the expanded diff to `config.effective` in the Actions log, so you can see what the latest upstream Kconfig resolved.
 - The build workflow writes the final built-in package selections to `package-list.txt`, uploads config reports, fails when any selected seed symbol is dropped or changed by `make defconfig`, fails when any forbidden package is selected, and fails when any required package/config symbol is missing.
 - Releases are created, published, and pruned with GitHub CLI/API instead of third-party release actions, so failed action finalization cannot leave firmware releases as drafts and Node.js action runtime deprecations do not affect release publishing.
-- The update checker runs once per profile. Both profiles track Lean master, official Go, custom feeds, shared profile files, profile-specific fragments, and build helper scripts.
+- The scheduled update checker runs once per profile and only tracks the upstream OpenWrt/Lean source ref. Custom feed, profile, and helper-script changes should be built with a manual `OpenWrt Builder` run.
 - The root `.config` file is ignored on purpose. It is a generated local/OpenWrt build artifact, not the repository config source.
 
 Feed lines use OpenWrt's normal format. A `;branch` suffix tracks that branch, while a URL without suffix tracks the remote default branch:
