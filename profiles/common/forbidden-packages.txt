@@ -73,7 +73,20 @@ exact:miniupnpd-nftables
 exact:natflow
 exact:kmod-natflow
 exact:luci-app-natflow
-regex:^kmod-nft-
+exact:kmod-nft-arp
+exact:kmod-nft-bridge
+exact:kmod-nft-compat
+exact:kmod-nft-connlimit
+exact:kmod-nft-dup-inet
+exact:kmod-nft-fib
+exact:kmod-nft-fullcone
+exact:kmod-nft-nat
+exact:kmod-nft-netdev
+exact:kmod-nft-offload
+exact:kmod-nft-queue
+exact:kmod-nft-socket
+exact:kmod-nft-tproxy
+exact:kmod-nft-xfrm
 
 # Keep ddns-go only; block old LuCI/DDNS scripts.
 exact:ddns-scripts
