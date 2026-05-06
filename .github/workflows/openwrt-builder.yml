@@ -21,6 +21,9 @@ on:
           - r4s
           - all
 
+permissions:
+  contents: write
+
 env:
   DIY_P1_SH: diy-part1.sh
   DIY_P2_SH: diy-part2.sh
@@ -279,20 +282,53 @@ jobs:
     - name: Generate release tag
       id: tag
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      shell: bash
       run: |
-        echo "release_tag=${PROFILE}-$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        : > release.txt
+        set -euo pipefail
+
+        release_stamp="$(date +"%Y.%m.%d-%H%M%S")"
+        release_tag="${PROFILE}-${release_stamp}"
+        release_name="${PROFILE}${DEVICE_NAME:-}${FILE_DATE:-}"
+
+        echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+        echo "release_name=$release_name" >> "$GITHUB_OUTPUT"
+
+        {
+          echo "OpenWrt firmware build"
+          echo
+          echo "- Profile: ${PROFILE}"
+          echo "- Device: ${DEVICE_NAME#_}"
+          echo "- Source: ${REPO_URL} ${REPO_REF}"
+          echo "- Commit: ${GITHUB_SHA}"
+          echo "- Built at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+        } > release.txt
+
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware to release
-      uses: softprops/action-gh-release@v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.tag.outputs.release_tag }}
-        body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        tag="${{ steps.tag.outputs.release_tag }}"
+        title="${{ steps.tag.outputs.release_name }}"
+
+        if gh release view "$tag" >/dev/null 2>&1; then
+          gh release delete "$tag" --yes --cleanup-tag
+        fi
+
+        gh release create "$tag" "$FIRMWARE"/* \
+          --title "$title" \
+          --notes-file release.txt \
+          --target "$GITHUB_SHA"
+
+        release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq '.id')"
+        printf '{"draft":false,"prerelease":false}' |
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --input -
 
     - name: Delete workflow runs
       uses: Mattraks/delete-workflow-runs@main
