@@ -28,6 +28,7 @@ A template for building OpenWrt with GitHub Actions
 This fork keeps minimal profile fragments instead of maintaining a full generated `.config`.
 
 - `master` is the only active maintenance branch. Old `X86` and `R4S` branches are kept as read-only references.
+- The GitHub repository default branch should be `master`; scheduled update checks and triggered builds are expected to run from `master`.
 - Edit `profiles/common/config.seed` when you want to add or remove shared LuCI apps or package options.
 - Edit `profiles/x86/config.seed` or `profiles/r4s/config.seed` only for target, image size, hardware drivers, kernel settings, and device-specific tuning.
 - Edit `profiles/common/profile.env` for shared build metadata such as LAN IP, bootstrap mode, feeds update mode, and the official Go feed source. Profile env files only define source repo/ref, target validation, and profile names.
@@ -74,7 +75,6 @@ make defconfig
 - [coolsnowwolf/lede](https://github.com/coolsnowwolf/lede)
 - [Mikubill/transfer](https://github.com/Mikubill/transfer)
 - [Mattraks/delete-workflow-runs](https://github.com/Mattraks/delete-workflow-runs)
-- [peter-evans/repository-dispatch](https://github.com/peter-evans/repository-dispatch)
 
 ## License
 
