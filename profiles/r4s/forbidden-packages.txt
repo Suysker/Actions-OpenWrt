@@ -1,14 +1,14 @@
 # NanoPi R4S hardware blacklist.
 
 # Physical NIC drivers not needed by R4S.
-# Keep native Rockchip/R8169 networking and USB RTL8152 support.
-regex:^kmod-(8139cp|8139too|alx|amazon-ena|amd-xgbe|atlantic|bnx2|bnx2x|e1000|e1000e|forcedeth|i40e|i40evf|iavf|igb|igbvf|igc|ixgbe|mlx4-core|mlx5-core|mlxfw|pcnet32|r8125-rss|r8126-rss|r8168|tg3|tulip|via-velocity|vmxnet3)$
+# Keep native Rockchip/R8168 networking and USB RTL8152 support.
+regex:^kmod-(8139cp|8139too|alx|amazon-ena|amd-xgbe|atlantic|bnx2|bnx2x|e1000|e1000e|forcedeth|i40e|i40evf|iavf|igb|igbvf|igc|ixgbe|mlx4-core|mlx5-core|mlxfw|pcnet32|r8125-rss|r8126-rss|tg3|tulip|via-velocity|vmxnet3)$
 regex:^(amd64|intel)-microcode$
 exact:virtio-console-helper
 regex:^kmod-virtio
 
 # Firmware/data packages for unrelated physical hardware.
-# R4S needs r8152-firmware/r8169-firmware for the selected NIC drivers.
+# R4S needs the target-selected Realtek NIC driver/firmware packages.
 exact:amdgpu-firmware
 exact:i915-firmware
 exact:i915-firmware-dmc

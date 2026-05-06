@@ -18,7 +18,7 @@ package:odhcp6c
 package:odhcpd-ipv6only
 package:ipv6helper
 
-package:kmod-r8169
+package:kmod-r8168
 package:kmod-usb2
 package:kmod-usb3
 package:kmod-usb-net

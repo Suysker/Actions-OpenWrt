@@ -41,7 +41,7 @@ This fork keeps minimal profile fragments instead of maintaining a full generate
 - Shared packages currently include PassWall, MosDNS, SmartDNS, AdGuardHome, ddns-go, nlbwmon, arpbind, autoreboot, ramfree, ttyd, turboacc, upnp, wol, coremark, lsof, and `openssh-sftp-server`.
 - Both x86 and R4S build from `coolsnowwolf/lede master`, so shared packages resolve against the same Lean package and LuCI ecosystem.
 - The x86 profile builds the PVE VM image and keeps VirtIO plus `kmod-igc`.
-- The R4S profile builds `friendlyarm_nanopi-r4s` and keeps only R4S hardware support such as cpufreq, pwmfan, R8169, RTL8152, USB, MMC/SDHCI, NIC firmware, zram, and SD-image maintenance dependencies.
+- The R4S profile builds `friendlyarm_nanopi-r4s` and keeps only R4S hardware support such as cpufreq, pwmfan, R8168, RTL8152, USB, MMC/SDHCI, NIC firmware, zram, and SD-image maintenance dependencies.
 - Both maintained profiles intentionally use firewall3/iptables. `firewall4`, nftables packages, nft UPnP, and natflow are blocked.
 - Docker, Samba, legacy `ddns-scripts`, VLMCS, vsftpd, openlist, qbittorrent, zerotier, homeproxy, nikki, mihomo, and similar non-target packages are blocked before or after Kconfig resolution.
 - `diy-part2.sh` tracks the latest HAProxy LTS release automatically. Set `HAPROXY_VERSION` in the build workflow only when you need to pin or roll back temporarily.
