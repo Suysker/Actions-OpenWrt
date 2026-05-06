@@ -6,6 +6,27 @@ package:luci-app-package-manager
 package:luci-proto-ipv6
 package:luci-proto-ppp
 
+package:dnsmasq-full
+package:firewall
+package:ip-full
+package:ipset
+package:iptables
+package:iptables-mod-extra
+package:iptables-mod-fullconenat
+package:iptables-mod-iprange
+package:iptables-mod-socket
+package:iptables-mod-tproxy
+package:ip6tables
+package:kmod-ipt-fullconenat
+package:kmod-tcp-bbr
+package:kmod-tun
+package:ppp
+package:ppp-mod-pppoe
+package:odhcp6c
+package:odhcpd-ipv6only
+package:ipv6helper
+package:miniupnpd
+
 package:luci-app-passwall
 package:haproxy
 package:hysteria
@@ -26,10 +47,15 @@ package:luci-app-ddns-go
 package:ddns-go
 package:luci-app-nlbwmon
 package:nlbwmon
+package:luci-app-arpbind
+package:luci-app-autoreboot
+package:luci-app-ramfree
 package:luci-app-ttyd
 package:ttyd
+package:luci-app-turboacc
 package:luci-app-upnp
 package:luci-app-wol
+package:wol
 package:etherwake
 
 package:coremark

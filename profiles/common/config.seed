@@ -1,5 +1,5 @@
 # Shared package set for all maintained OpenWrt profiles.
-# Target, image layout, hardware drivers and firewall backend live in each profile.
+# Target, image layout, hardware drivers and device-only tuning live in each profile.
 
 # Shared LuCI base.
 CONFIG_PACKAGE_luci=y
@@ -10,6 +10,33 @@ CONFIG_PACKAGE_luci-app-package-manager=y
 CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y
 CONFIG_PACKAGE_luci-proto-ipv6=y
 CONFIG_PACKAGE_luci-proto-ppp=y
+
+# Shared main-router network stack. Both maintained profiles use Lean
+# firewall3/iptables, PPPoE, IPv6, fullcone, TUN and BBR.
+# CONFIG_PACKAGE_dnsmasq is not set
+CONFIG_PACKAGE_dnsmasq-full=y
+CONFIG_PACKAGE_dnsmasq_full_dhcp=y
+CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
+CONFIG_PACKAGE_dnsmasq_full_ipset=y
+CONFIG_PACKAGE_firewall=y
+CONFIG_PACKAGE_ip-full=y
+CONFIG_PACKAGE_ipset=y
+CONFIG_PACKAGE_iptables=y
+CONFIG_PACKAGE_iptables-mod-extra=y
+CONFIG_PACKAGE_iptables-mod-fullconenat=y
+CONFIG_PACKAGE_iptables-mod-iprange=y
+CONFIG_PACKAGE_iptables-mod-socket=y
+CONFIG_PACKAGE_iptables-mod-tproxy=y
+CONFIG_PACKAGE_ip6tables=y
+CONFIG_PACKAGE_kmod-ipt-fullconenat=y
+CONFIG_PACKAGE_kmod-tcp-bbr=y
+CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_ppp=y
+CONFIG_PACKAGE_ppp-mod-pppoe=y
+CONFIG_PACKAGE_odhcp6c=y
+CONFIG_PACKAGE_odhcpd-ipv6only=y
+CONFIG_PACKAGE_ipv6helper=y
+CONFIG_PACKAGE_miniupnpd=y
 
 # Shared proxy stack.
 CONFIG_PACKAGE_luci-app-passwall=y
@@ -29,6 +56,7 @@ CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray=y
 # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox is not set
 # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Trojan_Plus is not set
 # CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin is not set
+# CONFIG_PACKAGE_luci-app-passwall_Nftables_Transparent_Proxy is not set
 CONFIG_PACKAGE_luci-i18n-passwall-zh-cn=y
 CONFIG_PACKAGE_haproxy=y
 CONFIG_PACKAGE_hysteria=y
@@ -108,6 +136,11 @@ CONFIG_PACKAGE_openssh-sftp-server=y
 # CONFIG_PACKAGE_ip6tables-nft is not set
 # CONFIG_PACKAGE_xtables-nft is not set
 # CONFIG_PACKAGE_kmod-nft-core is not set
+# CONFIG_PACKAGE_kmod-nft-fullcone is not set
+# CONFIG_PACKAGE_kmod-nft-offload is not set
+# CONFIG_PACKAGE_kmod-nft-socket is not set
+# CONFIG_PACKAGE_kmod-nft-tproxy is not set
+# CONFIG_PACKAGE_miniupnpd-iptables is not set
 # CONFIG_PACKAGE_miniupnpd-nftables is not set
 # CONFIG_PACKAGE_natflow is not set
 # CONFIG_PACKAGE_kmod-natflow is not set

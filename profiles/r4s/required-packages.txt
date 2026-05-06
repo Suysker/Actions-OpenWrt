@@ -2,23 +2,9 @@
 
 config:CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r4s
 
-package:dnsmasq-full
-package:firewall
-package:iptables
-package:iptables-mod-fullconenat
-package:iptables-mod-extra
-package:iptables-mod-iprange
-package:iptables-mod-socket
-package:iptables-mod-tproxy
-package:ip6tables
-package:ipset
-package:ppp
-package:ppp-mod-pppoe
-package:odhcp6c
-package:odhcpd-ipv6only
-package:ipv6helper
-
 package:kmod-r8168
+package:kmod-mmc
+package:kmod-sdhci
 package:kmod-usb2
 package:kmod-usb3
 package:kmod-usb-net
@@ -27,5 +13,3 @@ package:luci-app-cpufreq
 package:kmod-hwmon-pwmfan
 package:kmod-zram
 package:zram-swap
-package:kmod-ipt-fullconenat
-package:miniupnpd
