@@ -23,6 +23,7 @@ exact:kmod-mt7981-firmware
 exact:mt7981-wo-firmware
 exact:usbids
 exact:usbutils
+exact:usb-modeswitch
 
 # R4S needs USB core/USB3/RTL8152, MMC and SDHCI. Block only storage, audio
 # and display/GPU modules that are not needed for this router profile.
