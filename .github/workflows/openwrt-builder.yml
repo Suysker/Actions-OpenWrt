@@ -217,6 +217,10 @@ jobs:
           grep '^CONFIG_TARGET.*=y' .config || true
           exit 1
         fi
+        bash "$GITHUB_WORKSPACE/scripts/check-seed-config.sh" \
+          "$PROFILE_CONFIG" \
+          ".config" \
+          "$GITHUB_WORKSPACE"
         ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/config.effective"
         bash "$GITHUB_WORKSPACE/scripts/check-forbidden-packages.sh" \
           ".config" \
@@ -239,6 +243,7 @@ jobs:
           config.effective
           package-list.txt
           forbidden-packages.detected.txt
+          seed-config.mismatches.txt
         if-no-files-found: ignore
 
     - name: Compile the firmware
@@ -337,10 +342,33 @@ jobs:
         keep_minimum_runs: 2
 
     - name: Remove old Releases
-      uses: dev-drprasad/delete-older-releases@master
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      with:
-        keep_latest: 6
-        delete_tags: true
       env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        keep_latest=6
+        mapfile -t releases < <(
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+            --jq '.[] | [.id, .tag_name] | @tsv'
+        )
+
+        if [ "${#releases[@]}" -le "$keep_latest" ]; then
+          echo "Release count ${#releases[@]} <= $keep_latest; nothing to delete."
+          exit 0
+        fi
+
+        for release in "${releases[@]:$keep_latest}"; do
+          IFS=$'\t' read -r release_id tag_name <<< "$release"
+          [ -n "$release_id" ] || continue
+
+          echo "Deleting old release ${tag_name:-unknown} (${release_id})"
+          gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/${release_id}"
+
+          if [ -n "${tag_name:-}" ]; then
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${tag_name}" || true
+          fi
+        done

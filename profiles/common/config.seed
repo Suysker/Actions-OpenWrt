@@ -71,18 +71,15 @@ CONFIG_PACKAGE_luci-app-mosdns=y
 CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn=y
 CONFIG_PACKAGE_mosdns=y
 CONFIG_PACKAGE_luci-app-smartdns=y
-CONFIG_PACKAGE_luci-i18n-smartdns-zh_Hans=y
 CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y
 CONFIG_PACKAGE_smartdns=y
 CONFIG_PACKAGE_luci-app-adguardhome=y
 CONFIG_PACKAGE_luci-app-adguardhome_INCLUDE_binary=y
-CONFIG_PACKAGE_luci-i18n-adguardhome-zh_Hans=y
 CONFIG_PACKAGE_luci-i18n-adguardhome-zh-cn=y
 CONFIG_PACKAGE_adguardhome=y
 
 # Shared management plugins.
 CONFIG_PACKAGE_luci-app-ddns-go=y
-CONFIG_PACKAGE_luci-i18n-ddns-go-zh_Hans=y
 CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
 CONFIG_PACKAGE_luci-app-nlbwmon=y
 CONFIG_PACKAGE_luci-i18n-nlbwmon-zh-cn=y
@@ -113,45 +110,3 @@ CONFIG_PACKAGE_lsof=y
 CONFIG_PACKAGE_htop=y
 # CONFIG_HTOP_LMSENSORS is not set
 CONFIG_PACKAGE_openssh-sftp-server=y
-
-# Shared exclusions for non-target apps and stale generated-config options.
-# CONFIG_PACKAGE_luci-app-bypass is not set
-# CONFIG_PACKAGE_luci-app-ddns is not set
-# CONFIG_PACKAGE_luci-app-dockerman is not set
-# CONFIG_PACKAGE_luci-app-docker is not set
-# CONFIG_PACKAGE_luci-app-homeproxy is not set
-# CONFIG_PACKAGE_luci-app-nikki is not set
-# CONFIG_PACKAGE_luci-app-openlist is not set
-# CONFIG_PACKAGE_luci-app-openlist2 is not set
-# CONFIG_PACKAGE_luci-app-qbittorrent is not set
-# CONFIG_PACKAGE_luci-app-rclone is not set
-# CONFIG_PACKAGE_luci-app-samba4 is not set
-# CONFIG_PACKAGE_luci-app-ssr-plus is not set
-# CONFIG_PACKAGE_luci-app-vlmcsd is not set
-# CONFIG_PACKAGE_luci-app-vsftpd is not set
-# CONFIG_PACKAGE_luci-app-zerotier is not set
-# CONFIG_PACKAGE_firewall4 is not set
-# CONFIG_PACKAGE_nftables is not set
-# CONFIG_PACKAGE_iptables-nft is not set
-# CONFIG_PACKAGE_ip6tables-nft is not set
-# CONFIG_PACKAGE_xtables-nft is not set
-# CONFIG_PACKAGE_kmod-nft-core is not set
-# CONFIG_PACKAGE_kmod-nft-fullcone is not set
-# CONFIG_PACKAGE_kmod-nft-offload is not set
-# CONFIG_PACKAGE_kmod-nft-socket is not set
-# CONFIG_PACKAGE_kmod-nft-tproxy is not set
-# CONFIG_PACKAGE_miniupnpd-iptables is not set
-# CONFIG_PACKAGE_miniupnpd-nftables is not set
-# CONFIG_PACKAGE_natflow is not set
-# CONFIG_PACKAGE_kmod-natflow is not set
-# CONFIG_PACKAGE_ddns-scripts is not set
-# CONFIG_PACKAGE_ddns-scripts-services is not set
-# CONFIG_PACKAGE_ddns-scripts_aliyun is not set
-# CONFIG_PACKAGE_ddns-scripts_dnspod is not set
-# CONFIG_PACKAGE_mihomo is not set
-# CONFIG_PACKAGE_mihomo-alpha is not set
-# CONFIG_PACKAGE_mihomo-meta is not set
-# CONFIG_PACKAGE_nikki is not set
-# CONFIG_PACKAGE_sing-box is not set
-# CONFIG_PACKAGE_vlmcsd is not set
-# CONFIG_PACKAGE_vsftpd is not set

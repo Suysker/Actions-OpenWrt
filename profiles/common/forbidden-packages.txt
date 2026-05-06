@@ -23,6 +23,10 @@ prune:luci-app-ssr-plus
 prune:luci-app-rclone
 prune:luci-app-vlmcsd
 prune:luci-app-vsftpd
+prune:ddns-scripts
+prune:ddns-scripts-services
+prune:ddns-scripts_aliyun
+prune:ddns-scripts_dnspod
 prune:clashoo
 prune:homeproxy
 prune:mihomo

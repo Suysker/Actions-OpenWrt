@@ -46,8 +46,8 @@ This fork keeps minimal profile fragments instead of maintaining a full generate
 - Docker, Samba, legacy `ddns-scripts`, VLMCS, vsftpd, openlist, qbittorrent, zerotier, homeproxy, nikki, mihomo, and similar non-target packages are blocked before or after Kconfig resolution.
 - `diy-part2.sh` tracks the latest HAProxy LTS release automatically. Set `HAPROXY_VERSION` in the build workflow only when you need to pin or roll back temporarily.
 - The build workflow writes the expanded diff to `config.effective` in the Actions log, so you can see what the latest upstream Kconfig resolved.
-- The build workflow writes the final built-in package selections to `package-list.txt`, uploads config reports, fails when any forbidden package is selected, and fails when any required package/config symbol is missing.
-- Releases are created with GitHub CLI and then patched through the GitHub API as `draft: false` and `prerelease: false`, so failed third-party release finalization cannot leave firmware releases as drafts.
+- The build workflow writes the final built-in package selections to `package-list.txt`, uploads config reports, fails when any selected seed symbol is dropped or changed by `make defconfig`, fails when any forbidden package is selected, and fails when any required package/config symbol is missing.
+- Releases are created, published, and pruned with GitHub CLI/API instead of third-party release actions, so failed action finalization cannot leave firmware releases as drafts and Node.js action runtime deprecations do not affect release publishing.
 - The update checker runs once per profile. Both profiles track Lean master, official Go, custom feeds, shared profile files, profile-specific fragments, and build helper scripts.
 - The root `.config` file is ignored on purpose. It is a generated local/OpenWrt build artifact, not the repository config source.
 
@@ -74,7 +74,6 @@ make defconfig
 - [coolsnowwolf/lede](https://github.com/coolsnowwolf/lede)
 - [Mikubill/transfer](https://github.com/Mikubill/transfer)
 - [Mattraks/delete-workflow-runs](https://github.com/Mattraks/delete-workflow-runs)
-- [dev-drprasad/delete-older-releases](https://github.com/dev-drprasad/delete-older-releases)
 - [peter-evans/repository-dispatch](https://github.com/peter-evans/repository-dispatch)
 
 ## License
