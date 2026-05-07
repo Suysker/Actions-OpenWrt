@@ -375,9 +375,10 @@ Rockchip 6.18 target.
 
 Signed-off-by: Yao Zi <ziyao@disroot.org>
 ---
- drivers/clk/rockchip/clk.c |  8 ++++++++
- drivers/clk/rockchip/clk.h | 15 +++++++++++++++
- 2 files changed, 23 insertions(+)
+ drivers/clk/rockchip/clk-rk3528.c | 14 ++++++++++++++
+ drivers/clk/rockchip/clk.c        |  8 ++++++++
+ drivers/clk/rockchip/clk.h        |  1 +
+ 3 files changed, 23 insertions(+)
 
 --- a/drivers/clk/rockchip/clk.c
 +++ b/drivers/clk/rockchip/clk.c
@@ -406,10 +407,14 @@ __CTX____TAB__branch_gate,
 __CTX____TAB__branch_grf_gate,
 __CTX____TAB__branch_linked_gate,
 __CTX____TAB__branch_mmc,
-@@ -1089,6 +1090,20 @@ struct rockchip_clk_branch {
-__CTX____TAB__.gate_flags = gf, \
- }
+--- a/drivers/clk/rockchip/clk-rk3528.c
++++ b/drivers/clk/rockchip/clk-rk3528.c
+@@ -195,6 +195,20 @@
+ #define MFLAGS CLK_MUX_HIWORD_MASK
+ #define DFLAGS CLK_DIVIDER_HIWORD_MASK
+ #define GFLAGS (CLK_GATE_HIWORD_MASK | CLK_GATE_SET_TO_DISABLE)
 +
++#ifndef GATE_NO_SET_RATE
 +#define GATE_NO_SET_RATE(_id, cname, pname, f, o, b, gf) \
 +{ \
 +__TAB__.id = _id, \
@@ -422,10 +427,10 @@ __CTX____TAB__.gate_flags = gf, \
 +__TAB__.gate_shift = b, \
 +__TAB__.gate_flags = gf, \
 +}
-+
- #define GATE_GRF(_id, cname, pname, f, o, b, gf, gt) \
- { \
-__CTX____TAB__.id = _id, \
++#endif
+__CTX__
+ static struct rockchip_pll_rate_table rk3528_pll_rates[] = {
+__CTX____TAB__RK3036_PLL_RATE(1200000000, 1, 100, 2, 1, 1, 0),
 PATCH
 
   sed -i -e 's/__TAB__/\t/g' -e 's/^__CTX__/ /' "$patch_file"
