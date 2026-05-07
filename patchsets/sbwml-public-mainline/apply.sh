@@ -561,6 +561,111 @@ patch_turboacc_for_bbr3() {
   echo "Patched Turbo ACC BBR dependency for sbwml BBRv3"
 }
 
+require_path() {
+  local path="$1"
+  local label="$2"
+
+  if [ ! -e "$path" ]; then
+    echo "::error::Missing required sbwml optimization: $label ($path)" >&2
+    return 1
+  fi
+}
+
+require_glob() {
+  local pattern="$1"
+  local label="$2"
+
+  if ! compgen -G "$pattern" >/dev/null; then
+    echo "::error::Missing required sbwml optimization: $label ($pattern)" >&2
+    return 1
+  fi
+}
+
+require_grep() {
+  local pattern="$1"
+  local path="$2"
+  local label="$3"
+
+  if ! grep -RqsE "$pattern" "$path"; then
+    echo "::error::Missing required sbwml optimization: $label" >&2
+    echo "  path: $path" >&2
+    echo "  pattern: $pattern" >&2
+    return 1
+  fi
+}
+
+verify_optional_existing_package_fix() {
+  local package_dir="$1"
+  local required_path="$2"
+  local label="$3"
+
+  if [ -d "$package_dir" ]; then
+    require_path "$required_path" "$label"
+  fi
+}
+
+verify_core_optimizations() {
+  local modules_dir="$openwrt_dir/package/kernel/linux/modules"
+  local failed=0
+
+  echo "Verifying required sbwml public R4S optimizations"
+
+  require_path "$openwrt_dir/target/linux/generic/kernel-${kernel_version}" "linux-${kernel_version} kernel metadata" || failed=1
+  require_path "$openwrt_dir/target/linux/generic/config-${kernel_version}" "linux-${kernel_version} generic config" || failed=1
+  require_path "$openwrt_dir/target/linux/rockchip/armv8/config-${kernel_version}" "linux-${kernel_version} Rockchip armv8 config" || failed=1
+  require_grep '^KERNEL_PATCHVER:=6\.18$' "$openwrt_dir/target/linux/rockchip/Makefile" "Rockchip target uses linux-${kernel_version}" || failed=1
+
+  require_glob "$openwrt_dir/target/linux/generic/backport-${kernel_version}/010-bbr3-*.patch" "BBR3 kernel patch series" || failed=1
+  require_glob "$openwrt_dir/target/linux/generic/hack-${kernel_version}/011-LRNG-*.patch" "LRNG kernel patch series" || failed=1
+  require_glob "$openwrt_dir/target/linux/generic/hack-${kernel_version}/*btf*.patch" "BTF warning kernel fix" || failed=1
+  require_glob "$openwrt_dir/target/linux/generic/hack-${kernel_version}/312-arm64-cpuinfo-*.patch" "arm64 CPU model kernel fix" || failed=1
+  require_grep 'GATE_NO_SET_RATE' "$openwrt_dir/target/linux/generic/hack-${kernel_version}/313-rockchip-add-GATE_NO_SET_RATE-clock-type.patch" "Rockchip RK3528 clock fix" || failed=1
+  require_glob "$openwrt_dir/target/linux/generic/hack-${kernel_version}/*shortcut-fe*.patch" "shortcut-fe kernel patch" || failed=1
+  require_glob "$openwrt_dir/target/linux/generic/hack-${kernel_version}/*fullcone*.patch" "fullcone kernel patch" || failed=1
+
+  require_grep 'KernelPackage/tcp-bbr3' "$modules_dir" "kmod-tcp-bbr3 module definition" || failed=1
+  require_grep 'KernelPackage/ipt-fullconenat' "$openwrt_dir/package" "iptables fullcone package definition" || failed=1
+
+  require_path "$openwrt_dir/package/system/autocore" "autocore-arm package" || failed=1
+  require_path "$openwrt_dir/package/boot/uboot-rockchip" "Rockchip U-Boot package" || failed=1
+  require_path "$openwrt_dir/package/boot/arm-trusted-firmware-rockchip" "Rockchip ARM Trusted Firmware package" || failed=1
+  require_path "$openwrt_dir/package/kernel/r8168" "Realtek R8168 package" || failed=1
+  require_path "$openwrt_dir/package/kernel/r8152" "Realtek RTL8152 vendor package" || failed=1
+  require_path "$openwrt_dir/package/firmware/linux-firmware" "linux-firmware package replacement" || failed=1
+  require_path "$openwrt_dir/package/kernel/mac80211" "mac80211 linux-${kernel_version} package replacement" || failed=1
+  require_path "$openwrt_dir/package/kernel/ath10k-ct" "ath10k-ct linux-${kernel_version} package replacement" || failed=1
+
+  require_grep 'TARGET_CFLAGS.*-O2' "$openwrt_dir/package/libs/libubox/Makefile" "libubox O2 target flags" || failed=1
+  require_path "$openwrt_dir/files/etc/sysctl.d/10-default.conf" "sbwml sysctl defaults" || failed=1
+  require_path "$openwrt_dir/files/etc/sysctl.d/15-vm-swappiness.conf" "sbwml VM swappiness tuning" || failed=1
+  require_path "$openwrt_dir/files/etc/sysctl.d/16-udp-buffer-size.conf" "sbwml UDP buffer tuning" || failed=1
+
+  verify_optional_existing_package_fix \
+    "$openwrt_dir/package/kernel/bpf-headers" \
+    "$openwrt_dir/package/kernel/bpf-headers/patches/900-fix-build.patch" \
+    "bpf-headers linux-${kernel_version} build fix" || failed=1
+  verify_optional_existing_package_fix \
+    "$openwrt_dir/package/kernel/cryptodev-linux" \
+    "$openwrt_dir/package/kernel/cryptodev-linux/patches/900-fix-linux-${kernel_version}.patch" \
+    "cryptodev-linux linux-${kernel_version} build fix" || failed=1
+  verify_optional_existing_package_fix \
+    "$openwrt_dir/package/kernel/nat46" \
+    "$openwrt_dir/package/kernel/nat46/patches/102-fix-build-with-kernel-${kernel_version}.patch" \
+    "nat46 linux-${kernel_version} build fix" || failed=1
+
+  if [ -r "$openwrt_dir/package/feeds/luci/luci-app-turboacc/Makefile" ] &&
+     grep -Rqs 'KernelPackage/tcp-bbr3' "$modules_dir"; then
+    require_grep 'kmod-tcp-bbr3' "$openwrt_dir/package/feeds/luci/luci-app-turboacc/Makefile" "Turbo ACC depends on kmod-tcp-bbr3" || failed=1
+  fi
+
+  if [ "$failed" -ne 0 ]; then
+    echo "::error::Required sbwml public R4S optimizations are incomplete." >&2
+    exit 1
+  fi
+
+  echo "Required sbwml public R4S optimizations verified."
+}
+
 echo "Using restricted sbwml patch source: $source_repo ($source_ref)"
 echo "Using sbwml raw patch source: $raw_base"
 echo "Using kernel patch version: $kernel_version"
@@ -585,5 +690,6 @@ install_6_18_build_fixes
 install_runtime_tuning_files
 apply_small_web_ui_fixes
 patch_turboacc_for_bbr3
+verify_core_optimizations
 
 echo "Restricted sbwml R4S public optimization patchset completed."
