@@ -357,6 +357,82 @@ copy_kernel_patches() {
   echo "Installed public linux-${kernel_version} BBR3/LRNG/BTF/arm64/netfilter patches"
 }
 
+install_rockchip_kernel_fixes() {
+  local hack_dir="$openwrt_dir/target/linux/generic/hack-${kernel_version}"
+  local patch_file="$hack_dir/313-rockchip-add-GATE_NO_SET_RATE-clock-type.patch"
+
+  mkdir -p "$hack_dir"
+
+  cat > "$patch_file" <<'PATCH'
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Yao Zi <ziyao@disroot.org>
+Date: Tue, 1 Oct 2024 04:23:59 +0000
+Subject: [PATCH] clk: rockchip: Add clock type GATE_NO_SET_RATE
+
+This clock type is similar to GATE, but doesn't allow rate setting, which
+is required by the RK3528 clock controller driver carried by the current
+Rockchip 6.18 target.
+
+Signed-off-by: Yao Zi <ziyao@disroot.org>
+---
+ drivers/clk/rockchip/clk.c |  8 ++++++++
+ drivers/clk/rockchip/clk.h | 15 +++++++++++++++
+ 2 files changed, 23 insertions(+)
+
+--- a/drivers/clk/rockchip/clk.c
++++ b/drivers/clk/rockchip/clk.c
+@@ -583,6 +583,14 @@ void rockchip_clk_register_branches(stru
+__CTX____TAB____TAB____TAB__break;
+__CTX____TAB____TAB__case branch_gate:
+__CTX____TAB____TAB____TAB__flags |= CLK_SET_RATE_PARENT;
++__TAB____TAB____TAB__clk = clk_register_gate(NULL, list->name,
++__TAB____TAB____TAB____TAB__list->parent_names[0], flags,
++__TAB____TAB____TAB____TAB__ctx->reg_base + list->gate_offset,
++__TAB____TAB____TAB____TAB__list->gate_shift, list->gate_flags, &ctx->lock);
++__TAB____TAB____TAB__break;
++__TAB____TAB__case branch_gate_no_set_rate:
++__TAB____TAB____TAB__flags &= ~CLK_SET_RATE_PARENT;
++
+__CTX__
+__CTX____TAB____TAB____TAB__clk = clk_register_gate(NULL, list->name,
+__CTX____TAB____TAB____TAB____TAB__list->parent_names[0], flags,
+--- a/drivers/clk/rockchip/clk.h
++++ b/drivers/clk/rockchip/clk.h
+@@ -758,6 +758,7 @@ enum rockchip_clk_branch_type {
+__CTX____TAB__branch_divider,
+__CTX____TAB__branch_fraction_divider,
+__CTX____TAB__branch_gate,
++__TAB__branch_gate_no_set_rate,
+__CTX____TAB__branch_grf_gate,
+__CTX____TAB__branch_linked_gate,
+__CTX____TAB__branch_mmc,
+@@ -1089,6 +1090,20 @@ struct rockchip_clk_branch {
+__CTX____TAB__.gate_flags = gf, \
+ }
++
++#define GATE_NO_SET_RATE(_id, cname, pname, f, o, b, gf) \
++{ \
++__TAB__.id = _id, \
++__TAB__.branch_type = branch_gate_no_set_rate, \
++__TAB__.name = cname, \
++__TAB__.parent_names = (const char *[]){ pname }, \
++__TAB__.num_parents = 1, \
++__TAB__.flags = f, \
++__TAB__.gate_offset = o, \
++__TAB__.gate_shift = b, \
++__TAB__.gate_flags = gf, \
++}
++
+ #define GATE_GRF(_id, cname, pname, f, o, b, gf, gt) \
+ { \
+__CTX____TAB__.id = _id, \
+PATCH
+
+  sed -i -e 's/__TAB__/\t/g' -e 's/^__CTX__/ /' "$patch_file"
+
+  echo "Installed Rockchip GATE_NO_SET_RATE kernel fix"
+}
+
 apply_generic_build_patches() {
   local patch_dir="$source_tree/openwrt/patch/generic-25.12"
   local patch_file
@@ -493,6 +569,7 @@ apply_generic_kernel_metadata
 install_kernel_version
 install_kernel_module_makefiles
 copy_kernel_patches
+install_rockchip_kernel_fixes
 apply_target_and_performance_tuning
 install_public_package_replacements
 install_6_18_build_fixes
