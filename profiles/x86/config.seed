@@ -23,6 +23,7 @@ CONFIG_VIRTIO_SUPPORT=y
 # - Intel i225 passthrough uses kmod-igc.
 CONFIG_PACKAGE_kmod-scsi-core=y
 CONFIG_PACKAGE_kmod-igc=y
+CONFIG_PACKAGE_kmod-tcp-bbr=y
 
 # x86-only exclusions.
 # CONFIG_PACKAGE_amd64-microcode is not set

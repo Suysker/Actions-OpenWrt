@@ -1,6 +1,7 @@
 # NanoPi R4S critical packages/config symbols.
 
 config:CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r4s
+config:CONFIG_LINUX_6_18
 
 package:kmod-r8168
 package:kmod-mmc
@@ -8,7 +9,8 @@ package:kmod-sdhci
 package:kmod-usb2
 package:kmod-usb3
 package:kmod-usb-net
-package:kmod-usb-net-rtl8152
+package:kmod-usb-net-rtl8152-vendor
+package:kmod-tcp-bbr3
 package:luci-app-cpufreq
 package:kmod-hwmon-pwmfan
 package:kmod-zram

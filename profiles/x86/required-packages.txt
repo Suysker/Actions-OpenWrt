@@ -5,3 +5,4 @@ config:CONFIG_VIRTIO_SUPPORT
 
 package:kmod-scsi-core
 package:kmod-igc
+package:kmod-tcp-bbr

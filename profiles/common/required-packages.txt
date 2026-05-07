@@ -18,7 +18,6 @@ package:iptables-mod-socket
 package:iptables-mod-tproxy
 package:ip6tables
 package:kmod-ipt-fullconenat
-package:kmod-tcp-bbr
 package:kmod-tun
 package:ppp
 package:ppp-mod-pppoe
