@@ -104,7 +104,11 @@ apply_patch_file() {
 
   if [ "$mode" = "optional" ]; then
     echo "skipped-conflict: $label"
-    git -C "$openwrt_dir" apply --check --whitespace=nowarn "$patch_file" || true
+    echo "  patch: ${patch_file#$openwrt_dir/}"
+    echo "  reason: patch does not match the current source tree"
+    if [ "${PATCHSET_VERBOSE_SKIPS:-0}" = "1" ]; then
+      git -C "$openwrt_dir" apply --check --whitespace=nowarn "$patch_file" || true
+    fi
     return 0
   fi
 
