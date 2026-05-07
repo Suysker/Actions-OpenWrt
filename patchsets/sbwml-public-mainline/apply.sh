@@ -327,6 +327,27 @@ copy_kernel_patches() {
       *nft*|*nftables*)
         echo "skipped-conflict: nft/firewall4-only kernel patch $name"
         ;;
+      *conntrack-events-support-multiple-registrant*)
+        if find "$hack_dir" -maxdepth 1 -type f -name '*conntrack-events-support-multiple-registrant*.patch' | grep -q .; then
+          echo "skipped-duplicate: existing conntrack event multi-registrant patch for $name"
+        else
+          cp -f "$patch_file" "$hack_dir/"
+        fi
+        ;;
+      *support-shortcut-fe*)
+        if find "$hack_dir" -maxdepth 1 -type f -name '*support-shortcut-fe*.patch' | grep -q .; then
+          echo "skipped-duplicate: existing shortcut-fe kernel patch for $name"
+        else
+          cp -f "$patch_file" "$hack_dir/"
+        fi
+        ;;
+      *bcm-fullcone*|*bcm-fullconenat*)
+        if find "$hack_dir" -maxdepth 1 -type f \( -name '*bcm-fullcone*.patch' -o -name '*bcm-fullconenat*.patch' \) | grep -q .; then
+          echo "skipped-duplicate: existing bcm fullcone kernel patch for $name"
+        else
+          cp -f "$patch_file" "$hack_dir/"
+        fi
+        ;;
       *)
         cp -f "$patch_file" "$hack_dir/"
         ;;
@@ -438,6 +459,23 @@ apply_small_web_ui_fixes() {
     "LuCI RPC timeout"
 }
 
+patch_turboacc_for_bbr3() {
+  local makefile="$openwrt_dir/package/feeds/luci/luci-app-turboacc/Makefile"
+
+  if [ ! -r "$makefile" ]; then
+    echo "skipped-missing: Turbo ACC BBRv3 dependency patch"
+    return 0
+  fi
+
+  if ! grep -Rqs 'KernelPackage/tcp-bbr3' "$openwrt_dir/package/kernel/linux/modules"; then
+    echo "skipped-missing: Turbo ACC BBRv3 dependency patch because kmod-tcp-bbr3 is unavailable"
+    return 0
+  fi
+
+  perl -0pi -e 's/kmod-tcp-bbr\b/kmod-tcp-bbr3/g' "$makefile"
+  echo "Patched Turbo ACC BBR dependency for sbwml BBRv3"
+}
+
 echo "Using restricted sbwml patch source: $source_repo ($source_ref)"
 echo "Using sbwml raw patch source: $raw_base"
 echo "Using kernel patch version: $kernel_version"
@@ -460,5 +498,6 @@ install_public_package_replacements
 install_6_18_build_fixes
 install_runtime_tuning_files
 apply_small_web_ui_fixes
+patch_turboacc_for_bbr3
 
 echo "Restricted sbwml R4S public optimization patchset completed."
