@@ -237,15 +237,27 @@ install_kernel_version() {
 preserve_iptables_fullcone_module() {
   local original_netfilter="$1"
   local target_netfilter="$2"
+  local package_fullcone
 
   if grep -q 'KernelPackage/ipt-fullconenat' "$target_netfilter"; then
     echo "Kept sbwml iptables fullcone module definition"
     return 0
   fi
 
+  package_fullcone="$(
+    find "$openwrt_dir/package" -type f -name Makefile -print0 |
+      xargs -0 grep -l 'KernelPackage/ipt-fullconenat' |
+      head -n 1 || true
+  )"
+  if [ -n "$package_fullcone" ]; then
+    echo "Kept Lean iptables fullcone package definition: ${package_fullcone#$openwrt_dir/}"
+    return 0
+  fi
+
   if [ ! -r "$original_netfilter" ] || ! grep -q 'KernelPackage/ipt-fullconenat' "$original_netfilter"; then
     echo "::error::Cannot preserve Lean iptables fullcone module definition." >&2
     echo "The sbwml 6.x module set is nft/fullcone oriented, while this profile requires firewall3/iptables fullcone." >&2
+    echo "Expected to find KernelPackage/ipt-fullconenat in package/network/services/fullconenat or original netfilter.mk." >&2
     exit 1
   fi
 
