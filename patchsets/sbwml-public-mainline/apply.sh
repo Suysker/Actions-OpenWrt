@@ -417,7 +417,6 @@ __CTX____TAB__branch_mmc,
  #define MFLAGS CLK_MUX_HIWORD_MASK
  #define DFLAGS CLK_DIVIDER_HIWORD_MASK
  #define GFLAGS (CLK_GATE_HIWORD_MASK | CLK_GATE_SET_TO_DISABLE)
-+
 +#ifndef GATE_NO_SET_RATE
 +#define GATE_NO_SET_RATE(_id, cname, pname, f, o, b, gf) \
 +{ \
