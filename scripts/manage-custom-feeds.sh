@@ -5,6 +5,7 @@ usage() {
   cat >&2 <<'EOF'
 Usage:
   manage-custom-feeds.sh apply <feeds.custom.conf> <feeds.conf.default>
+  manage-custom-feeds.sh apply-lock <source-lock.json> <feeds.conf.default>
   manage-custom-feeds.sh refs <feeds.custom.conf>
 EOF
 }
@@ -49,6 +50,61 @@ parse_feeds() {
 
 cmd="${1:-}"
 case "$cmd" in
+  apply-lock)
+    lock_file="${2:-}"
+    target_file="${3:-}"
+
+    if [ -z "$lock_file" ] || [ -z "$target_file" ]; then
+      usage
+      exit 2
+    fi
+    if [ ! -r "$lock_file" ]; then
+      echo "::error::Source lock not found: $lock_file" >&2
+      exit 2
+    fi
+
+    mkdir -p "$(dirname "$target_file")"
+    python3 - "$lock_file" "$target_file" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+lock_path, output_path = map(pathlib.Path, sys.argv[1:])
+lock = json.loads(lock_path.read_text(encoding="utf-8"))
+if lock.get("schema") != 1:
+    raise SystemExit("::error::Unsupported source-lock schema")
+
+lines = ["# Generated from source-lock.json; every feed is immutable."]
+feeds = lock.get("feeds", {})
+ordered = sorted(
+    feeds.items(),
+    key=lambda item: (
+        0 if item[1].get("origin") == "custom" else 1,
+        item[1].get("order", 9999),
+        item[0],
+    ),
+)
+for name, feed in ordered:
+    feed_type = feed.get("type")
+    url = feed.get("url")
+    commit = feed.get("commit", "")
+    if feed_type not in {"src-git", "src-git-full"}:
+        raise SystemExit(f"::error::Unsupported locked feed type for {name}: {feed_type}")
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+        raise SystemExit(f"::error::Invalid locked feed name: {name}")
+    if not isinstance(url, str) or not url.startswith("https://"):
+        raise SystemExit(f"::error::Invalid locked feed URL for {name}")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise SystemExit(f"::error::Invalid locked feed commit for {name}")
+    lines.append(f"{feed_type} {name} {url}^{commit}")
+
+if not lines[1:]:
+    raise SystemExit("::error::Source lock contains no feeds")
+output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+    ;;
+
   apply)
     feeds_file="${2:-}"
     target_file="${3:-}"
@@ -71,7 +127,7 @@ case "$cmd" in
 
     while IFS=$'\t' read -r type name url; do
       [ -z "${name:-}" ] && continue
-      sed -i "/^src-[^[:space:]]\+[[:space:]]\+$name[[:space:]]/d" "$filtered"
+      sed -i "/^src-[^[:space:]]\+[[:space:]]\+${name}[[:space:]]/d" "$filtered"
     done < "$parsed"
 
     {

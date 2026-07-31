@@ -1,5 +1,31 @@
-# Shared package set for all maintained OpenWrt profiles.
-# Target, image layout, hardware drivers and device-only tuning live in each profile.
+# Shared package, toolchain and network contract for every maintained profile.
+# Target, image layout, CPU flags and hardware-only packages belong to devices.
+
+# Build/toolchain policy: native Lean GCC 15, reproducible reports and OPKG.
+CONFIG_DEVEL=y
+CONFIG_TOOLCHAINOPTS=y
+CONFIG_GCC_USE_VERSION_15=y
+CONFIG_CCACHE=y
+CONFIG_BUILD_LOG=y
+CONFIG_JSON_OVERVIEW_IMAGE_INFO=y
+CONFIG_JSON_CYCLONEDX_SBOM=y
+CONFIG_INCLUDE_CONFIG=y
+CONFIG_REPRODUCIBLE_DEBUG_INFO=y
+CONFIG_SIGNED_PACKAGES=y
+CONFIG_SIGNATURE_CHECK=y
+CONFIG_DOWNLOAD_CHECK_CERTIFICATE=y
+CONFIG_OPENSSL_OPTIMIZE_SPEED=y
+CONFIG_OPENSSL_WITH_ASM=y
+CONFIG_ZLIB_OPTIMIZE_SPEED=y
+# CONFIG_USE_APK is not set
+# CONFIG_USE_GC_SECTIONS is not set
+# CONFIG_USE_LTO is not set
+# CONFIG_USE_MOLD is not set
+# CONFIG_ALL_KMODS is not set
+# CONFIG_ALL_NONSHARED is not set
+
+# Exclude Lean's broad, security-changing first-boot bundle.
+# CONFIG_PACKAGE_default-settings is not set
 
 # Shared LuCI base.
 CONFIG_PACKAGE_luci=y
@@ -11,16 +37,14 @@ CONFIG_PACKAGE_luci-i18n-package-manager-zh-cn=y
 CONFIG_PACKAGE_luci-proto-ipv6=y
 CONFIG_PACKAGE_luci-proto-ppp=y
 
-# Shared main-router network stack. Both maintained profiles use Lean
-# firewall3/iptables, PPPoE, IPv6, fullcone and TUN. BBR is selected per
-# profile because the sbwml 6.18 R4S patchset exposes BBRv3 under a different
-# package symbol.
+# Shared firewall3/iptables router stack.
 # CONFIG_PACKAGE_dnsmasq is not set
 CONFIG_PACKAGE_dnsmasq-full=y
 CONFIG_PACKAGE_dnsmasq_full_dhcp=y
 CONFIG_PACKAGE_dnsmasq_full_dhcpv6=y
 CONFIG_PACKAGE_dnsmasq_full_ipset=y
 CONFIG_PACKAGE_firewall=y
+# CONFIG_PACKAGE_firewall4 is not set
 CONFIG_PACKAGE_ip-full=y
 CONFIG_PACKAGE_ipset=y
 CONFIG_PACKAGE_iptables=y
@@ -30,14 +54,20 @@ CONFIG_PACKAGE_iptables-mod-iprange=y
 CONFIG_PACKAGE_iptables-mod-socket=y
 CONFIG_PACKAGE_iptables-mod-tproxy=y
 CONFIG_PACKAGE_ip6tables=y
+# CONFIG_PACKAGE_iptables-nft is not set
+# CONFIG_PACKAGE_ip6tables-nft is not set
+# CONFIG_PACKAGE_nftables is not set
 CONFIG_PACKAGE_kmod-ipt-fullconenat=y
 CONFIG_PACKAGE_kmod-tun=y
+CONFIG_PACKAGE_kmod-tcp-bbr=y
+CONFIG_PACKAGE_kmod-sched=y
 CONFIG_PACKAGE_ppp=y
 CONFIG_PACKAGE_ppp-mod-pppoe=y
 CONFIG_PACKAGE_odhcp6c=y
 CONFIG_PACKAGE_odhcpd-ipv6only=y
 CONFIG_PACKAGE_ipv6helper=y
-CONFIG_PACKAGE_miniupnpd=y
+CONFIG_PACKAGE_miniupnpd-iptables=y
+CONFIG_PACKAGE_ethtool=y
 
 # Shared proxy stack.
 CONFIG_PACKAGE_luci-app-passwall=y
@@ -67,7 +97,7 @@ CONFIG_PACKAGE_v2ray-geoip=y
 CONFIG_PACKAGE_v2ray-geosite=y
 CONFIG_PACKAGE_ipt2socks=y
 
-# Shared DNS/ad blocking.
+# Shared DNS and filtering packages. Runtime topology remains user-owned.
 CONFIG_PACKAGE_luci-app-mosdns=y
 CONFIG_PACKAGE_luci-i18n-mosdns-zh-cn=y
 CONFIG_PACKAGE_mosdns=y
@@ -76,7 +106,6 @@ CONFIG_PACKAGE_luci-i18n-smartdns-zh-cn=y
 CONFIG_PACKAGE_smartdns=y
 CONFIG_PACKAGE_luci-app-adguardhome=y
 CONFIG_PACKAGE_luci-app-adguardhome_INCLUDE_binary=y
-CONFIG_PACKAGE_luci-i18n-adguardhome-zh-cn=y
 CONFIG_PACKAGE_adguardhome=y
 
 # Shared management plugins.

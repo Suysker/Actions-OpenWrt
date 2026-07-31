@@ -1,25 +1,18 @@
-#!/bin/bash
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-# File name: diy-part1.sh
-# Description: OpenWrt DIY script part 1 (Before Update feeds)
-#
-# Copyright (c) 2019-2024 P3TERX <https://p3terx.com>
-#
-# This is free software, licensed under the MIT License.
-# See /LICENSE for more information.
-#
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Uncomment a feed source
-#sed -i 's/^#\(.*helloworld\)/\1/' feeds.conf.default
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source_lock="${1:-${SOURCE_LOCK:-}}"
+feeds_file="${2:-feeds.conf.default}"
 
-# Add custom feed sources from the repository-level single source of truth.
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FEEDS_FILE="feeds.conf.default"
-[ -f feeds.conf ] && FEEDS_FILE="feeds.conf"
+[ -n "$source_lock" ] || {
+  echo "::error::Usage: diy-part1.sh <source-lock.json> [feeds.conf.default]" >&2
+  exit 2
+}
 
-bash "$REPO_DIR/scripts/manage-custom-feeds.sh" apply "$REPO_DIR/feeds.custom.conf" "$FEEDS_FILE"
+# Replace every floating default/custom feed with the exact commits resolved by
+# the prepare job. No build job reads a branch HEAD.
+bash "$repo_root/scripts/manage-custom-feeds.sh" apply-lock \
+  "$source_lock" "$feeds_file"
 
-
-#echo 'src-git opluci https://git.openwrt.org/project/luci.git' >>feeds.conf.default
-#sed -i '1a src-git opluci https://git.openwrt.org/project/luci.git' feeds.conf.default
+echo "Installed immutable feed configuration from source-lock.json."

@@ -1,0 +1,20 @@
+#!/bin/sh
+
+case "${ACTION:-}" in
+	add|ifup) ;;
+	*) exit 0 ;;
+esac
+
+interface="${INTERFACE:-${DEVICE:-}}"
+[ -n "$interface" ] || exit 0
+[ -e "/sys/class/net/$interface" ] || exit 0
+
+driver="$(ethtool -i "$interface" 2>/dev/null | sed -n 's/^driver:[[:space:]]*//p' | head -n 1)"
+case "$driver" in
+	virtio_net|igc)
+		ethtool -L "$interface" combined 4 >/dev/null 2>&1 ||
+			logger -t n5105-multiqueue "failed to restore four queues on $interface ($driver)"
+		;;
+esac
+
+exit 0

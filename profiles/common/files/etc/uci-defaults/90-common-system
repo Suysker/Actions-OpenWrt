@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+uci -q batch <<'EOF'
+set system.@system[0].zonename='Asia/Shanghai'
+set system.@system[0].timezone='CST-8'
+set system.ntp.enabled='1'
+set system.ntp.enable_server='0'
+EOF
+uci -q commit system
+
+exit 0

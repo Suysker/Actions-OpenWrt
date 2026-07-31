@@ -1,83 +1,142 @@
-**English** | [中文](https://p3terx.com/archives/build-openwrt-with-github-actions.html)
-
 # Actions-OpenWrt
 
-[![LICENSE](https://img.shields.io/github/license/mashape/apistatus.svg?style=flat-square&label=LICENSE)](https://github.com/P3TERX/Actions-OpenWrt/blob/master/LICENSE)
-![GitHub Stars](https://img.shields.io/github/stars/P3TERX/Actions-OpenWrt.svg?style=flat-square&label=Stars&logo=github)
-![GitHub Forks](https://img.shields.io/github/forks/P3TERX/Actions-OpenWrt.svg?style=flat-square&label=Forks&logo=github)
+这个仓库从 Lean `master` 构建两套共享同一源码锁的精简路由固件：
 
-A template for building OpenWrt with GitHub Actions
+- NanoPi R4S：RK3399、原生 Lean 启动链与网口 IRQ 策略、ARMv8 CRC/crypto、R8168、PWM fan、512 MiB LZ4 zram。
+- N5105 PVE：`x86-64-v2 + mtune=tremont`、squashfs combined EFI、VirtIO NET/SCSI、I225/igc 直通、4 队列与 irqbalance。
 
-## Usage
+两者共用 firewall3/iptables、GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列维护的 BBRv3。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
 
-- Click the [Use this template](https://github.com/P3TERX/Actions-OpenWrt/generate) button to create a new repository.
-- Edit files under `profiles/` to choose shared packages or per-device target settings.
-- Push the profile changes to the GitHub repository.
-- Select `OpenWrt Builder` on the Actions page.
-- Click the `Run workflow` button.
-- Choose `x86`, `r4s`, or `all` in the `profile` input.
-- When the build is complete, click the `Artifacts` button in the upper right corner of the Actions page to download the binaries.
+## 构建模型
 
-## Tips
+一次 `all` 构建遵循同一条事务链：
 
-- It may take a long time to expand a config and build the OpenWrt firmware. Thus, before create repository to build your own firmware, you may check out if others have already built it which meet your needs by simply [search `Actions-Openwrt` in GitHub](https://github.com/search?q=Actions-openwrt).
-- Add some meta info of your built firmware (such as firmware architecture and installed packages) to your repository introduction, this will save others' time.
-
-## Profile workflow
-
-This fork keeps minimal profile fragments instead of maintaining a full generated `.config`.
-
-- `master` is the only active maintenance branch. Old `X86` and `R4S` branches are kept as read-only references.
-- The GitHub repository default branch should be `master`; scheduled update checks and triggered builds are expected to run from `master`.
-- Edit `profiles/common/config.seed` when you want to add or remove shared LuCI apps or package options.
-- Edit `profiles/x86/config.seed` or `profiles/r4s/config.seed` only for target, image size, hardware drivers, kernel settings, and device-specific tuning.
-- Edit `profiles/common/profile.env` for shared build metadata such as LAN IP, bootstrap mode, feeds update mode, and the official Go feed source. Profile env files only define source repo/ref, target validation, and profile names.
-- Optional profile patchsets are selected with `PROFILE_PATCHSET` in a profile env file. The build calls a generic patch hook after feeds are installed; profiles without a patchset skip this step.
-- Edit `profiles/common/forbidden-packages.txt` for shared block/prune policy, and profile-specific forbidden files only for hardware differences.
-- Edit `profiles/common/required-packages.txt` or `profiles/<profile>/required-packages.txt` when a package/config symbol is critical and the build must fail if Kconfig drops it.
-- The build renders `profiles/common/*` plus `profiles/<profile>/*` into temporary `.config`, env, forbidden, and required package files; root-level `config.seed` and `forbidden-packages.txt` are intentionally not maintained.
-- Edit `feeds.custom.conf` when you want to add, remove, or change custom feed sources. Builds read this file; scheduled update checks intentionally ignore custom feed changes.
-- `prune:` rules remove known broken/unwanted package entries with a `Makefile` before OpenWrt scans package menus; `exact:` and `regex:` rules fail the final config check if those packages are selected.
-- Do not add dependency libraries or kernel modules manually unless you are deliberately overriding OpenWrt defaults. `make defconfig` expands real dependencies during the GitHub Actions build.
-- The build replaces only `feeds/packages/lang/golang` with OpenWrt official `openwrt/packages` `lang/golang`, then rebuilds the packages feed index so current Go-based packages can build without importing an extra third-party Go feed.
-- Shared packages currently include PassWall, MosDNS, SmartDNS, AdGuardHome, ddns-go, nlbwmon, arpbind, autoreboot, ramfree, ttyd, turboacc, upnp, wol, coremark, lsof, and `openssh-sftp-server`.
-- Both x86 and R4S build from `coolsnowwolf/lede master`, so shared packages resolve against the same Lean package and LuCI ecosystem.
-- The x86 profile builds the PVE VM image and keeps VirtIO plus `kmod-igc`.
-- The R4S profile builds `friendlyarm_nanopi-r4s` and keeps only R4S hardware support such as cpufreq, pwmfan, R8168, RTL8152, USB, MMC/SDHCI, NIC firmware, zram, and SD-image maintenance dependencies.
-- Both maintained profiles intentionally use the same common main-router stack: firewall3/iptables, `dnsmasq-full`, PPPoE, IPv6, fullcone, TUN and UPnP. x86 keeps the normal BBR package; the experimental R4S patchset uses sbwml's BBRv3 package symbol. `firewall4`, nftables packages, nft UPnP, and natflow are blocked.
-- The experimental `experiment/sbwml-public-r4s` branch lets the R4S profile opt in to `sbwml-public-mainline`. That patchset applies restricted public sbwml kernel, target, hardware and performance material onto the current OpenWrt tree without running sbwml build scripts or requiring private target repositories.
-- Docker, Samba, legacy `ddns-scripts`, VLMCS, vsftpd, openlist, qbittorrent, zerotier, homeproxy, nikki, mihomo, and similar non-target packages are blocked before or after Kconfig resolution.
-- `diy-part2.sh` tracks the latest HAProxy LTS release automatically. Set `HAPROXY_VERSION` in the build workflow only when you need to pin or roll back temporarily.
-- The build workflow writes the expanded diff to `config.effective` in the Actions log, so you can see what the latest upstream Kconfig resolved.
-- The build workflow writes the final built-in package selections to `package-list.txt`, uploads config reports, fails when any selected seed symbol is dropped or changed by `make defconfig`, fails when any forbidden package is selected, and fails when any required package/config symbol is missing.
-- Releases are created, published, and pruned with GitHub CLI/API instead of third-party release actions, so failed action finalization cannot leave firmware releases as drafts and Node.js action runtime deprecations do not affect release publishing.
-- The scheduled update checker runs once per profile and only tracks the upstream OpenWrt/Lean source ref. Custom feed, profile, and helper-script changes should be built with a manual `OpenWrt Builder` run.
-- The root `.config` file is ignored on purpose. It is a generated local/OpenWrt build artifact, not the repository config source.
-
-Feed lines use OpenWrt's normal format. A `;branch` suffix tracks that branch, while a URL without suffix tracks the remote default branch:
-
-```sh
-src-git passwall https://github.com/Openwrt-Passwall/openwrt-passwall.git;main
-src-git small https://github.com/kenzok8/small.git
+```text
+解析 Lean/feeds/最新稳定产物 -> source-lock.json
+                              -> R4S 完整构建与验证
+                              -> N5105 完整构建与验证
+                              -> 聚合为 draft Release
+                              -> 重新下载全部资产并验 SHA/契约
+                              -> 公开同一个 Release
+                              -> 成功后保留最近 6 个生产 Release
 ```
 
-To refresh a profile seed from a full config inside an OpenWrt source tree:
+`prepare` 只解析一次所有浮动输入。两个 build job 随后只使用完整 Git commit、精确 release URL 和 64 位 SHA256，不读取 branch HEAD、GitHub `latest/download`，也不接受 `PKG_HASH:=skip`。失败只保留诊断 artifact 或 draft，不公开半套固件，也不清理已有生产版本。
+
+## 使用方法
+
+1. 在 GitHub Actions 中选择 `OpenWrt Builder`。
+2. 点击 `Run workflow`。
+3. 正式发布选择 `profile=all`；`r4s` 或 `x86-n5105-pve` 只构建可下载 artifact，不创建 Release。
+4. 通常把四个版本输入留空，resolver 会选择：
+   - 仍受支持的最高 HAProxy LTS 分支最新 patch release；
+   - 最新 AdGuardHome stable；
+   - 最新 Loyalsoldier GeoIP 和 Geosite release。
+5. 需要故障回滚时才填写精确 `haproxy_version`、`adguardhome_version`、`geoip_tag` 或 `geosite_tag`；resolver 仍会获取并验证真实 hash。
+
+定时 `Update Checker` 使用同一个 resolver。Lean、任一 feed、四类上游产物、profile 或 patch digest 变化时，它会把已经解析好的完整 source lock 交给一次双平台构建，避免 update checker 与 builder 各自维护一套版本查询逻辑。
+
+## Profile 如何维护
+
+仓库只有三层配置名，不保留旧 `x86` 别名：
+
+```text
+profiles/common/             两个平台共享的包、工具链、契约和 rootfs overlay
+profiles/r4s/                R4S target、CPU flags、硬件包和运行时设置
+profiles/x86-n5105-pve/      N5105 PVE target、CPU flags、硬件包和运行时设置
+```
+
+- 共享应用只修改 `profiles/common/config.seed`。
+- 设备 target、镜像、CPU flags、驱动和设备调优只修改对应设备的 `config.seed`。
+- 每个必需包或 Kconfig 进入 `required-packages.txt`。
+- 不允许进入 manifest 的包写入 `forbidden-packages.txt`；普通精简不删除源码。
+- rootfs 文件放在对应 `files/`。common 与设备层同路径会直接失败，不允许静默覆盖。
+- 同一 Kconfig symbol 或 required/forbidden 规则不能同时归 common 与设备层所有。
+
+`profiles/common/providers.tsv` 是关键 provider 的唯一合同。当前明确选择默认 packages feed 的 HAProxy、kenzo 的 AdGuardHome、xiaorouji 的 v2ray-geodata 和 Lean LuCI 的 TurboACC；真实冲突 provider 会在 feed checkout 后被精确移除并重新索引。
+
+## 固件内容与边界
+
+共同应用包括 LuCI、PassWall（Xray/Hysteria/HAProxy/geodata）、MosDNS、SmartDNS、AdGuardHome、ddns-go、nlbwmon、ARP 绑定、自动重启、内存释放、ttyd、TurboACC、iptables UPnP、WOL、CoreMark、htop、lsof 和 SFTP server。
+
+明确排除 default-settings、Docker、Samba、旧 DDNS scripts、VLMCS、VSFTP、OpenList、qBittorrent、ZeroTier、HomeProxy、Nikki、Mihomo、SSR Plus、firewall4/nftables、natflow、SFE 和第二套 BBR package provider 等不在需求内的组件。
+
+固件只拥有安全、可解释的出厂默认：
+
+- LAN `192.168.2.1/24`，DHCP `.100` 起共 150 个地址；WAN DHCP、WAN6 DHCPv6；不写死物理 `ethX`。
+- `Asia/Shanghai` 和启用 NTP client，保留上游 NTP server 列表。
+- `fq`、16 MiB socket buffer 上限。
+- 只有确认 `/sys/module/tcp_bbr/version=3`、`sch_fq` 存在且 TurboACC 已探测到 software flow offload 后，才一次性把 factory CCA 设为 `bbr`；以后尊重用户在 TurboACC 中的选择。
+- 不内置固定 root 密码、不关闭签名校验、不添加私有软件源、不开放 WAN 管理入口。
+
+AdGuardHome、MosDNS、SmartDNS、dnsmasq-full 和 PassWall 都会被编译，但 DNS 端口、上游、缓存、规则、节点、订阅和凭据是用户常用的设备运行时配置，不烘焙进两台设备共用的镜像。它们应按设备实际 UCI/YAML、socket、iptables redirect 和完整查询链验收。
+
+## N5105 PVE 前置条件
+
+推荐 VM 合同：
+
+```text
+machine: q35
+bios: ovmf
+cpu: host
+sockets: 1
+cores: 4
+balloon: 0
+disk: VirtIO SCSI single + iothread + discard
+LAN: 一个 VirtIO NIC，multiqueue=4
+WAN: 一个 I225/igc PCIe passthrough
+serial0: socket
+```
+
+首次启动脚本按 `ethtool -i` 识别唯一 `virtio_net=LAN`、唯一 `igc=WAN`，把两侧设为 4 combined queues 后关闭 packet steering。缺接口、重复接口或任何一侧无法达到 4 队列时脚本保留并在下次启动重试，不用 RPS fallback 掩盖错误的 PVE 配置。
+
+该固件要求 x86-64-v2；正式 guest 应确认 SSE3、SSSE3、SSE4.1、SSE4.2、POPCNT 和 CMPXCHG16B。`cpu: host` 还应暴露 AES/PCLMUL/SHA，供 OpenSSL runtime dispatch 使用。
+
+## 本地验证
+
+仓库静态与 fixture 测试：
 
 ```sh
-cp /path/to/full/.config .config
-make defconfig
-./scripts/diffconfig.sh > /path/to/Actions-OpenWrt/profiles/<profile>/config.seed
+bash -n diy-part1.sh diy-part2.sh scripts/*.sh profiles/*/files/etc/uci-defaults/*
+python3 -m py_compile scripts/*.py
+bash tests/test-profile-renderer.sh
+bash tests/test-resolve-source-lock.sh
+bash tests/test-apply-source-lock-artifacts.sh
+bash tests/test-locked-feeds.sh
+bash scripts/check-profile-contract.sh r4s
+bash scripts/check-profile-contract.sh x86-n5105-pve
 ```
+
+真实 resolver（会访问上游并下载受控 release 做 hash 验证）：
+
+```sh
+bash scripts/resolve-source-lock.sh resolve \
+  'r4s,x86-n5105-pve' /tmp/source-lock.json
+bash scripts/resolve-source-lock.sh digest /tmp/source-lock.json
+```
+
+GitHub build 还会执行 `make defconfig`、required/forbidden/provider 契约、定向下载、完整 `make download`、一次并行编译、实际 `tcp_bbr.ko` module version 3、`sch_fq.ko`、GCC 15、镜像 gzip、manifest、buildinfo、SBOM 和所有 SHA256 验证。
+
+## 产物与迁移说明
+
+每个平台 artifact 包含固件、原始 manifest/buildinfo/SBOM/sha256sums，以及 source lock、artifact override、patch、module、runner、toolchain 和构建 provenance。生产 Release 的通用文件统一加 profile 前缀，并由 `delivery-index.json` 映射回原名；Release 发布前会据此重建两套 artifact 并再次运行同一 verifier。
+
+Breaking changes：
+
+- `profiles/x86` 和 workflow 输入 `x86` 已改名为 `x86-n5105-pve`，没有兼容别名。
+- 生产 profile 跟随 Lean target 稳定内核；BBRv3 只从 `patchsets/common/kernel/<series>` 进入。
+- `diy-part2.sh` 不再做可变 release 查询、`sed` 服务策略或 `PKG_HASH:=skip`；它只应用 source lock 中已经验证的 metadata。
+- 正式 Release 必须由同一 source lock 下两台设备同时通过；单 profile 仅提供 Actions artifact。
 
 ## Credits
 
-- [Microsoft Azure](https://azure.microsoft.com)
-- [GitHub Actions](https://github.com/features/actions)
-- [OpenWrt](https://github.com/openwrt/openwrt)
+- [P3TERX/Actions-OpenWrt](https://github.com/P3TERX/Actions-OpenWrt)
 - [coolsnowwolf/lede](https://github.com/coolsnowwolf/lede)
-- [Mikubill/transfer](https://github.com/Mikubill/transfer)
-- [Mattraks/delete-workflow-runs](https://github.com/Mattraks/delete-workflow-runs)
+- [sbwml/builder](https://github.com/sbwml/builder)
+- [sbwml/r4s_build_script](https://github.com/sbwml/r4s_build_script)
+- [CachyOS/kernel-patches](https://github.com/CachyOS/kernel-patches)
+- [google/bbr](https://github.com/google/bbr)
 
 ## License
 
-[MIT](https://github.com/P3TERX/Actions-OpenWrt/blob/main/LICENSE) © [**P3TERX**](https://p3terx.com)
+[MIT](LICENSE)

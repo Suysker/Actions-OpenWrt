@@ -1,0 +1,6 @@
+# component	package	expected Makefile	conflicting source directories (comma-separated)
+haproxy	haproxy	feeds/packages/net/haproxy/Makefile	-
+adguardhome	adguardhome	feeds/kenzo/adguardhome/Makefile	feeds/packages/net/adguardhome
+geoip	v2ray-geoip	feeds/xiaorouji/v2ray-geodata/Makefile	feeds/packages/net/v2ray-geodata,feeds/small/v2ray-geodata
+geosite	v2ray-geosite	feeds/xiaorouji/v2ray-geodata/Makefile	feeds/packages/net/v2ray-geodata,feeds/small/v2ray-geodata
+turboacc	luci-app-turboacc	feeds/luci/applications/luci-app-turboacc/Makefile	-

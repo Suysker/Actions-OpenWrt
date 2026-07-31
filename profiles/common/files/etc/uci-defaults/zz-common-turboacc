@@ -1,0 +1,58 @@
+#!/bin/sh
+set -eu
+
+marker="$(uci -q get turboacc.global.project_factory_applied || true)"
+[ "$marker" = "1" ] && exit 0
+
+# kmod packages normally autoload these modules. Loading them here makes the
+# factory contract explicit without inventing a second package/provider name.
+modprobe tcp_bbr >/dev/null 2>&1 || true
+modprobe sch_fq >/dev/null 2>&1 || true
+
+[ -r /sys/module/tcp_bbr/version ] || {
+	echo "BBRv3 factory default deferred: tcp_bbr module version is unavailable" >&2
+	exit 1
+}
+[ "$(cat /sys/module/tcp_bbr/version)" = "3" ] || {
+	echo "BBRv3 factory default refused: tcp_bbr is not module version 3" >&2
+	exit 1
+}
+[ -d /sys/module/sch_fq ] || {
+	echo "BBRv3 factory default deferred: sch_fq provider is unavailable" >&2
+	exit 1
+}
+grep -qw bbr /proc/sys/net/ipv4/tcp_available_congestion_control || {
+	echo "BBRv3 factory default refused: bbr is not an available CCA" >&2
+	exit 1
+}
+
+# The upstream TurboACC uci-defaults script owns fastpath discovery. Require its
+# expected software path and preserve fullcone plus every discovered value.
+[ "$(uci -q get turboacc.config.fastpath || true)" = "flow_offloading" ] || {
+	echo "BBRv3 factory default deferred: TurboACC did not detect software flow offload" >&2
+	exit 1
+}
+[ "$(uci -q get turboacc.config.fastpath_fo_hw || true)" = "0" ] || {
+	echo "BBRv3 factory default refused: hardware flow offload must stay disabled" >&2
+	exit 1
+}
+
+uci -q batch <<'EOF'
+set turboacc.config.tcpcca='bbr'
+set turboacc.global.set='1'
+EOF
+uci -q commit turboacc
+
+/etc/init.d/turboacc reload >/dev/null 2>&1 || {
+	echo "BBRv3 factory default deferred: TurboACC reload failed" >&2
+	exit 1
+}
+[ "$(cat /proc/sys/net/ipv4/tcp_congestion_control)" = "bbr" ] || {
+	echo "BBRv3 factory default deferred: running CCA did not become bbr" >&2
+	exit 1
+}
+
+uci -q set turboacc.global.project_factory_applied='1'
+uci -q commit turboacc
+
+exit 0

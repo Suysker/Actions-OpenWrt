@@ -1,16 +1,11 @@
-# NanoPi R4S critical packages/config symbols.
-
+# NanoPi R4S target and hardware contract.
 config:CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r4s
-config:CONFIG_LINUX_6_18
+config:CONFIG_TARGET_OPTIONS
+config:CONFIG_KERNEL_ZRAM_BACKEND_LZ4
+config:CONFIG_KERNEL_ZRAM_DEF_COMP_LZ4
 
+package:autocore-arm
 package:kmod-r8168
-package:kmod-mmc
-package:kmod-sdhci
-package:kmod-usb2
-package:kmod-usb3
-package:kmod-usb-net
-package:kmod-usb-net-rtl8152-vendor
-package:kmod-tcp-bbr3
 package:luci-app-cpufreq
 package:kmod-hwmon-pwmfan
 package:kmod-zram

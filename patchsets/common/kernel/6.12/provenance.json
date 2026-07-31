@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "kernel_series": "6.12",
+  "algorithm": {
+    "url": "https://github.com/google/bbr.git",
+    "commit": "90210de4b779d40496dee0b89081780eeddf2a60",
+    "module_version": 3,
+    "runtime_name": "bbr"
+  },
+  "origin": {
+    "url": "https://github.com/CachyOS/kernel-patches.git",
+    "commit": "c9ed808e86cc1f5fafdbe208627533ee10499b5b",
+    "path": "6.12/0002-bbr3.patch",
+    "sha256": "15d1563b4696ee35455f02b21fad0508fb77e0364f8dd1f48e0e82671dd05299"
+  },
+  "vendored": {
+    "path": "patchsets/common/kernel/6.12/0001-bbrv3.patch",
+    "sha256": "15d1563b4696ee35455f02b21fad0508fb77e0364f8dd1f48e0e82671dd05299"
+  }
+}

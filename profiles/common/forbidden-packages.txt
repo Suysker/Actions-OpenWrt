@@ -1,55 +1,25 @@
-# Shared forbidden package selections for all OpenWrt profiles.
-# Blank lines and comments are ignored.
-#
-# Formats:
-#   prune:<package-or-source-directory-name> removes a broken/unwanted package entry before Kconfig and forbids selection
-#   exact:<package-or-source-directory-name>
-#   regex:<extended-regular-expression>
-#   <plain text> is treated like exact:<plain text>
+# Shared forbidden selections. Ordinary exclusions are never source-pruned.
 
-# Broken/unwanted LuCI entries that should be removed before package menus.
-prune:luci-app-fchomo
-prune:luci-app-dockerman
-prune:luci-theme-alpha
-prune:luci-app-bypass
-prune:luci-app-clashoo
-prune:luci-app-ddns
-prune:luci-app-homeproxy
-prune:luci-app-nikki
-prune:luci-app-openlist
-prune:luci-app-openlist2
-prune:luci-app-qbittorrent
-prune:luci-app-ssr-plus
-prune:luci-app-rclone
-prune:luci-app-vlmcsd
-prune:luci-app-vsftpd
-prune:ddns-scripts
-prune:ddns-scripts-services
-prune:ddns-scripts_aliyun
-prune:ddns-scripts_dnspod
-prune:clashoo
-prune:homeproxy
-prune:mihomo
-prune:mihomo-alpha
-prune:mihomo-meta
-prune:nikki
-prune:openlist
-prune:openlist2
-prune:qbittorrent
+# Broad or security-changing defaults.
+exact:default-settings
 
-# Applications intentionally excluded from the lean profiles.
+# Applications intentionally outside this lean product.
+exact:luci-app-bypass
 exact:luci-app-clashoo
-exact:luci-app-docker
 exact:luci-app-diskman
+exact:luci-app-docker
+exact:luci-app-dockerman
 exact:luci-app-filemanager
 exact:luci-app-homeproxy
 exact:luci-app-nikki
 exact:luci-app-openlist
 exact:luci-app-openlist2
 exact:luci-app-qbittorrent
-exact:luci-app-samba4
-exact:luci-app-store
 exact:luci-app-quickstart
+exact:luci-app-rclone
+exact:luci-app-samba4
+exact:luci-app-ssr-plus
+exact:luci-app-store
 exact:luci-app-vlmcsd
 exact:luci-app-vsftpd
 exact:luci-app-zerotier
@@ -67,7 +37,7 @@ exact:vlmcsd
 exact:vsftpd
 exact:zerotier
 
-# Both maintained profiles intentionally use firewall3/iptables, not nftables.
+# firewall3/iptables is the only firewall stack.
 exact:firewall4
 exact:nftables
 exact:iptables-nft
@@ -77,27 +47,15 @@ exact:miniupnpd-nftables
 exact:natflow
 exact:kmod-natflow
 exact:luci-app-natflow
-exact:kmod-nft-arp
-exact:kmod-nft-bridge
-exact:kmod-nft-compat
-exact:kmod-nft-connlimit
-exact:kmod-nft-dup-inet
-exact:kmod-nft-fib
-exact:kmod-nft-fullcone
-exact:kmod-nft-nat
-exact:kmod-nft-netdev
-exact:kmod-nft-offload
-exact:kmod-nft-queue
-exact:kmod-nft-socket
-exact:kmod-nft-tproxy
-exact:kmod-nft-xfrm
+regex:^kmod-nft-
 
-# Keep ddns-go only; block old LuCI/DDNS scripts.
+# Keep ddns-go only.
+exact:luci-app-ddns
 exact:ddns-scripts
 exact:ddns-scripts-services
 regex:^ddns-scripts_
 
-# Proxy stacks not selected in config.seed.
+# Alternative proxy and fast-path stacks are not selected.
 exact:mihomo
 exact:mihomo-alpha
 exact:mihomo-meta
@@ -108,15 +66,19 @@ exact:simple-obfs
 exact:v2ray-plugin
 exact:shadowsocks-rust
 regex:^shadowsocks-
+exact:kmod-tcp-bbr3
+exact:kmod-fast-classifier
+exact:kmod-shortcut-fe
+exact:kmod-shortcut-fe-cm
+
+# VPN/bonding and storage services outside the requirement.
 exact:luci-proto-wireguard
 exact:kmod-wireguard
 exact:wireguard-tools
 exact:luci-proto-bonding
 exact:proto-bonding
 exact:kmod-bonding
-
-# Samba, automount and disk maintenance tools.
-regex:^(autosamba|autosamba_.*|.*samba.*|ksmbd.*)$
 exact:automount
+exact:block-mount
 exact:cfdisk
 exact:ntfs3-mount

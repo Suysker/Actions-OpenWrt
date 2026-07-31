@@ -3,3 +3,5 @@ config.effective
 package-list.txt
 forbidden-packages.detected.txt
 .source-state/
+__pycache__/
+*.pyc

@@ -1,0 +1,25 @@
+# N5105 PVE guest hardware/runtime blacklist.
+exact:autocore-x86
+exact:zram-swap
+exact:kmod-zram
+regex:^(amd64|intel)-microcode$
+exact:autosamba
+exact:e2fsprogs
+exact:mkf2fs
+exact:partx-utils
+exact:kmod-fs-f2fs
+exact:lm-sensors
+
+# Keep only I225/igc among physical NIC drivers; VirtIO NET is built in.
+regex:^kmod-(8139cp|8139too|alx|amazon-ena|amd-xgbe|atlantic|bnx2|bnx2x|e1000|e1000e|forcedeth|i40e|i40evf|iavf|igb|igbvf|ixgbe|mlx4-core|mlx5-core|mlxfw|pcnet32|r8125-rss|r8126-rss|r8168|tg3|tulip|via-velocity|vmxnet3)$
+
+# No USB/HID/removable storage/display/audio/MMC stack in this VM.
+exact:usbids
+exact:usbutils
+exact:virtio-console-helper
+regex:^kmod-usb
+regex:^kmod-hid
+regex:^kmod-drm-
+regex:^kmod-sound-
+exact:kmod-mmc
+exact:kmod-sdhci

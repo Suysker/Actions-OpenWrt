@@ -1,381 +1,544 @@
-#
-# https://github.com/P3TERX/Actions-OpenWrt
-#
-# File: .github/workflows/openwrt-bulder.yml
-# Description: Build OpenWrt using GitHub Actions
-#
-
 name: OpenWrt Builder
 
 on:
-  repository_dispatch:
   workflow_dispatch:
     inputs:
       profile:
-        description: Firmware profile to build
+        description: Firmware profile (all is required for a production Release)
         required: true
-        default: x86
+        default: all
         type: choice
         options:
-          - x86
-          - r4s
           - all
+          - r4s
+          - x86-n5105-pve
+      haproxy_version:
+        description: Optional exact HAProxy LTS rollback version
+        required: false
+        type: string
+      adguardhome_version:
+        description: Optional exact AdGuardHome stable rollback version
+        required: false
+        type: string
+      geoip_tag:
+        description: Optional exact GeoIP release tag
+        required: false
+        type: string
+      geosite_tag:
+        description: Optional exact Geosite release tag
+        required: false
+        type: string
+  repository_dispatch:
+    types: [source-lock-update]
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: openwrt-production-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
-  DIY_P1_SH: diy-part1.sh
-  DIY_P2_SH: diy-part2.sh
-  # Empty means diy-part2.sh selects the latest HAProxy LTS automatically.
-  HAPROXY_VERSION: ''
-  UPLOAD_BIN_DIR: false
-  UPLOAD_FIRMWARE: true
-  UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
+    name: Resolve immutable inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     outputs:
-      matrix: ${{ steps.matrix.outputs.matrix }}
+      matrix: ${{ steps.select.outputs.matrix }}
+      publish: ${{ steps.select.outputs.publish }}
+      source_digest: ${{ steps.lock.outputs.source_digest }}
     steps:
-      - name: Select build profiles
-        id: matrix
+      - name: Checkout implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Select profiles
+        id: select
         shell: bash
         env:
-          WORKFLOW_PROFILE: ${{ github.event.inputs.profile }}
+          MANUAL_PROFILE: ${{ inputs.profile }}
           DISPATCH_PROFILE: ${{ github.event.client_payload.profile }}
         run: |
           set -euo pipefail
-
-          profile="${WORKFLOW_PROFILE:-${DISPATCH_PROFILE:-x86}}"
-          case "$profile" in
-            x86) echo 'matrix={"profile":["x86"]}' >> "$GITHUB_OUTPUT" ;;
-            r4s) echo 'matrix={"profile":["r4s"]}' >> "$GITHUB_OUTPUT" ;;
-            all) echo 'matrix={"profile":["x86","r4s"]}' >> "$GITHUB_OUTPUT" ;;
+          requested="${MANUAL_PROFILE:-${DISPATCH_PROFILE:-all}}"
+          case "$requested" in
+            all)
+              echo 'matrix={"profile":["r4s","x86-n5105-pve"]}' >> "$GITHUB_OUTPUT"
+              echo 'profiles=r4s,x86-n5105-pve' >> "$GITHUB_OUTPUT"
+              echo 'publish=true' >> "$GITHUB_OUTPUT"
+              ;;
+            r4s|x86-n5105-pve)
+              printf 'matrix={"profile":["%s"]}\n' "$requested" >> "$GITHUB_OUTPUT"
+              printf 'profiles=%s\n' "$requested" >> "$GITHUB_OUTPUT"
+              echo 'publish=false' >> "$GITHUB_OUTPUT"
+              ;;
             *)
-              echo "::error::Unknown profile: $profile"
+              echo "::error::Unknown profile: $requested"
               exit 2
               ;;
           esac
 
+      - name: Validate repository contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n diy-part1.sh diy-part2.sh scripts/*.sh \
+            profiles/common/files/etc/uci-defaults/* \
+            profiles/r4s/files/etc/uci-defaults/* \
+            profiles/x86-n5105-pve/files/etc/uci-defaults/* \
+            profiles/x86-n5105-pve/files/etc/hotplug.d/net/*
+          python3 -m py_compile scripts/*.py
+          bash tests/test-profile-renderer.sh
+          bash tests/test-resolve-source-lock.sh
+          bash tests/test-apply-source-lock-artifacts.sh
+          bash tests/test-locked-feeds.sh
+          bash scripts/check-profile-contract.sh r4s
+          bash scripts/check-profile-contract.sh x86-n5105-pve
+
+      - name: Resolve or accept one source lock
+        id: lock
+        shell: bash
+        env:
+          PROFILES: ${{ steps.select.outputs.profiles }}
+          INCOMING_LOCK_B64: ${{ github.event.client_payload.source_lock_b64 }}
+          EXPECTED_DIGEST: ${{ github.event.client_payload.source_digest }}
+          HAPROXY_VERSION: ${{ inputs.haproxy_version }}
+          ADGUARDHOME_VERSION: ${{ inputs.adguardhome_version }}
+          GEOIP_TAG: ${{ inputs.geoip_tag }}
+          GEOSITE_TAG: ${{ inputs.geosite_tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          lock_dir="$RUNNER_TEMP/source-lock"
+          mkdir -p "$lock_dir"
+          lock="$lock_dir/source-lock.json"
+
+          if [ -n "$INCOMING_LOCK_B64" ]; then
+            printf '%s' "$INCOMING_LOCK_B64" | base64 --decode > "$lock"
+            locked_repo_commit="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repository_commit"])' "$lock")"
+            [ "$locked_repo_commit" = "$(git rev-parse HEAD)" ] || {
+              echo "::error::Incoming source lock belongs to repository commit $locked_repo_commit, not $(git rev-parse HEAD)"
+              exit 1
+            }
+          else
+            bash scripts/resolve-source-lock.sh resolve "$PROFILES" "$lock"
+          fi
+
+          digest="$(bash scripts/resolve-source-lock.sh digest "$lock")"
+          digest_hex="${digest#sha256:}"
+          if [ -n "$EXPECTED_DIGEST" ] && [ "$EXPECTED_DIGEST" != "$digest_hex" ]; then
+            echo "::error::Incoming source-lock digest differs from dispatch metadata"
+            exit 1
+          fi
+          echo "source_digest=$digest_hex" >> "$GITHUB_OUTPUT"
+          echo "Source lock: $digest"
+
+          python3 - "$lock" "$lock_dir" <<'PY'
+          import json, pathlib, sys
+          lock = json.load(open(sys.argv[1], encoding="utf-8"))
+          out = pathlib.Path(sys.argv[2])
+          for name, value in (
+              ("profile-digests.json", lock["profile_digests"]),
+              ("patch-digest.json", {"patch_digest": lock["patch_digest"]}),
+              ("actions-lock.json", lock["actions"]),
+          ):
+              (out / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Preflight the exact BBRv3 kernel ports
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t versions < <(python3 - "$RUNNER_TEMP/source-lock/source-lock.json" <<'PY'
+          import json, sys
+          lock = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("\n".join(sorted({entry["kernel_version"] for entry in lock["profiles"].values()})))
+          PY
+          )
+          for version in "${versions[@]}"; do
+            bash scripts/check-bbrv3-port.sh "$version"
+          done
+
+      - name: Upload immutable build inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: source-lock
+          path: ${{ runner.temp }}/source-lock
+          if-no-files-found: error
+          retention-days: 30
+
   build:
+    name: Build ${{ matrix.profile }}
     needs: prepare
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
-    name: Build ${{ matrix.profile }}
-
+    env:
+      PROFILE: ${{ matrix.profile }}
+      SOURCE_LOCK: ${{ github.workspace }}/source-input/source-lock.json
+      OPENWRT_ROOT: /builder/openwrt
+      CCACHE_DIR: /builder/.ccache
+      CCACHE_MAXSIZE: 5G
     steps:
-    - name: Checkout
-      uses: actions/checkout@main
+      - name: Checkout implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-    - name: Load profile metadata
-      id: profile
-      shell: bash
-      run: |
-        set -euo pipefail
+      - name: Download immutable build inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: source-lock
+          path: source-input
 
-        profile="${{ matrix.profile }}"
-        merged_env="$RUNNER_TEMP/profile-${profile}.env"
-        bash scripts/render-profile.sh env "$profile" > "$merged_env"
+      - name: Load profile and cache identities
+        id: identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(bash scripts/resolve-source-lock.sh digest "$SOURCE_LOCK")"
+          [ "${digest#sha256:}" = "${{ needs.prepare.outputs.source_digest }}" ]
+          bash scripts/render-profile.sh env "$PROFILE" "$RUNNER_TEMP/profile.env"
+          cat "$RUNNER_TEMP/profile.env" >> "$GITHUB_ENV"
+          python3 - "$SOURCE_LOCK" "$PROFILE" "$GITHUB_OUTPUT" <<'PY'
+          import json, sys
+          lock = json.load(open(sys.argv[1], encoding="utf-8"))
+          profile = sys.argv[2]
+          with open(sys.argv[3], "a", encoding="utf-8") as out:
+              out.write(f"profile_digest={lock['profile_digests'][profile].removeprefix('sha256:')}\n")
+              out.write(f"patch_digest={lock['patch_digest'].removeprefix('sha256:')}\n")
+              out.write(f"openwrt_commit={lock['openwrt']['commit']}\n")
+          PY
 
-        echo "PROFILE=$profile" >> "$GITHUB_ENV"
-        grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "$merged_env" >> "$GITHUB_ENV"
-        awk -F= '
-          $1 == "CACHE_PREFIX" { print "cache_prefix=" substr($0, index($0, "=") + 1) }
-          $1 == "CACHE_MIXKEY" { print "cache_mixkey=" substr($0, index($0, "=") + 1) }
-          $1 == "ARTIFACT_PREFIX" { print "artifact_prefix=" substr($0, index($0, "=") + 1) }
-        ' "$merged_env" >> "$GITHUB_OUTPUT"
-        echo "Loaded profile metadata for $profile"
-        cat "$merged_env"
+      - name: Prepare bounded runner workspace
+        id: runner
+        shell: bash
+        run: bash scripts/prepare-runner.sh "$GITHUB_WORKSPACE/runner-report.txt"
 
-    - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-        sudo docker image prune --all --force
-        sudo -E apt-get -qq update
-        sudo -E apt-get -qq install ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext gcc-multilib g++-multilib git gperf haveged help2man intltool libc6-dev-i386 libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libpython3-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools python3-setuptools qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev
-        sudo -E apt-get -qq autoremove --purge
-        sudo -E apt-get -qq clean
-        sudo timedatectl set-timezone "$TZ"
-        sudo mkdir -p /workdir
-        sudo chown $USER:$GROUPS /workdir
+      - name: Install build prerequisites
+        shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get -qq update
+          sudo apt-get -qq install --no-install-recommends \
+            asciidoc autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache cmake cpio curl device-tree-compiler file flex g++ \
+            g++-multilib gawk gcc-multilib gettext git gperf help2man intltool \
+            jq kmod libelf-dev libfuse-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool ninja-build p7zip-full patch \
+            pkgconf python3 python3-pyelftools python3-setuptools qemu-utils \
+            rsync scons squashfs-tools subversion swig texinfo unzip wget \
+            xmlto xxd zlib1g-dev
 
-    - name: Bootstrap source
-      working-directory: /workdir
-      shell: bash
-      run: |
-        set -euo pipefail
+      - name: Checkout locked Lean source
+        shell: bash
+        run: |
+          set -euo pipefail
+          readarray -t source < <(python3 - "$SOURCE_LOCK" <<'PY'
+          import json, sys
+          entry = json.load(open(sys.argv[1], encoding="utf-8"))["openwrt"]
+          print(entry["url"])
+          print(entry["commit"])
+          PY
+          )
+          git init -q "$OPENWRT_ROOT"
+          git -C "$OPENWRT_ROOT" remote add origin "${source[0]}"
+          git -C "$OPENWRT_ROOT" fetch --depth 1 origin "${source[1]}"
+          git -C "$OPENWRT_ROOT" checkout -q --detach FETCH_HEAD
+          [ "$(git -C "$OPENWRT_ROOT" rev-parse HEAD)" = "${source[1]}" ]
+          mkdir -p "$OPENWRT_ROOT/dl" "$CCACHE_DIR"
 
-        df -hT "$PWD"
-        rm -rf /workdir/openwrt
+      - name: Restore source downloads
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: /builder/openwrt/dl
+          key: openwrt-dl-${{ runner.os }}-${{ needs.prepare.outputs.source_digest }}
+          restore-keys: |
+            openwrt-dl-${{ runner.os }}-
 
-        case "$BOOTSTRAP_KIND" in
-          git)
-            git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" openwrt
-            ;;
-          *)
-            echo "::error::Unknown bootstrap kind: $BOOTSTRAP_KIND"
-            exit 2
-            ;;
-        esac
+      - name: Restore profile ccache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: /builder/.ccache
+          key: openwrt-ccache-${{ runner.os }}-gcc15-${{ matrix.profile }}-${{ steps.identity.outputs.profile_digest }}-${{ steps.identity.outputs.patch_digest }}-${{ needs.prepare.outputs.source_digest }}
+          restore-keys: |
+            openwrt-ccache-${{ runner.os }}-gcc15-${{ matrix.profile }}-${{ steps.identity.outputs.profile_digest }}-${{ steps.identity.outputs.patch_digest }}-
 
-        ln -sf /workdir/openwrt "$GITHUB_WORKSPACE/openwrt"
+      - name: Checkout locked feeds and select providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$OPENWRT_ROOT"
+          bash "$GITHUB_WORKSPACE/diy-part1.sh" "$SOURCE_LOCK" feeds.conf.default
+          ./scripts/feeds update -a
+          bash "$GITHUB_WORKSPACE/scripts/select-package-providers.sh" \
+            "$OPENWRT_ROOT" "$GITHUB_WORKSPACE/provider-selection-report.txt"
+          bash "$GITHUB_WORKSPACE/scripts/sync-official-golang.sh" \
+            apply-lock "$SOURCE_LOCK" "$OPENWRT_ROOT"
+          for feed in packages small kenzo xiaorouji; do
+            ./scripts/feeds update -i "$feed"
+          done
+          ./scripts/feeds install -a
 
-    - name: Cache
-      uses: HiGarfield/cachewrtbuild@main
-      with:
-        ccache: 'true'
-        mixkey: ${{ steps.profile.outputs.cache_mixkey }}
-        prefix: ${{ steps.profile.outputs.cache_prefix }}
+      - name: Apply locked artifacts and profile patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$OPENWRT_ROOT"
+          bash "$GITHUB_WORKSPACE/diy-part2.sh" \
+            "$SOURCE_LOCK" "$GITHUB_WORKSPACE/artifact-override-report.json"
+          bash "$GITHUB_WORKSPACE/scripts/apply-profile-patches.sh" \
+            "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" "$GITHUB_WORKSPACE/patch-report.txt"
 
-    - name: Load custom feeds
-      run: |
-        chmod +x "$DIY_P1_SH"
-        cd openwrt
-        "$GITHUB_WORKSPACE/$DIY_P1_SH"
+      - name: Render profile configuration and rootfs
+        shell: bash
+        run: |
+          set -euo pipefail
+          profile_dir="$GITHUB_WORKSPACE/profile-input"
+          mkdir -p "$profile_dir"
+          bash scripts/render-profile.sh config "$PROFILE" "$profile_dir/config.seed"
+          bash scripts/render-profile.sh required "$PROFILE" "$profile_dir/required.txt"
+          bash scripts/render-profile.sh forbidden "$PROFILE" "$profile_dir/forbidden.txt"
+          bash scripts/render-profile.sh files "$PROFILE" "$OPENWRT_ROOT/files"
+          cp "$profile_dir/config.seed" "$OPENWRT_ROOT/.config"
 
-    - name: Update feeds
-      shell: bash
-      run: |
-        set -euo pipefail
-        cd openwrt
+      - name: Resolve and enforce Kconfig contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$OPENWRT_ROOT"
+          make defconfig
+          ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/config.effective"
+          bash "$GITHUB_WORKSPACE/scripts/check-seed-config.sh" \
+            "$GITHUB_WORKSPACE/profile-input/config.seed" .config "$GITHUB_WORKSPACE"
+          bash "$GITHUB_WORKSPACE/scripts/check-forbidden-packages.sh" \
+            .config "$GITHUB_WORKSPACE/profile-input/forbidden.txt" "$GITHUB_WORKSPACE"
+          bash "$GITHUB_WORKSPACE/scripts/check-required-packages.sh" \
+            .config "$GITHUB_WORKSPACE/profile-input/required.txt" "$GITHUB_WORKSPACE/package-list.txt"
+          bash "$GITHUB_WORKSPACE/scripts/check-profile-contract.sh" \
+            "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" "$GITHUB_WORKSPACE/profile-contract-report.txt"
 
-        case "$FEEDS_UPDATE_MODE" in
-          all)
-            ./scripts/feeds update -a
-            ;;
-          custom)
-            mapfile -t custom_feeds < <(bash "$GITHUB_WORKSPACE/scripts/manage-custom-feeds.sh" refs "$GITHUB_WORKSPACE/feeds.custom.conf" | awk '{ print $1 }')
-            if [ "${#custom_feeds[@]}" -gt 0 ]; then
-              ./scripts/feeds update "${custom_feeds[@]}"
-            fi
-            ;;
-          *)
-            echo "::error::Unknown feeds update mode: $FEEDS_UPDATE_MODE"
-            exit 2
-            ;;
-        esac
-
-    - name: Sync official Go toolchain
-      run: |
-        bash "$GITHUB_WORKSPACE/scripts/sync-official-golang.sh" apply openwrt
-        cd openwrt
-        ./scripts/feeds update -i packages
-
-    - name: Install feeds
-      run: cd openwrt && ./scripts/feeds install -a
-
-    - name: Apply profile patchset
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        bash "$GITHUB_WORKSPACE/scripts/apply-profile-patches.sh" "$PROFILE" "/workdir/openwrt"
-
-    - name: Render profile inputs
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        profile_dir="$RUNNER_TEMP/openwrt-profile-${PROFILE}"
-        mkdir -p "$profile_dir"
-
-        bash "$GITHUB_WORKSPACE/scripts/render-profile.sh" config "$PROFILE" "$profile_dir/.config"
-        bash "$GITHUB_WORKSPACE/scripts/render-profile.sh" forbidden "$PROFILE" "$profile_dir/forbidden-packages.txt"
-        bash "$GITHUB_WORKSPACE/scripts/render-profile.sh" required "$PROFILE" "$profile_dir/required-packages.txt"
-
-        echo "PROFILE_CONFIG=$profile_dir/.config" >> "$GITHUB_ENV"
-        echo "PROFILE_FORBIDDEN=$profile_dir/forbidden-packages.txt" >> "$GITHUB_ENV"
-        echo "PROFILE_REQUIRED=$profile_dir/required-packages.txt" >> "$GITHUB_ENV"
-        echo "Rendered profile config target:"
-        grep '^CONFIG_TARGET' "$profile_dir/.config" || true
-
-    - name: Prune unused packages
-      run: |
-        cd openwrt
-        bash "$GITHUB_WORKSPACE/scripts/prune-packages.sh" \
-          "$PROFILE_FORBIDDEN" \
-          "package"
-
-    - name: Load custom configuration
-      run: |
-        [ -e files ] && mv files openwrt/files
-        cp "$PROFILE_CONFIG" openwrt/.config
-        chmod +x "$DIY_P2_SH"
-        cd openwrt
-        "$GITHUB_WORKSPACE/$DIY_P2_SH"
-
-    - name: Download package
-      id: package
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        cd openwrt
-        make defconfig
-        if ! grep -Eq "$TARGET_CHECK_REGEX" .config; then
-          echo "::error::Resolved OpenWrt target does not match profile $PROFILE. Current target selection:"
-          grep '^CONFIG_TARGET.*=y' .config || true
-          exit 1
-        fi
-        bash "$GITHUB_WORKSPACE/scripts/check-seed-config.sh" \
-          "$PROFILE_CONFIG" \
-          ".config" \
-          "$GITHUB_WORKSPACE"
-        ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/config.effective"
-        bash "$GITHUB_WORKSPACE/scripts/check-forbidden-packages.sh" \
-          ".config" \
-          "$PROFILE_FORBIDDEN" \
-          "$GITHUB_WORKSPACE"
-        bash "$GITHUB_WORKSPACE/scripts/check-required-packages.sh" \
-          ".config" \
-          "$PROFILE_REQUIRED" \
-          "$GITHUB_WORKSPACE/package-list.txt"
-        make download -j8
-        find dl -size -1024c -exec ls -l {} \;
-        find dl -size -1024c -exec rm -f {} \;
-
-    - name: Upload config reports
-      uses: actions/upload-artifact@main
-      if: always()
-      with:
-        name: ${{ steps.profile.outputs.artifact_prefix }}_config_reports_${{ matrix.profile }}
-        path: |
-          config.effective
-          package-list.txt
-          forbidden-packages.detected.txt
-          seed-config.mismatches.txt
-        if-no-files-found: ignore
-
-    - name: Compile the firmware
-      id: compile
-      run: |
-        cd openwrt
-        echo -e "$(nproc) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=_$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-
-    - name: Check space usage
-      if: (!cancelled())
-      run: df -hT
-
-    - name: Upload bin directory
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: ${{ steps.profile.outputs.artifact_prefix }}_bin_${{ matrix.profile }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: openwrt/bin
-
-    - name: Organize files
-      id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
-      run: |
-        cd openwrt/bin/targets/*/*
-        rm -rf packages
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Upload firmware directory
-      uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success' && !cancelled()
-      with:
-        name: ${{ steps.profile.outputs.artifact_prefix }}_firmware_${{ matrix.profile }}${{ env.DEVICE_NAME }}${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
-
-    - name: Generate release tag
-      id: tag
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        release_stamp="$(date +"%Y.%m.%d-%H%M%S")"
-        release_tag="${PROFILE}-${release_stamp}"
-        release_name="${PROFILE}${DEVICE_NAME:-}${FILE_DATE:-}"
-
-        echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
-        echo "release_name=$release_name" >> "$GITHUB_OUTPUT"
-
-        {
-          echo "OpenWrt firmware build"
-          echo
-          echo "- Profile: ${PROFILE}"
-          echo "- Device: ${DEVICE_NAME#_}"
-          echo "- Source: ${REPO_URL} ${REPO_REF}"
-          echo "- Commit: ${GITHUB_SHA}"
-          echo "- Built at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
-        } > release.txt
-
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Upload firmware to release
-      if: steps.tag.outputs.status == 'success' && !cancelled()
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        tag="${{ steps.tag.outputs.release_tag }}"
-        title="${{ steps.tag.outputs.release_name }}"
-
-        if gh release view "$tag" >/dev/null 2>&1; then
-          gh release delete "$tag" --yes --cleanup-tag
-        fi
-
-        gh release create "$tag" "$FIRMWARE"/* \
-          --title "$title" \
-          --notes-file release.txt \
-          --target "$GITHUB_SHA"
-
-        release_id="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" --jq '.id')"
-        printf '{"draft":false,"prerelease":false}' |
-          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/releases/${release_id}" --input -
-
-    - name: Delete workflow runs
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        retain_days: 0
-        keep_minimum_runs: 2
-
-    - name: Remove old Releases
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: bash
-      run: |
-        set -euo pipefail
-
-        keep_latest=6
-        mapfile -t releases < <(
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
-            --jq '.[] | [.id, .tag_name] | @tsv'
-        )
-
-        if [ "${#releases[@]}" -le "$keep_latest" ]; then
-          echo "Release count ${#releases[@]} <= $keep_latest; nothing to delete."
-          exit 0
-        fi
-
-        for release in "${releases[@]:$keep_latest}"; do
-          IFS=$'\t' read -r release_id tag_name <<< "$release"
-          [ -n "$release_id" ] || continue
-
-          echo "Deleting old release ${tag_name:-unknown} (${release_id})"
-          gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/${release_id}"
-
-          if [ -n "${tag_name:-}" ]; then
-            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${tag_name}" || true
+      - name: Download all sources with exact hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$OPENWRT_ROOT"
+          make package/feeds/packages/haproxy/download V=s
+          make package/feeds/kenzo/adguardhome/download V=s
+          make package/feeds/xiaorouji/v2ray-geodata/download V=s
+          make download -j8
+          if find dl -type f -size -1024c -print | tee "$GITHUB_WORKSPACE/small-downloads.txt" | grep -q .; then
+            echo "::error::Download directory contains files smaller than 1 KiB"
+            exit 1
           fi
-        done
+
+      - name: Compile firmware once in parallel
+        shell: bash
+        env:
+          BUILD_JOBS: ${{ steps.runner.outputs.build_jobs }}
+        run: |
+          set -euo pipefail
+          export CCACHE_DIR CCACHE_MAXSIZE
+          ccache --set-config=max_size="$CCACHE_MAXSIZE"
+          ccache --zero-stats
+          cd "$OPENWRT_ROOT"
+          set -o pipefail
+          if ! make -j"$BUILD_JOBS" 2>&1 | tee "$GITHUB_WORKSPACE/build.parallel.log"; then
+            make -j1 V=s 2>&1 | tee "$GITHUB_WORKSPACE/build.serial.log" || true
+            exit 1
+          fi
+          ccache --show-stats | tee "$GITHUB_WORKSPACE/ccache-stats.txt"
+
+      - name: Collect and verify firmware provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          delivery="$GITHUB_WORKSPACE/delivery/$PROFILE"
+          bash scripts/collect-build-provenance.sh \
+            "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" \
+            "$GITHUB_WORKSPACE/artifact-override-report.json" \
+            "$GITHUB_WORKSPACE/patch-report.txt" \
+            "$GITHUB_WORKSPACE/runner-report.txt" "$delivery"
+          bash scripts/verify-firmware-artifacts.sh "$PROFILE" "$delivery" "$SOURCE_LOCK"
+
+      - name: Collect diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          diagnostics="$GITHUB_WORKSPACE/diagnostics/$PROFILE"
+          mkdir -p "$diagnostics"
+          for file in runner-report.txt provider-selection-report.txt \
+            artifact-override-report.json patch-report.txt profile-contract-report.txt \
+            config.effective package-list.txt forbidden-packages.detected.txt \
+            seed-config.mismatches.txt small-downloads.txt build.parallel.log \
+            build.serial.log ccache-stats.txt; do
+            [ -e "$GITHUB_WORKSPACE/$file" ] && cp "$GITHUB_WORKSPACE/$file" "$diagnostics/"
+          done
+          [ -e "$OPENWRT_ROOT/.config" ] && cp "$OPENWRT_ROOT/.config" "$diagnostics/openwrt.config"
+          [ -d "$OPENWRT_ROOT/logs" ] && tar -C "$OPENWRT_ROOT" -czf "$diagnostics/openwrt-logs.tar.gz" logs
+          df -hT > "$diagnostics/disk-final.txt"
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: diagnostics-${{ matrix.profile }}
+          path: diagnostics/${{ matrix.profile }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload verified firmware
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: firmware-${{ matrix.profile }}
+          path: delivery/${{ matrix.profile }}
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  aggregate:
+    name: Assemble draft Release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+    steps:
+      - name: Checkout implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download source lock
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: source-lock
+          path: source-input
+
+      - name: Download R4S firmware
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: firmware-r4s
+          path: aggregate/r4s
+
+      - name: Download N5105 firmware
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: firmware-x86-n5105-pve
+          path: aggregate/x86-n5105-pve
+
+      - name: Re-verify and assemble collision-free assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          lock="$GITHUB_WORKSPACE/source-input/source-lock.json"
+          bash scripts/verify-firmware-artifacts.sh r4s aggregate/r4s "$lock"
+          bash scripts/verify-firmware-artifacts.sh x86-n5105-pve aggregate/x86-n5105-pve "$lock"
+          bash scripts/assemble-release.sh "$lock" release-assets \
+            "r4s=$GITHUB_WORKSPACE/aggregate/r4s" \
+            "x86-n5105-pve=$GITHUB_WORKSPACE/aggregate/x86-n5105-pve"
+
+      - name: Create draft Release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_DIGEST: ${{ needs.prepare.outputs.source_digest }}
+        run: |
+          set -euo pipefail
+          stamp="$(date -u +%Y.%m.%d-%H%M%S)"
+          tag="openwrt-${stamp}-${SOURCE_DIGEST:0:12}-r${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          cat > release-notes.md <<EOF
+          OpenWrt R4S + N5105 PVE transactional build
+
+          - Source-lock digest: sha256:${SOURCE_DIGEST}
+          - Repository commit: ${GITHUB_SHA}
+          - Profiles: r4s, x86-n5105-pve
+          - Firewall: firewall3 / iptables
+          - Kernel policy: target stable kernel with BBRv3 module version 3
+
+          The Release remains a draft until every uploaded asset is downloaded again,
+          hash-checked, reconstructed, and passed through the firmware verifier.
+          EOF
+          gh release create "$tag" release-assets/* \
+            --draft --title "OpenWrt R4S + N5105 ${stamp}" \
+            --notes-file release-notes.md --target "$GITHUB_SHA"
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Upload aggregate transaction artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-transaction
+          path: release-assets
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  release-verify:
+    name: Re-download and verify draft
+    needs: aggregate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout implementation
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download every draft asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.aggregate.outputs.release_tag }}
+        run: gh release download "$RELEASE_TAG" --dir downloaded-release
+
+      - name: Verify the downloaded transaction
+        shell: bash
+        run: bash scripts/verify-release-assets.sh downloaded-release
+
+  publish-final:
+    name: Publish verified Release
+    needs: [aggregate, release-verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the same verified draft
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.aggregate.outputs.release_tag }}
+        run: gh release edit "$RELEASE_TAG" --draft=false
+
+  cleanup:
+    name: Retain six verified production Releases
+    needs: [aggregate, publish-final]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Delete only excess published OpenWrt Releases
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mapfile -t old_tags < <(
+            gh release list --limit 100 --json tagName,createdAt,isDraft \
+              --jq '[.[] | select(.isDraft == false and (.tagName | startswith("openwrt-")))] | sort_by(.createdAt) | reverse | .[6:] | .[].tagName'
+          )
+          for tag in "${old_tags[@]}"; do
+            gh release delete "$tag" --yes --cleanup-tag
+          done

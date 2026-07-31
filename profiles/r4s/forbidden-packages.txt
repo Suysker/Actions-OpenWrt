@@ -1,14 +1,26 @@
-# NanoPi R4S hardware blacklist.
+# NanoPi R4S hardware/runtime blacklist.
+exact:irqbalance
+exact:e2fsprogs
+exact:mkf2fs
+exact:partx-utils
+exact:usb-modeswitch
 
-# Physical NIC drivers not needed by R4S.
-# Keep native Rockchip/R8168 networking and USB RTL8152 support.
+# x86/virtual hardware and microcode.
 regex:^kmod-(8139cp|8139too|alx|amazon-ena|amd-xgbe|atlantic|bnx2|bnx2x|e1000|e1000e|forcedeth|i40e|i40evf|iavf|igb|igbvf|igc|ixgbe|mlx4-core|mlx5-core|mlxfw|pcnet32|r8125-rss|r8126-rss|tg3|tulip|via-velocity|vmxnet3)$
 regex:^(amd64|intel)-microcode$
 exact:virtio-console-helper
 regex:^kmod-virtio
 
-# Firmware/data packages for unrelated physical hardware.
-# R4S needs the target-selected Realtek NIC driver/firmware packages.
+# No external USB NIC, removable storage, audio or display stack.
+exact:kmod-usb-net
+exact:kmod-usb-net-rtl8152
+exact:kmod-usb-net-rtl8152-vendor
+exact:kmod-usb-storage-uas
+exact:kmod-usb-audio
+regex:^kmod-sound-
+regex:^kmod-drm-
+
+# Firmware/data for unrelated devices.
 exact:amdgpu-firmware
 exact:i915-firmware
 exact:i915-firmware-dmc
@@ -17,19 +29,5 @@ exact:i915-firmware-guc
 exact:i915-firmware-huc
 exact:bnx2-firmware
 exact:bnx2x-firmware
-exact:airoha-en8811h-firmware
-exact:eip197-mini-firmware
-exact:kmod-mt7981-firmware
-exact:mt7981-wo-firmware
 exact:usbids
 exact:usbutils
-exact:usb-modeswitch
-
-# R4S needs USB core/USB3/RTL8152, MMC and SDHCI. Block only storage, audio
-# and display/GPU modules that are not needed for this router profile.
-exact:kmod-usb-storage
-exact:kmod-usb-storage-extras
-exact:kmod-usb-storage-uas
-exact:kmod-usb-audio
-regex:^kmod-sound-
-regex:^kmod-drm-

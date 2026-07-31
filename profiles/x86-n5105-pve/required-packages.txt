@@ -1,0 +1,7 @@
+# N5105 PVE target and runtime contract.
+config:CONFIG_TARGET_x86_64_DEVICE_generic
+config:CONFIG_TARGET_OPTIONS
+
+package:kmod-scsi-core
+package:kmod-igc
+package:irqbalance

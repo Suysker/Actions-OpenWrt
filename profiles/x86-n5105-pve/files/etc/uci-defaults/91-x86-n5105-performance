@@ -1,0 +1,85 @@
+#!/bin/sh
+# BusyBox ash intentionally provides function-local variables.
+# shellcheck disable=SC3043
+set -eu
+
+. /lib/functions.sh
+
+driver_of() {
+	ethtool -i "$1" 2>/dev/null | sed -n 's/^driver:[[:space:]]*//p' | head -n 1
+}
+
+interfaces_for_driver() {
+	local expected="$1" path interface driver
+	for path in /sys/class/net/*; do
+		[ -e "$path" ] || continue
+		interface="${path##*/}"
+		[ "$interface" = "lo" ] && continue
+		driver="$(driver_of "$interface")"
+		[ "$driver" = "$expected" ] && printf '%s\n' "$interface"
+	done
+}
+
+require_single_interface() {
+	local driver="$1" interfaces count
+	interfaces="$(interfaces_for_driver "$driver")"
+	count="$(printf '%s\n' "$interfaces" | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+	[ "$count" = "1" ] || {
+		echo "N5105 network contract requires exactly one $driver interface; found $count" >&2
+		exit 1
+	}
+	printf '%s\n' "$interfaces"
+}
+
+current_combined_channels() {
+	ethtool -l "$1" 2>/dev/null | awk '
+		/^Current hardware settings:/ { current = 1; next }
+		current && $1 == "Combined:" { print $2; exit }
+	'
+}
+
+set_four_channels() {
+	local interface="$1"
+	ethtool -L "$interface" combined 4 >/dev/null 2>&1 || {
+		echo "N5105 network contract could not set $interface to four combined queues" >&2
+		exit 1
+	}
+	[ "$(current_combined_channels "$interface")" = "4" ] || {
+		echo "N5105 network contract did not observe four combined queues on $interface" >&2
+		exit 1
+	}
+}
+
+find_lan_device_section() {
+	local section="$1" name type
+	config_get name "$section" name
+	config_get type "$section" type
+	if [ "$name" = "br-lan" ] && [ "$type" = "bridge" ]; then
+		lan_device_section="$section"
+	fi
+}
+
+lan_interface="$(require_single_interface virtio_net)"
+wan_interface="$(require_single_interface igc)"
+set_four_channels "$lan_interface"
+set_four_channels "$wan_interface"
+
+lan_device_section=""
+config_load network
+config_foreach find_lan_device_section device
+if [ -z "$lan_device_section" ]; then
+	lan_device_section="project_lan"
+	uci -q set "network.$lan_device_section=device"
+	uci -q set "network.$lan_device_section.name=br-lan"
+	uci -q set "network.$lan_device_section.type=bridge"
+fi
+
+uci -q delete "network.$lan_device_section.ports" || true
+uci -q add_list "network.$lan_device_section.ports=$lan_interface"
+uci -q set network.lan.device='br-lan'
+uci -q set "network.wan.device=$wan_interface"
+uci -q set "network.wan6.device=$wan_interface"
+uci -q set network.globals.packet_steering='0'
+uci -q commit network
+
+exit 0
