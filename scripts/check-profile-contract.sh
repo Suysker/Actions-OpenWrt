@@ -188,6 +188,7 @@ for symbol in (
     "CONFIG_PACKAGE_iptables-nft",
     "CONFIG_PACKAGE_ip6tables-nft",
     "CONFIG_PACKAGE_default-settings",
+    "CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Mihomo",
     "CONFIG_TESTING_KERNEL",
     "CONFIG_USE_APK",
     "CONFIG_USE_GC_SECTIONS",

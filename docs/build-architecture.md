@@ -512,6 +512,8 @@ common 层保留：
 
 该 allowlist 已再次对照历史 `R4S`、`X86` 分支：两边共同使用的 LuCI、PassWall、DNS、DDNS、监控和维护工具进入 common；BBRv3 作为共享内核能力进入 common；cpufreq/PWM fan/zram 与 VirtIO/igc 等硬件差异留在设备层。简体中文由 common 的公开语言入口 `CONFIG_LUCI_LANG_zh_Hans=y` 统一选择，各应用的隐藏翻译包交给当前 LuCI Kconfig 生成。
 
+禁用父应用并不自动证明其所有无父级依赖的子选项都失效。当前 Lean 的 SSR Plus `INCLUDE_Mihomo` 在父应用关闭时仍会默认选择 Mihomo，因此 common 同时固定 `CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Mihomo=n`，并由 seed drift 和 forbidden 门禁验证。
+
 ### 8.2 网络栈
 
 common 层固定选择：

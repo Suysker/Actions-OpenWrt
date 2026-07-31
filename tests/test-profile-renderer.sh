@@ -14,6 +14,7 @@ for profile in "${profiles[@]}"; do
   bash "$repo_root/scripts/render-profile.sh" config "$profile" "$tmpdir/$profile.config"
   grep -qx 'CONFIG_LUCI_LANG_zh_Hans=y' "$tmpdir/$profile.config"
   grep -qx '# CONFIG_PACKAGE_luci-app-ssr-plus is not set' "$tmpdir/$profile.config"
+  grep -qx '# CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Mihomo is not set' "$tmpdir/$profile.config"
   grep -qx '# CONFIG_PACKAGE_block-mount is not set' "$tmpdir/$profile.config"
   if grep -q '^CONFIG_PACKAGE_luci-i18n-.*-zh-cn=y$' "$tmpdir/$profile.config"; then
     echo "renderer emitted a hidden per-package LuCI translation seed for $profile" >&2
