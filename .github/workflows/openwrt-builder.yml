@@ -52,7 +52,7 @@ jobs:
       source_digest: ${{ steps.lock.outputs.source_digest }}
     steps:
       - name: Checkout implementation
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@main
 
       - name: Select profiles
         id: select
@@ -85,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/resolve-source-lock.sh validate-actions \
-            .github/actions.lock.json .github/workflows/*.yml
+            .github/workflows/*.yml
           bash -n diy-part1.sh diy-part2.sh scripts/*.sh \
             profiles/common/files/etc/uci-defaults/* \
             profiles/r4s/files/etc/uci-defaults/* \
@@ -95,6 +95,7 @@ jobs:
           bash tests/test-profile-renderer.sh
           bash tests/test-resolve-source-lock.sh
           bash tests/test-apply-source-lock-artifacts.sh
+          bash tests/test-apply-profile-patches.sh
           bash tests/test-locked-feeds.sh
           bash scripts/check-profile-contract.sh r4s
           bash scripts/check-profile-contract.sh x86-n5105-pve
@@ -128,6 +129,8 @@ jobs:
             bash scripts/resolve-source-lock.sh resolve "$PROFILES" "$lock"
           fi
 
+          bash scripts/resolve-source-lock.sh materialize "$lock" "$lock_dir"
+
           digest="$(bash scripts/resolve-source-lock.sh digest "$lock")"
           digest_hex="${digest#sha256:}"
           if [ -n "$EXPECTED_DIGEST" ] && [ "$EXPECTED_DIGEST" != "$digest_hex" ]; then
@@ -144,7 +147,7 @@ jobs:
           for name, value in (
               ("profile-digests.json", lock["profile_digests"]),
               ("patch-digest.json", {"patch_digest": lock["patch_digest"]}),
-              ("actions-lock.json", lock["actions"]),
+              ("actions-observed.json", lock["actions"]),
           ):
               (out / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
           PY
@@ -160,11 +163,11 @@ jobs:
           PY
           )
           for version in "${versions[@]}"; do
-            bash scripts/check-bbrv3-port.sh "$version"
+            bash scripts/check-bbrv3-port.sh "$RUNNER_TEMP/source-lock/source-lock.json" "$version"
           done
 
       - name: Upload immutable build inputs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@main
         with:
           name: source-lock
           path: ${{ runner.temp }}/source-lock
@@ -190,10 +193,10 @@ jobs:
       CCACHE_MAXSIZE: 5G
     steps:
       - name: Checkout implementation
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@main
 
       - name: Download immutable build inputs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@main
         with:
           name: source-lock
           path: source-input
@@ -259,7 +262,7 @@ jobs:
           mkdir -p "$OPENWRT_ROOT/dl" "$CCACHE_DIR"
 
       - name: Restore source downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/cache@main
         with:
           path: /builder/openwrt/dl
           key: openwrt-dl-${{ runner.os }}-${{ needs.prepare.outputs.source_digest }}
@@ -267,7 +270,7 @@ jobs:
             openwrt-dl-${{ runner.os }}-
 
       - name: Restore profile ccache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/cache@main
         with:
           path: /builder/.ccache
           key: openwrt-ccache-${{ runner.os }}-gcc15-${{ matrix.profile }}-${{ steps.identity.outputs.profile_digest }}-${{ steps.identity.outputs.patch_digest }}-${{ needs.prepare.outputs.source_digest }}
@@ -391,7 +394,7 @@ jobs:
 
       - name: Upload diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@main
         with:
           name: diagnostics-${{ matrix.profile }}
           path: diagnostics/${{ matrix.profile }}
@@ -399,7 +402,7 @@ jobs:
           retention-days: 30
 
       - name: Upload verified firmware
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@main
         with:
           name: firmware-${{ matrix.profile }}
           path: delivery/${{ matrix.profile }}
@@ -419,22 +422,22 @@ jobs:
       release_tag: ${{ steps.release.outputs.release_tag }}
     steps:
       - name: Checkout implementation
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@main
 
       - name: Download source lock
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@main
         with:
           name: source-lock
           path: source-input
 
       - name: Download R4S firmware
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@main
         with:
           name: firmware-r4s
           path: aggregate/r4s
 
       - name: Download N5105 firmware
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        uses: actions/download-artifact@main
         with:
           name: firmware-x86-n5105-pve
           path: aggregate/x86-n5105-pve
@@ -478,7 +481,7 @@ jobs:
           echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Upload aggregate transaction artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@main
         with:
           name: release-transaction
           path: release-assets
@@ -495,7 +498,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout implementation
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@main
 
       - name: Download every draft asset
         shell: bash

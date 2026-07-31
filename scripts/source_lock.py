@@ -439,65 +439,224 @@ def tree_digest(paths: Iterable[pathlib.Path], root: pathlib.Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def load_bbr_port(repo_root: pathlib.Path, kernel_series: str) -> dict[str, Any]:
-    directory = repo_root / f"patchsets/common/kernel/{kernel_series}"
-    series_path = directory / "series"
-    provenance_path = directory / "provenance.json"
-    if not series_path.is_file() or not provenance_path.is_file():
-        raise ResolutionError(
-            f"no versioned BBRv3 patchset for stable kernel {kernel_series}"
-        )
-    series = [
-        line.strip()
-        for line in series_path.read_text(encoding="utf-8").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-    if series != ["0001-bbrv3.patch"]:
-        raise ResolutionError(
-            f"kernel {kernel_series} series must contain only 0001-bbrv3.patch"
-        )
-    provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
-    if provenance.get("kernel_series") != kernel_series:
-        raise ResolutionError("BBRv3 provenance kernel series mismatch")
-    vendored = provenance.get("vendored", {})
-    origin = provenance.get("origin", {})
-    algorithm = provenance.get("algorithm", {})
-    vendored_path = repo_root / vendored.get("path", "")
-    if not vendored_path.is_file():
-        raise ResolutionError(f"vendored BBRv3 patch is missing: {vendored_path}")
-    actual = hashlib.sha256(vendored_path.read_bytes()).hexdigest()
-    declared = require_sha256(vendored.get("sha256", ""), "vendored BBRv3 hash")
-    origin_hash = require_sha256(origin.get("sha256", ""), "origin BBRv3 hash")
-    if actual != declared or actual != origin_hash:
-        raise ResolutionError(
-            f"BBRv3 patch digest mismatch: actual {actual}, vendored {declared}, origin {origin_hash}"
-        )
-    require_sha1(origin.get("commit", ""), "BBRv3 port origin commit")
-    require_sha1(algorithm.get("commit", ""), "BBRv3 algorithm commit")
-    if algorithm.get("module_version") != 3 or algorithm.get("runtime_name") != "bbr":
-        raise ResolutionError("BBRv3 algorithm identity contract is invalid")
+def github_repo_slug(repo_url: str) -> str:
+    parsed = urllib.parse.urlparse(repo_url.removesuffix(".git"))
+    slug = parsed.path.strip("/")
+    if parsed.hostname not in {"github.com", "www.github.com"} or slug.count("/") != 1:
+        raise ResolutionError(f"invalid GitHub repository URL: {repo_url}")
+    return slug
 
-    origin_repo = origin.get("url", "").removesuffix(".git")
-    parsed = urllib.parse.urlparse(origin_repo)
-    origin_repo_path = parsed.path.strip("/")
-    origin_raw_url = (
-        f"https://raw.githubusercontent.com/{origin_repo_path}/{origin['commit']}/{origin['path']}"
+
+def github_tree_files(repo_url: str, commit: str) -> set[str]:
+    slug = github_repo_slug(repo_url)
+    tree = api_json(
+        f"https://api.github.com/repos/{slug}/git/trees/{commit}?recursive=1"
     )
-    remote_hash = download_sha256(origin_raw_url)
-    if remote_hash != origin_hash:
-        raise ResolutionError(
-            f"immutable BBRv3 origin changed or provenance is wrong: {remote_hash}"
-        )
-
+    if not isinstance(tree, dict) or not isinstance(tree.get("tree"), list):
+        raise ResolutionError(f"invalid Git tree response for {repo_url}@{commit}")
+    if tree.get("truncated"):
+        raise ResolutionError(f"Git tree is truncated for {repo_url}@{commit}")
     return {
-        "origin_url": origin["url"],
-        "origin_commit": origin["commit"],
-        "origin_path": origin["path"],
-        "origin_sha256": origin_hash,
-        "origin_raw_url": origin_raw_url,
-        "vendored_path": vendored["path"],
-        "vendored_sha256": declared,
+        entry["path"]
+        for entry in tree["tree"]
+        if isinstance(entry, dict)
+        and entry.get("type") == "blob"
+        and isinstance(entry.get("path"), str)
     }
+
+
+def expand_series_template(value: str, kernel_series: str, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ResolutionError(f"BBRv3 {label} must be a non-empty string")
+    expanded = value.replace("{series}", kernel_series)
+    if "{" in expanded or "}" in expanded:
+        raise ResolutionError(f"BBRv3 {label} contains an unknown template: {value}")
+    return expanded
+
+
+def load_bbr_policy(repo_root: pathlib.Path) -> dict[str, Any]:
+    path = repo_root / "patchsets/common/kernel/bbr3-sources.json"
+    try:
+        policy = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ResolutionError(f"cannot read BBRv3 source policy {path}: {exc}") from exc
+    if not isinstance(policy, dict) or policy.get("schema") != 1:
+        raise ResolutionError("BBRv3 source policy schema must be 1")
+    algorithm = policy.get("algorithm")
+    providers = policy.get("providers")
+    if not isinstance(algorithm, dict) or not isinstance(providers, list) or not providers:
+        raise ResolutionError("BBRv3 source policy needs algorithm and providers")
+    if algorithm.get("module_version") != 3 or algorithm.get("runtime_name") != "bbr":
+        raise ResolutionError("BBRv3 algorithm identity policy is invalid")
+    return policy
+
+
+def resolve_bbr_algorithm(policy: dict[str, Any]) -> dict[str, Any]:
+    algorithm = policy["algorithm"]
+    resolved = resolve_git_ref(algorithm.get("url", ""), algorithm.get("ref", ""))
+    resolved["module_version"] = algorithm["module_version"]
+    resolved["runtime_name"] = algorithm["runtime_name"]
+    return resolved
+
+
+def resolve_bbr_port(policy: dict[str, Any], kernel_series: str) -> dict[str, Any]:
+    if not re.fullmatch(r"[0-9]+\.[0-9]+", kernel_series):
+        raise ResolutionError(f"invalid BBRv3 kernel series: {kernel_series}")
+
+    attempted: list[str] = []
+    for provider in policy["providers"]:
+        if not isinstance(provider, dict):
+            raise ResolutionError("BBRv3 provider entries must be objects")
+        name = provider.get("name", "")
+        repo_url = provider.get("url", "")
+        requested_ref = provider.get("ref", "")
+        mode = provider.get("mode", "")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
+            raise ResolutionError(f"invalid BBRv3 provider name: {name!r}")
+        if mode not in {"single", "directory"}:
+            raise ResolutionError(f"invalid BBRv3 provider mode for {name}: {mode!r}")
+        resolved = resolve_git_ref(repo_url, requested_ref)
+        files = github_tree_files(repo_url, resolved["commit"])
+        source_path = expand_series_template(
+            provider.get("path_template", ""), kernel_series, f"provider {name} path"
+        ).strip("/")
+        if not source_path or ".." in pathlib.PurePosixPath(source_path).parts:
+            raise ResolutionError(f"unsafe BBRv3 provider path for {name}: {source_path}")
+
+        if mode == "single":
+            origin_paths = [source_path] if source_path in files else []
+        else:
+            try:
+                pattern = re.compile(provider.get("file_pattern", ""))
+            except re.error as exc:
+                raise ResolutionError(
+                    f"invalid BBRv3 file pattern for {name}: {exc}"
+                ) from exc
+            prefix = source_path + "/"
+            origin_paths = sorted(
+                path
+                for path in files
+                if path.startswith(prefix)
+                and "/" not in path[len(prefix) :]
+                and pattern.fullmatch(pathlib.PurePosixPath(path).name)
+            )
+        if not origin_paths:
+            attempted.append(f"{name}:{source_path}")
+            continue
+
+        install_directory = expand_series_template(
+            provider.get("install_directory_template", ""),
+            kernel_series,
+            f"provider {name} install directory",
+        )
+        if not re.fullmatch(rf"(?:hack|backport)-{re.escape(kernel_series)}", install_directory):
+            raise ResolutionError(
+                f"unsafe BBRv3 install directory for {name}: {install_directory}"
+            )
+
+        patches: list[dict[str, Any]] = []
+        for index, origin_path in enumerate(origin_paths, start=1):
+            raw_url = github_raw_url(repo_url, resolved["commit"], origin_path)
+            payload = download_bytes(raw_url)
+            if b"diff --git a/" not in payload or b"\x00" in payload:
+                raise ResolutionError(
+                    f"BBRv3 provider returned a non-patch payload: {origin_path}"
+                )
+            origin_name = pathlib.PurePosixPath(origin_path).name
+            if mode == "single":
+                artifact_name = expand_series_template(
+                    provider.get("artifact_name_template", "0001-bbrv3.patch"),
+                    kernel_series,
+                    f"provider {name} artifact name",
+                )
+                install_name = expand_series_template(
+                    provider.get("install_name_template", "995-bbrv3.patch"),
+                    kernel_series,
+                    f"provider {name} install name",
+                )
+            else:
+                artifact_name = origin_name
+                install_name = origin_name
+            for label, value in (
+                ("artifact name", artifact_name),
+                ("install name", install_name),
+            ):
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.patch", value):
+                    raise ResolutionError(
+                        f"unsafe BBRv3 {label} for {name}: {value!r}"
+                    )
+            patches.append(
+                {
+                    "order": index,
+                    "origin_path": origin_path,
+                    "raw_url": raw_url,
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "artifact_path": f"bbr3/{kernel_series}/{artifact_name}",
+                    "install_name": install_name,
+                }
+            )
+
+        return {
+            "provider": name,
+            "origin_url": repo_url,
+            "origin_ref": requested_ref,
+            "origin_resolved_ref": resolved["resolved_ref"],
+            "origin_commit": resolved["commit"],
+            "install_directory": install_directory,
+            "patches": patches,
+        }
+
+    detail = ", ".join(attempted) or "no configured provider"
+    raise ResolutionError(
+        f"no trusted BBRv3 provider contains kernel series {kernel_series}: {detail}"
+    )
+
+
+def safe_artifact_path(value: str, kernel_series: str) -> pathlib.PurePosixPath:
+    path = pathlib.PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or ".." in path.parts
+        or path.parts[:2] != ("bbr3", kernel_series)
+        or len(path.parts) != 3
+    ):
+        raise ResolutionError(f"unsafe BBRv3 artifact path: {value!r}")
+    return path
+
+
+def materialize_bbr_patches(lock: dict[str, Any], output: pathlib.Path) -> int:
+    validate_lock(lock)
+    output.mkdir(parents=True, exist_ok=True)
+    output = output.resolve()
+    count = 0
+    ports = lock["kernel_features"]["bbr3"]["ports"]
+    for kernel_series, port in sorted(ports.items()):
+        origin_url = port["origin_url"]
+        origin_commit = port["origin_commit"]
+        for patch in port["patches"]:
+            expected_url = github_raw_url(
+                origin_url, origin_commit, patch["origin_path"]
+            )
+            if patch.get("raw_url") != expected_url:
+                raise ResolutionError(
+                    f"BBRv3 immutable URL mismatch for {patch.get('origin_path')}"
+                )
+            relative = safe_artifact_path(patch.get("artifact_path", ""), kernel_series)
+            payload = download_bytes(expected_url)
+            actual = hashlib.sha256(payload).hexdigest()
+            expected = require_sha256(
+                patch.get("sha256", ""), f"BBRv3 patch {patch.get('origin_path')}"
+            )
+            if actual != expected:
+                raise ResolutionError(
+                    f"BBRv3 patch hash mismatch for {patch.get('origin_path')}: "
+                    f"expected {expected}, got {actual}"
+                )
+            destination = output.joinpath(*relative.parts)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(payload)
+            count += 1
+    return count
 
 
 def canonical_payload(lock: dict[str, Any]) -> bytes:
@@ -513,8 +672,8 @@ def lock_digest(lock: dict[str, Any]) -> str:
 
 
 def validate_lock(lock: dict[str, Any]) -> None:
-    if lock.get("schema") != 1:
-        raise ResolutionError("source-lock schema must be 1")
+    if lock.get("schema") != 2:
+        raise ResolutionError("source-lock schema must be 2")
     require_sha1(lock.get("repository_commit", ""), "repository commit")
     require_sha1(lock.get("openwrt", {}).get("commit", ""), "OpenWrt commit")
     for name, feed in lock.get("feeds", {}).items():
@@ -524,28 +683,103 @@ def validate_lock(lock: dict[str, Any]) -> None:
         "official Go feed commit",
     )
     for name, value in lock.get("actions", {}).items():
-        require_sha1(value, f"action {name}")
+        if not re.fullmatch(r"actions/[A-Za-z0-9_.-]+", name):
+            raise ResolutionError(f"source-lock contains a non-official action: {name}")
+        if not isinstance(value, dict) or value.get("requested_ref") != "main":
+            raise ResolutionError(f"action {name} must track main")
+        require_sha1(value.get("commit", ""), f"observed action {name} HEAD")
     for name, value in lock.get("profile_digests", {}).items():
         require_sha256(value, f"profile {name} digest")
     require_sha256(lock.get("patch_digest", ""), "patch digest")
 
+    bbr = lock.get("kernel_features", {}).get("bbr3", {})
+    algorithm = bbr.get("algorithm", {})
+    if (
+        algorithm.get("requested_ref") != "v3"
+        or algorithm.get("module_version") != 3
+        or algorithm.get("runtime_name") != "bbr"
+    ):
+        raise ResolutionError("source-lock BBRv3 algorithm identity is invalid")
+    require_sha1(algorithm.get("commit", ""), "BBRv3 algorithm HEAD")
+    ports = bbr.get("ports")
+    if not isinstance(ports, dict) or not ports:
+        raise ResolutionError("source-lock contains no BBRv3 ports")
+    for kernel_series, port in ports.items():
+        if not re.fullmatch(r"[0-9]+\.[0-9]+", kernel_series):
+            raise ResolutionError(f"invalid locked BBRv3 series: {kernel_series}")
+        if not isinstance(port, dict):
+            raise ResolutionError(f"invalid BBRv3 port for {kernel_series}")
+        origin_url = port.get("origin_url", "")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", port.get("provider", "")):
+            raise ResolutionError(f"invalid BBRv3 provider for {kernel_series}")
+        if not isinstance(port.get("origin_ref"), str) or not port["origin_ref"]:
+            raise ResolutionError(f"missing BBRv3 provider ref for {kernel_series}")
+        origin_commit = require_sha1(
+            port.get("origin_commit", ""), f"BBRv3 {kernel_series} provider commit"
+        )
+        github_repo_slug(origin_url)
+        install_directory = port.get("install_directory", "")
+        if not re.fullmatch(
+            rf"(?:hack|backport)-{re.escape(kernel_series)}", install_directory
+        ):
+            raise ResolutionError(
+                f"invalid BBRv3 install directory for {kernel_series}: {install_directory}"
+            )
+        patches = port.get("patches")
+        if not isinstance(patches, list) or not patches:
+            raise ResolutionError(f"BBRv3 port {kernel_series} contains no patches")
+        if [patch.get("order") for patch in patches if isinstance(patch, dict)] != list(
+            range(1, len(patches) + 1)
+        ):
+            raise ResolutionError(f"BBRv3 patch order is invalid for {kernel_series}")
+        artifact_paths: set[str] = set()
+        install_names: set[str] = set()
+        for patch in patches:
+            if not isinstance(patch, dict):
+                raise ResolutionError(f"invalid BBRv3 patch entry for {kernel_series}")
+            origin_path = patch.get("origin_path", "")
+            if not isinstance(origin_path, str):
+                raise ResolutionError(f"unsafe BBRv3 origin path: {origin_path!r}")
+            origin_parts = pathlib.PurePosixPath(origin_path)
+            if origin_parts.is_absolute() or ".." in origin_parts.parts:
+                raise ResolutionError(f"unsafe BBRv3 origin path: {origin_path!r}")
+            expected_url = github_raw_url(origin_url, origin_commit, origin_path)
+            if patch.get("raw_url") != expected_url:
+                raise ResolutionError(
+                    f"BBRv3 immutable URL mismatch for {kernel_series}/{origin_path}"
+                )
+            require_sha256(
+                patch.get("sha256", ""), f"BBRv3 {kernel_series}/{origin_path}"
+            )
+            artifact_path = patch.get("artifact_path", "")
+            safe_artifact_path(artifact_path, kernel_series)
+            if artifact_path in artifact_paths:
+                raise ResolutionError(f"duplicate BBRv3 artifact path: {artifact_path}")
+            artifact_paths.add(artifact_path)
+            install_name = patch.get("install_name", "")
+            if not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._-]*\.patch", install_name
+            ):
+                raise ResolutionError(f"unsafe BBRv3 install name: {install_name!r}")
+            if install_name in install_names:
+                raise ResolutionError(f"duplicate BBRv3 install name: {install_name}")
+            install_names.add(install_name)
 
-def validate_action_refs(
-    lock_path: pathlib.Path, workflow_paths: Iterable[pathlib.Path]
-) -> None:
-    try:
-        locked = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ResolutionError(f"cannot read action lock {lock_path}: {exc}") from exc
-    if not isinstance(locked, dict) or not locked:
-        raise ResolutionError("action lock must be a non-empty JSON object")
+    profile_kernel_series = bbr.get("profile_kernel_series")
+    if not isinstance(profile_kernel_series, dict) or not profile_kernel_series:
+        raise ResolutionError("source-lock contains no BBRv3 profile mapping")
+    for profile, kernel_series in profile_kernel_series.items():
+        profile_entry = lock.get("profiles", {}).get(profile, {})
+        if kernel_series not in ports or profile_entry.get("kernel_series") != kernel_series:
+            raise ResolutionError(
+                f"BBRv3 profile/kernel mapping differs for {profile}: {kernel_series}"
+            )
 
-    for name, value in locked.items():
-        if not isinstance(name, str) or not isinstance(value, str):
-            raise ResolutionError("action lock names and refs must be strings")
-        require_sha1(value, f"action {name}")
 
-    observed: set[str] = set()
+def collect_action_refs(
+    workflow_paths: Iterable[pathlib.Path],
+) -> dict[str, str]:
+    observed: dict[str, str] = {}
     for workflow_path in workflow_paths:
         try:
             lines = workflow_path.read_text(encoding="utf-8").splitlines()
@@ -558,24 +792,36 @@ def validate_action_refs(
             name, ref = match.groups()
             if name.startswith("./") or name.startswith("docker://"):
                 continue
-            observed.add(name)
-            if not SHA1_RE.fullmatch(ref):
+            if not re.fullmatch(r"actions/[A-Za-z0-9_.-]+", name):
                 raise ResolutionError(
-                    f"{workflow_path}:{line_no}: action {name} is not pinned to a full commit SHA"
+                    f"{workflow_path}:{line_no}: only official actions/* are allowed, got {name}"
                 )
-            expected = locked.get(name)
-            if expected is None:
+            if ref != "main":
                 raise ResolutionError(
-                    f"{workflow_path}:{line_no}: action {name} is absent from {lock_path}"
+                    f"{workflow_path}:{line_no}: action {name} must track main, got {ref}"
                 )
-            if ref != expected:
+            previous = observed.get(name)
+            if previous is not None and previous != ref:
                 raise ResolutionError(
-                    f"{workflow_path}:{line_no}: action {name} uses {ref}, lock requires {expected}"
+                    f"{workflow_path}:{line_no}: action {name} uses inconsistent refs"
                 )
+            observed[name] = ref
 
-    unused = sorted(set(locked) - observed)
-    if unused:
-        raise ResolutionError(f"action lock contains unused entries: {', '.join(unused)}")
+    if not observed:
+        raise ResolutionError("workflows contain no reusable official actions")
+    return dict(sorted(observed.items()))
+
+
+def validate_action_refs(workflow_paths: Iterable[pathlib.Path]) -> None:
+    collect_action_refs(workflow_paths)
+
+
+def resolve_actions(workflow_paths: Iterable[pathlib.Path]) -> dict[str, Any]:
+    actions = collect_action_refs(workflow_paths)
+    return {
+        name: resolve_git_ref(f"https://github.com/{name}.git", ref)
+        for name, ref in actions.items()
+    }
 
 
 def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
@@ -628,6 +874,8 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
     profile_kernel_series: dict[str, str] = {}
     ports: dict[str, Any] = {}
     kernel_versions: dict[str, dict[str, str]] = {}
+    bbr_policy = load_bbr_policy(repo_root)
+    bbr_algorithm = resolve_bbr_algorithm(bbr_policy)
     for profile, env in environments.items():
         target = env["KERNEL_TARGET"]
         makefile = download_text(
@@ -686,7 +934,7 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
             "image_pattern": env["IMAGE_PATTERN"],
         }
         if kernel_series not in ports:
-            ports[kernel_series] = load_bbr_port(repo_root, kernel_series)
+            ports[kernel_series] = resolve_bbr_port(bbr_policy, kernel_series)
             ports[kernel_series].update(kernel_versions[kernel_series])
 
     profile_digests = {
@@ -697,21 +945,13 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         for profile in profiles
     }
     patch_digest = tree_digest([repo_root / "patchsets"], repo_root)
-    actions = json.loads(
-        (repo_root / ".github/actions.lock.json").read_text(encoding="utf-8")
-    )
+    actions = resolve_actions(sorted((repo_root / ".github/workflows").glob("*.yml")))
 
     repository_commit = require_sha1(
         run("git", "rev-parse", "HEAD", cwd=repo_root).strip(), "repository commit"
     )
-    algorithm = json.loads(
-        (repo_root / f"patchsets/common/kernel/{next(iter(ports))}/provenance.json").read_text(
-            encoding="utf-8"
-        )
-    )["algorithm"]
-
     lock: dict[str, Any] = {
-        "schema": 1,
+        "schema": 2,
         "resolved_at": dt.datetime.now(dt.timezone.utc)
         .replace(microsecond=0)
         .isoformat()
@@ -737,7 +977,7 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         "profiles": profile_entries,
         "kernel_features": {
             "bbr3": {
-                "algorithm": algorithm,
+                "algorithm": bbr_algorithm,
                 "profile_kernel_series": profile_kernel_series,
                 "ports": ports,
             }
@@ -768,8 +1008,9 @@ def parse_profiles(raw: str) -> list[str]:
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(
-            "Usage: source_lock.py resolve <profiles> <output> | digest <lock> | "
-            "compare <old> <new> | validate-actions <action-lock> <workflow>...",
+            "Usage: source_lock.py resolve <profiles> <output> | "
+            "materialize <lock> <output-dir> | digest <lock> | "
+            "compare <old> <new> | validate-actions <workflow>...",
             file=sys.stderr,
         )
         return 2
@@ -785,6 +1026,11 @@ def main(argv: list[str]) -> int:
         )
         print(lock_digest(lock))
         return 0
+    if command == "materialize" and len(argv) == 4:
+        lock = load_lock(pathlib.Path(argv[2]))
+        count = materialize_bbr_patches(lock, pathlib.Path(argv[3]))
+        print(f"Materialized {count} locked BBRv3 patch(es).")
+        return 0
     if command == "digest" and len(argv) == 3:
         print(lock_digest(load_lock(pathlib.Path(argv[2]))))
         return 0
@@ -798,11 +1044,9 @@ def main(argv: list[str]) -> int:
             return 0
         print(f"changed {old_digest} -> {new_digest}")
         return 1
-    if command == "validate-actions" and len(argv) >= 4:
-        validate_action_refs(
-            pathlib.Path(argv[2]), (pathlib.Path(value) for value in argv[3:])
-        )
-        print("Action lock validation passed.")
+    if command == "validate-actions" and len(argv) >= 3:
+        validate_action_refs(pathlib.Path(value) for value in argv[2:])
+        print("Official actions/*@main validation passed.")
         return 0
     print("invalid source-lock command or arguments", file=sys.stderr)
     return 2

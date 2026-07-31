@@ -60,7 +60,8 @@ mapfile -t sboms < <(find "$artifact_dir" -maxdepth 1 -type f \( -name '*.bom.cd
 
 for required_file in \
   source-lock.json artifact-override-report.json patch-report.txt runner-report.txt \
-  toolchain-report.txt module-report.txt provenance.json openwrt.config SHA256SUMS sha256sums; do
+  bbr3-patches.tar.gz toolchain-report.txt module-report.txt provenance.json \
+  openwrt.config SHA256SUMS sha256sums; do
   [ -s "$artifact_dir/$required_file" ] || {
     echo "::error::Required artifact/provenance file is missing: $required_file" >&2
     exit 1
@@ -83,9 +84,11 @@ embedded_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$art
 python3 - "$repo_root" "$profile" "$manifest" "$config_buildinfo" \
   "$artifact_dir" "$expected_digest" <<'PY'
 import json
+import hashlib
 import pathlib
 import re
 import sys
+import tarfile
 
 root = pathlib.Path(sys.argv[1])
 profile = sys.argv[2]
@@ -93,6 +96,26 @@ manifest = pathlib.Path(sys.argv[3])
 config_buildinfo = pathlib.Path(sys.argv[4])
 artifacts = pathlib.Path(sys.argv[5])
 expected_digest = sys.argv[6]
+
+lock = json.loads((artifacts / "source-lock.json").read_text(encoding="utf-8"))
+expected_bbr_patches = {
+    patch["artifact_path"]: patch["sha256"]
+    for port in lock["kernel_features"]["bbr3"]["ports"].values()
+    for patch in port["patches"]
+}
+observed_bbr_patches = {}
+with tarfile.open(artifacts / "bbr3-patches.tar.gz", "r:gz") as archive:
+    for member in archive.getmembers():
+        if member.isdir():
+            continue
+        if not member.isfile() or member.name.startswith("/") or ".." in pathlib.PurePosixPath(member.name).parts:
+            raise SystemExit(f"::error::Unsafe BBRv3 archive member: {member.name}")
+        handle = archive.extractfile(member)
+        if handle is None:
+            raise SystemExit(f"::error::Cannot read BBRv3 archive member: {member.name}")
+        observed_bbr_patches[member.name] = hashlib.sha256(handle.read()).hexdigest()
+if observed_bbr_patches != expected_bbr_patches:
+    raise SystemExit("::error::Materialized BBRv3 archive differs from source-lock")
 
 def clean(path):
     result = []

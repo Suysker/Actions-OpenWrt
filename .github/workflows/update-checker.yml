@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout current default-branch implementation
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@main
 
       - name: Resolve one dual-profile source lock
         id: lock
@@ -44,10 +44,10 @@ jobs:
 
       - name: Look up the exact lock fingerprint
         id: fingerprint
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        uses: actions/cache@main
         with:
           path: .source-state
-          key: source-lock-v1-${{ steps.lock.outputs.source_digest }}
+          key: source-lock-v2-${{ steps.lock.outputs.source_digest }}
 
       - name: Show changed immutable inputs
         if: steps.fingerprint.outputs.cache-hit != 'true' || inputs.force_build == true
@@ -63,6 +63,10 @@ jobs:
               print(f"Artifact {name}: {artifact.get('version', artifact.get('tag'))}")
           for profile, entry in lock["profiles"].items():
               print(f"{profile}: Linux {entry['kernel_version']}")
+          for series, port in lock["kernel_features"]["bbr3"]["ports"].items():
+              print(f"BBRv3 {series}: {port['provider']}@{port['origin_commit']}")
+          for name, action in lock["actions"].items():
+              print(f"Action {name}@main observed at {action['commit']}")
           PY
 
       - name: Dispatch the exact source lock to the dual build
@@ -84,4 +88,4 @@ jobs:
 
       - name: Report unchanged fingerprint
         if: steps.fingerprint.outputs.cache-hit == 'true' && inputs.force_build != true
-        run: echo 'Lean, every feed, controlled release, kernel series and patch digest are unchanged.'
+        run: echo 'Lean, feeds, controlled releases, BBRv3 ports, profiles, patches and observed Actions HEADs are unchanged.'

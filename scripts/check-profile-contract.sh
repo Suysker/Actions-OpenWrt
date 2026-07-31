@@ -221,6 +221,54 @@ for relative in (
     if not (files_root / relative).is_file():
         problems.append(f"missing common rootfs contract: {relative}")
 
+network_defaults = files_root / "etc/uci-defaults/90-common-network"
+if network_defaults.is_file():
+    content = network_defaults.read_text(encoding="utf-8")
+    for expected in (
+        "set dhcp.lan.start='32'",
+        "set dhcp.lan.limit='232'",
+        "set dhcp.lan.ra='server'",
+        "set dhcp.lan.dhcpv6='relay'",
+        "set dhcp.lan.ndp='relay'",
+        "set dhcp.wan.ra='relay'",
+        "set dhcp.wan.dhcpv6='relay'",
+        "set dhcp.wan.ndp='relay'",
+        "set dhcp.wan.master='1'",
+    ):
+        if expected not in content:
+            problems.append(f"common network defaults miss {expected}")
+    if "set dhcp.lan.dhcpv6='server'" in content:
+        problems.append("common network defaults still enable LAN DHCPv6 server")
+
+bbr_policy_path = repo_root / "patchsets/common/kernel/bbr3-sources.json"
+try:
+    bbr_policy = json.loads(bbr_policy_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as exc:
+    problems.append(f"invalid BBRv3 source policy: {exc}")
+else:
+    algorithm = bbr_policy.get("algorithm", {})
+    providers = bbr_policy.get("providers", [])
+    if bbr_policy.get("schema") != 1:
+        problems.append("BBRv3 source policy schema must be 1")
+    if algorithm.get("ref") != "v3" or algorithm.get("module_version") != 3 or algorithm.get("runtime_name") != "bbr":
+        problems.append("BBRv3 algorithm policy identity is invalid")
+    if [provider.get("name") for provider in providers if isinstance(provider, dict)] != [
+        "cachyos-single",
+        "sbwml-series",
+    ]:
+        problems.append("BBRv3 provider order differs from the architecture contract")
+    def nested_keys(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                yield key
+                yield from nested_keys(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from nested_keys(child)
+
+    if {"commit", "sha256"}.intersection(nested_keys(bbr_policy)):
+        problems.append("BBRv3 source policy contains a per-run commit/hash lock")
+
 if profile == "r4s":
     require_value(config, "CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r4s", "y")
     require_value(

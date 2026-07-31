@@ -56,12 +56,11 @@ values = [
     series,
     version,
     entry.get("kernel_target", ""),
-    port.get("vendored_path", ""),
-    port.get("vendored_sha256", ""),
+    port.get("provider", ""),
     port.get("origin_url", ""),
+    port.get("origin_ref", ""),
     port.get("origin_commit", ""),
-    port.get("origin_path", ""),
-    port.get("origin_sha256", ""),
+    port.get("install_directory", ""),
 ]
 if not re.fullmatch(r"[0-9]+\.[0-9]+", values[0]):
     raise SystemExit("::error::Invalid locked kernel series")
@@ -69,19 +68,16 @@ if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", values[1]):
     raise SystemExit("::error::Invalid locked kernel version")
 if not re.fullmatch(r"[a-z0-9_-]+", values[2]):
     raise SystemExit("::error::Invalid locked kernel target")
-if not re.fullmatch(r"patchsets/common/kernel/[0-9]+\.[0-9]+/[A-Za-z0-9._-]+\.patch", values[3]):
-    raise SystemExit("::error::Unsafe vendored BBRv3 path")
-for value in (values[4], values[8]):
-    if not re.fullmatch(r"[0-9a-f]{64}", value):
-        raise SystemExit("::error::Invalid locked BBRv3 SHA256")
-if values[4] != values[8]:
-    raise SystemExit("::error::Origin and vendored BBRv3 hashes differ")
+if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", values[3]):
+    raise SystemExit("::error::Invalid BBRv3 provider")
 if not re.fullmatch(r"[0-9a-f]{40}", values[6]):
     raise SystemExit("::error::Invalid BBRv3 origin commit")
+if not re.fullmatch(rf"(?:hack|backport)-{re.escape(series)}", values[7]):
+    raise SystemExit("::error::Invalid BBRv3 install directory")
 print("\n".join(values))
 PY
 )
-[ "${#locked[@]}" -eq 9 ] || {
+[ "${#locked[@]}" -eq 8 ] || {
   echo "::error::Could not parse the locked patch contract for $profile" >&2
   exit 1
 }
@@ -89,21 +85,44 @@ PY
 kernel_series="${locked[0]}"
 kernel_version="${locked[1]}"
 kernel_target="${locked[2]}"
-vendored_relative="${locked[3]}"
-vendored_sha256="${locked[4]}"
-origin_url="${locked[5]}"
+bbr_provider="${locked[3]}"
+origin_url="${locked[4]}"
+origin_ref="${locked[5]}"
 origin_commit="${locked[6]}"
-origin_path="${locked[7]}"
-origin_sha256="${locked[8]}"
+install_directory="${locked[7]}"
+source_lock_dir="$(dirname "$source_lock")"
 
-vendored_patch="$repo_root/$vendored_relative"
-[ -f "$vendored_patch" ] || {
-  echo "::error::Locked BBRv3 patch is missing: $vendored_relative" >&2
-  exit 1
-}
-actual_sha256="$(sha256sum "$vendored_patch" | awk '{print $1}')"
-[ "$actual_sha256" = "$vendored_sha256" ] || {
-  echo "::error::Vendored BBRv3 digest differs from source-lock" >&2
+mapfile -t locked_patches < <(python3 - "$source_lock" "$kernel_series" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+lock = json.load(open(sys.argv[1], encoding="utf-8"))
+series = sys.argv[2]
+patches = lock["kernel_features"]["bbr3"]["ports"][series].get("patches", [])
+if not patches:
+    raise SystemExit("::error::Locked BBRv3 port contains no patches")
+for order, patch in enumerate(patches, start=1):
+    relative = pathlib.PurePosixPath(patch.get("artifact_path", ""))
+    sha256 = patch.get("sha256", "")
+    install_name = patch.get("install_name", "")
+    origin_path = patch.get("origin_path", "")
+    if patch.get("order") != order:
+        raise SystemExit("::error::Locked BBRv3 patch order is invalid")
+    if relative.is_absolute() or ".." in relative.parts or relative.parts[:2] != ("bbr3", series):
+        raise SystemExit("::error::Unsafe BBRv3 artifact path")
+    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise SystemExit("::error::Invalid BBRv3 patch SHA256")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.patch", install_name):
+        raise SystemExit("::error::Unsafe BBRv3 install name")
+    if any("\t" in value or "\n" in value for value in (str(relative), origin_path, patch.get("raw_url", ""))):
+        raise SystemExit("::error::Unsafe control character in BBRv3 lock")
+    print("\t".join((str(order), str(relative), sha256, origin_path, patch.get("raw_url", ""), install_name)))
+PY
+)
+[ "${#locked_patches[@]}" -gt 0 ] || {
+  echo "::error::Could not parse materialized BBRv3 patches" >&2
   exit 1
 }
 
@@ -157,25 +176,55 @@ source_lock_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$
 apply_series common "$repo_root/patchsets/common"
 apply_series device "$repo_root/patchsets/$profile"
 
-destination_dir="$openwrt_dir/target/linux/generic/hack-$kernel_series"
+destination_dir="$openwrt_dir/target/linux/generic/$install_directory"
 [ -d "$destination_dir" ] || {
   echo "::error::OpenWrt generic stable-kernel patch directory is missing: $destination_dir" >&2
   exit 1
 }
-destination="$destination_dir/995-bbrv3.patch"
-if [ -e "$destination" ]; then
-  destination_hash="$(sha256sum "$destination" | awk '{print $1}')"
-  [ "$destination_hash" = "$vendored_sha256" ] || {
-    echo "::error::Refusing to overwrite a different OpenWrt BBRv3 patch" >&2
+installed_bbr_patches=()
+for record in "${locked_patches[@]}"; do
+  IFS=$'\t' read -r order artifact_relative patch_sha256 origin_path raw_url install_name <<< "$record"
+  materialized_patch="$source_lock_dir/$artifact_relative"
+  [ -f "$materialized_patch" ] || {
+    echo "::error::Materialized BBRv3 patch is missing: $artifact_relative" >&2
     exit 1
   }
-else
-  install -m 0644 "$vendored_patch" "$destination"
-fi
+  materialized_patch="$(realpath -e "$materialized_patch")"
+  case "$materialized_patch" in
+    "$source_lock_dir"/*) ;;
+    *)
+      echo "::error::Materialized BBRv3 patch escapes source-lock: $artifact_relative" >&2
+      exit 1
+      ;;
+  esac
+  actual_sha256="$(sha256sum "$materialized_patch" | awk '{print $1}')"
+  [ "$actual_sha256" = "$patch_sha256" ] || {
+    echo "::error::Materialized BBRv3 digest differs from source-lock: $artifact_relative" >&2
+    exit 1
+  }
+  destination="$destination_dir/$install_name"
+  if [ -e "$destination" ]; then
+    destination_hash="$(sha256sum "$destination" | awk '{print $1}')"
+    [ "$destination_hash" = "$patch_sha256" ] || {
+      echo "::error::Refusing to overwrite a different OpenWrt BBRv3 patch: $install_name" >&2
+      exit 1
+    }
+  else
+    install -m 0644 "$materialized_patch" "$destination"
+  fi
+  installed_bbr_patches+=("$destination")
+  {
+    printf 'bbrv3_patch_%03d_artifact=%s\n' "$order" "$artifact_relative"
+    printf 'bbrv3_patch_%03d_origin_path=%s\n' "$order" "$origin_path"
+    printf 'bbrv3_patch_%03d_raw_url=%s\n' "$order" "$raw_url"
+    printf 'bbrv3_patch_%03d_sha256=%s\n' "$order" "$patch_sha256"
+    printf 'bbrv3_patch_%03d_destination=%s\n' "$order" "${destination#"$openwrt_dir"/}"
+  } >> "$report"
+done
 
-grep -Eq '^\+.*BBR_VERSION[[:space:]]+3$' "$destination"
-grep -Fq 'MODULE_VERSION(__stringify(BBR_VERSION));' "$destination"
-grep -Eq '^[ +].*\.name[[:space:]]*=[[:space:]]*"bbr"' "$destination"
+grep -Eq '^\+.*BBR_VERSION[[:space:]]+3$' "${installed_bbr_patches[@]}"
+grep -Fq 'MODULE_VERSION(__stringify(BBR_VERSION));' "${installed_bbr_patches[@]}"
+grep -Eq '^[ +].*\.name[[:space:]]*=[[:space:]]*"bbr"' "${installed_bbr_patches[@]}"
 
 netsupport="$openwrt_dir/package/kernel/linux/modules/netsupport.mk"
 grep -Fq 'define KernelPackage/tcp-bbr' "$netsupport"
@@ -186,13 +235,12 @@ grep -Fq 'sch_fq' "$netsupport"
 
 {
   echo "bbrv3_status=installed-into-openwrt-kernel-patch-stack"
-  echo "bbrv3_destination=${destination#$openwrt_dir/}"
-  echo "bbrv3_vendored_path=$vendored_relative"
-  echo "bbrv3_vendored_sha256=$vendored_sha256"
+  echo "bbrv3_provider=$bbr_provider"
   echo "bbrv3_origin_url=$origin_url"
+  echo "bbrv3_origin_ref=$origin_ref"
   echo "bbrv3_origin_commit=$origin_commit"
-  echo "bbrv3_origin_path=$origin_path"
-  echo "bbrv3_origin_sha256=$origin_sha256"
+  echo "bbrv3_patch_count=${#installed_bbr_patches[@]}"
+  echo "bbrv3_install_directory=target/linux/generic/$install_directory"
   echo "assertion_BBR_VERSION=3"
   echo "assertion_runtime_name=bbr"
   echo "assertion_MODULE_VERSION=present"

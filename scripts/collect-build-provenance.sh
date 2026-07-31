@@ -43,6 +43,13 @@ while IFS= read -r -d '' file; do
 done < <(find "$target_dir" -maxdepth 1 -type f -print0)
 
 cp "$source_lock" "$output/source-lock.json"
+source_lock_dir="$(cd "$(dirname "$source_lock")" && pwd -P)"
+[ -d "$source_lock_dir/bbr3" ] || {
+  echo "::error::Materialized BBRv3 source-lock directory is missing" >&2
+  exit 1
+}
+tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
+  -C "$source_lock_dir" -cf - bbr3 | gzip -n > "$output/bbr3-patches.tar.gz"
 cp "$artifact_report" "$output/artifact-override-report.json"
 cp "$patch_report" "$output/patch-report.txt"
 cp "$runner_report" "$output/runner-report.txt"
@@ -100,7 +107,7 @@ esac
   echo "tcp_bbr_vermagic=$vermagic"
   echo "tcp_bbr_candidates=${#bbr_modules[@]}"
   echo "sch_fq_present=1"
-  echo "sch_fq_path=${sch_fq_module#$openwrt/}"
+  echo "sch_fq_path=${sch_fq_module#"$openwrt"/}"
 } > "$output/module-report.txt"
 
 toolchain_gcc="$(find "$openwrt/staging_dir" \( -type f -o -type l \) -path '*/bin/*-openwrt-*-gcc' -print -quit)"
@@ -116,7 +123,7 @@ case "$gcc_version" in
 esac
 {
   echo "toolchain-report-v1"
-  echo "gcc_path=${toolchain_gcc#$openwrt/}"
+  echo "gcc_path=${toolchain_gcc#"$openwrt"/}"
   echo "gcc_version=$gcc_version"
   echo "external_prebuilt_toolchain=0"
   "$toolchain_gcc" --version
@@ -146,11 +153,15 @@ with open(output, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
+sums_tmp="$(mktemp)"
+trap 'rm -f "$sums_tmp"' EXIT
 (
   cd "$output"
   find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\0' |
     sort -z |
-    xargs -0 sha256sum > SHA256SUMS
+    xargs -0 sha256sum > "$sums_tmp"
 )
+mv "$sums_tmp" "$output/SHA256SUMS"
+trap - EXIT
 
 echo "Build provenance collected for $profile: $output"

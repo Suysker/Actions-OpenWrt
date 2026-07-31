@@ -5,7 +5,7 @@
 - NanoPi R4S：RK3399、原生 Lean 启动链与网口 IRQ 策略、ARMv8 CRC/crypto、R8168、PWM fan、512 MiB LZ4 zram。
 - N5105 PVE：`x86-64-v2 + mtune=tremont`、squashfs combined EFI、VirtIO NET/SCSI、I225/igc 直通、4 队列与 irqbalance。
 
-两者共用 firewall3/iptables、GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列维护的 BBRv3。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
+两者共用 firewall3/iptables、GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列动态解析的 BBRv3。Lean master 的旧 `libsepol 3.3` 仅在该包内保持 GNU17 兼容语义，不降低全局编译器。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
 
 ## 构建模型
 
@@ -63,7 +63,7 @@ profiles/x86-n5105-pve/      N5105 PVE target、CPU flags、硬件包和运行�
 
 固件只拥有安全、可解释的出厂默认：
 
-- LAN `192.168.2.1/24`，DHCP `.100` 起共 150 个地址；WAN DHCP、WAN6 DHCPv6；不写死物理 `ethX`。
+- LAN `192.168.2.1/24`，DHCP 从 `.32` 开始、`limit=232`、租期 12 小时；WAN DHCP、WAN6 DHCPv6；LAN DHCPv6/NDP 使用 relay，WAN 为 relay master；不写死物理 `ethX`。
 - `Asia/Shanghai` 和启用 NTP client，保留上游 NTP server 列表。
 - `fq`、16 MiB socket buffer 上限。
 - 只有确认 `/sys/module/tcp_bbr/version=3`、`sch_fq` 存在且 TurboACC 已探测到 software flow offload 后，才一次性把 factory CCA 设为 `bbr`；以后尊重用户在 TurboACC 中的选择。
@@ -102,6 +102,7 @@ python3 -m py_compile scripts/*.py
 bash tests/test-profile-renderer.sh
 bash tests/test-resolve-source-lock.sh
 bash tests/test-apply-source-lock-artifacts.sh
+bash tests/test-apply-profile-patches.sh
 bash tests/test-locked-feeds.sh
 bash scripts/check-profile-contract.sh r4s
 bash scripts/check-profile-contract.sh x86-n5105-pve
@@ -111,20 +112,23 @@ bash scripts/check-profile-contract.sh x86-n5105-pve
 
 ```sh
 bash scripts/resolve-source-lock.sh resolve \
-  'r4s,x86-n5105-pve' /tmp/source-lock.json
-bash scripts/resolve-source-lock.sh digest /tmp/source-lock.json
+  'r4s,x86-n5105-pve' /tmp/source-input/source-lock.json
+bash scripts/resolve-source-lock.sh materialize \
+  /tmp/source-input/source-lock.json /tmp/source-input
+bash scripts/resolve-source-lock.sh digest /tmp/source-input/source-lock.json
 ```
 
 GitHub build 还会执行 `make defconfig`、required/forbidden/provider 契约、定向下载、完整 `make download`、一次并行编译、实际 `tcp_bbr.ko` module version 3、`sch_fq.ko`、GCC 15、镜像 gzip、manifest、buildinfo、SBOM 和所有 SHA256 验证。
 
 ## 产物与迁移说明
 
-每个平台 artifact 包含固件、原始 manifest/buildinfo/SBOM/sha256sums，以及 source lock、artifact override、patch、module、runner、toolchain 和构建 provenance。生产 Release 的通用文件统一加 profile 前缀，并由 `delivery-index.json` 映射回原名；Release 发布前会据此重建两套 artifact 并再次运行同一 verifier。
+每个平台 artifact 包含固件、原始 manifest/buildinfo/SBOM/sha256sums，以及 source lock、物化的 BBRv3 patch archive、artifact override、patch、module、runner、toolchain 和构建 provenance。生产 Release 的通用文件统一加 profile 前缀，并由 `delivery-index.json` 映射回原名；Release 发布前会据此重建两套 artifact 并再次运行同一 verifier。
 
 Breaking changes：
 
 - `profiles/x86` 和 workflow 输入 `x86` 已改名为 `x86-n5105-pve`，没有兼容别名。
-- 生产 profile 跟随 Lean target 稳定内核；BBRv3 只从 `patchsets/common/kernel/<series>` 进入。
+- 生产 profile 跟随 Lean target 稳定内核；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析最新兼容 BBRv3 port、物化并锁定 commit/hash。
+- GitHub 官方复用 Actions 直接使用 `actions/*@main`，按用户选择追踪最新默认分支；任何上游 runtime/行为不兼容会使门禁直接失败。
 - `diy-part2.sh` 不再做可变 release 查询、`sed` 服务策略或 `PKG_HASH:=skip`；它只应用 source lock 中已经验证的 metadata。
 - 正式 Release 必须由同一 source lock 下两台设备同时通过；单 profile 仅提供 Actions artifact。
 

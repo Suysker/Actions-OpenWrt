@@ -72,7 +72,7 @@ import sys
 
 lock_path, output_path = map(pathlib.Path, sys.argv[1:])
 lock = json.loads(lock_path.read_text(encoding="utf-8"))
-if lock.get("schema") != 1:
+if lock.get("schema") != 2:
     raise SystemExit("::error::Unsupported source-lock schema")
 
 lines = ["# Generated from source-lock.json; every feed is immutable."]

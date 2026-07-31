@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "resolved_at": "2026-01-01T00:00:00Z",
   "repository_commit": "1111111111111111111111111111111111111111",
   "openwrt": {"commit": "2222222222222222222222222222222222222222"},
@@ -24,6 +24,41 @@
     }
   },
   "official_golang": {"commit": "3333333333333333333333333333333333333333"},
+  "profiles": {
+    "r4s": {
+      "kernel_series": "6.12"
+    }
+  },
+  "kernel_features": {
+    "bbr3": {
+      "algorithm": {
+        "requested_ref": "v3",
+        "commit": "8888888888888888888888888888888888888888",
+        "module_version": 3,
+        "runtime_name": "bbr"
+      },
+      "profile_kernel_series": {"r4s": "6.12"},
+      "ports": {
+        "6.12": {
+          "provider": "fixture-single",
+          "origin_url": "https://github.com/example/ports.git",
+          "origin_ref": "main",
+          "origin_commit": "9999999999999999999999999999999999999999",
+          "install_directory": "hack-6.12",
+          "patches": [
+            {
+              "order": 1,
+              "origin_path": "6.12/bbr3.patch",
+              "raw_url": "https://raw.githubusercontent.com/example/ports/9999999999999999999999999999999999999999/6.12/bbr3.patch",
+              "sha256": "8888888888888888888888888888888888888888888888888888888888888888",
+              "artifact_path": "bbr3/6.12/0001-bbrv3.patch",
+              "install_name": "995-bbrv3.patch"
+            }
+          ]
+        }
+      }
+    }
+  },
   "upstream_artifacts": {
     "haproxy": {
       "policy": "latest-lts",
@@ -59,7 +94,12 @@
       "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     }
   },
-  "actions": {"actions/checkout": "5555555555555555555555555555555555555555"},
+  "actions": {
+    "actions/checkout": {
+      "requested_ref": "main",
+      "commit": "5555555555555555555555555555555555555555"
+    }
+  },
   "profile_digests": {"r4s": "sha256:6666666666666666666666666666666666666666666666666666666666666666"},
   "patch_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
 }

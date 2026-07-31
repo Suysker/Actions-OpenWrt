@@ -21,7 +21,24 @@ for profile in "${profiles[@]}"; do
     exit 1
   fi
   bash "$repo_root/scripts/render-profile.sh" files "$profile" "$tmpdir/$profile-files"
-  [ -f "$tmpdir/$profile-files/etc/uci-defaults/90-common-network" ]
+  network_defaults="$tmpdir/$profile-files/etc/uci-defaults/90-common-network"
+  [ -f "$network_defaults" ]
+  for expected in \
+    "set dhcp.lan.start='32'" \
+    "set dhcp.lan.limit='232'" \
+    "set dhcp.lan.ra='server'" \
+    "set dhcp.lan.dhcpv6='relay'" \
+    "set dhcp.lan.ndp='relay'" \
+    "set dhcp.wan.ra='relay'" \
+    "set dhcp.wan.dhcpv6='relay'" \
+    "set dhcp.wan.ndp='relay'" \
+    "set dhcp.wan.master='1'"; do
+    grep -Fqx "$expected" "$network_defaults"
+  done
+  if grep -Fqx "set dhcp.lan.dhcpv6='server'" "$network_defaults"; then
+    echo "renderer retained the unwanted LAN DHCPv6 server default for $profile" >&2
+    exit 1
+  fi
 done
 
 # A common/device symbol collision must be rejected.

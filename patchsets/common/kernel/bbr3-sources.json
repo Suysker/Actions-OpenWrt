@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "algorithm": {
+    "url": "https://github.com/google/bbr.git",
+    "ref": "v3",
+    "module_version": 3,
+    "runtime_name": "bbr"
+  },
+  "providers": [
+    {
+      "name": "cachyos-single",
+      "url": "https://github.com/CachyOS/kernel-patches.git",
+      "ref": "master",
+      "mode": "single",
+      "path_template": "{series}/0002-bbr3.patch",
+      "artifact_name_template": "0001-bbrv3.patch",
+      "install_directory_template": "hack-{series}",
+      "install_name_template": "995-bbrv3.patch"
+    },
+    {
+      "name": "sbwml-series",
+      "url": "https://github.com/sbwml/r4s_build_script.git",
+      "ref": "master",
+      "mode": "directory",
+      "path_template": "openwrt/patch/kernel-{series}/bbr3",
+      "file_pattern": "010-bbr3-.*\\.patch",
+      "install_directory_template": "backport-{series}"
+    }
+  ]
+}

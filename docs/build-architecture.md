@@ -2,7 +2,7 @@
 
 ## 1. 文档状态
 
-- 状态：设计冻结并已进入一次性实施；以本文件第 14、15 节门禁和 GitHub Actions 双平台结果作为完成依据
+- 状态：设计修订 2 已冻结并进入一次性实施；以本文件第 14、15 节门禁和 GitHub Actions 双平台结果作为完成依据
 - 日期：2026-07-31
 - 仓库：`Suysker/Actions-OpenWrt`
 - 当前开发分支：`experiment/sbwml-public-r4s`
@@ -12,14 +12,14 @@
 
 本次审计得到的可复用根因和预防规则同步记录在仓库根目录 `lessons.md`；实施中若出现新的 course correction，必须同时更新本文与该文件。
 
-本次方案逐文件核验了以下固定审计基线。后续 workflow 只解析 Lean、选定 feeds 和受控 release 的生产输入；BBRv3 内核适配以仓库内版本化 patch 参与构建，下面的算法仓库、适配来源和两个 sbwml 仓库只提供固定 SHA provenance，不在 build job 中临时 clone 或执行：
+本次方案逐文件核验了以下审计基线。表中的 commit 证明做出设计决策时实际阅读过哪份代码，不是永久生产版本锁。后续 prepare job 会统一解析 Lean、feeds、受控 release、Google BBRv3 分支和兼容内核移植来源的当前 SHA；build job 不临时 clone 或执行第三方构建脚本，只消费本次 source-lock 已物化并校验的输入：
 
 | 上游 | 审计 commit | 在本方案中的角色 |
 |---|---|---|
 | `coolsnowwolf/lede` | `6c92c15df3dce19c73eb7d986f48cf6b2304306f` | 唯一 OpenWrt 源码基座 |
-| `google/bbr` | `90210de4b779d40496dee0b89081780eeddf2a60` | BBRv3 算法和 `MODULE_VERSION=3` 的权威来源 |
-| `CachyOS/kernel-patches` | `c9ed808e86cc1f5fafdbe208627533ee10499b5b` | 当前稳定 Linux 6.12 的 BBRv3 适配来源 |
-| `sbwml/r4s_build_script` | `32a48c306abc3938ae73e50fb2ae4a4549e95b0d` | R4S 配置、补丁、Linux 6.18 BBRv3 和构建思想的审计样本 |
+| `google/bbr` | `90210de4b779d40496dee0b89081780eeddf2a60` | BBRv3 身份契约的权威来源；生产每轮重新解析 `v3` HEAD |
+| `CachyOS/kernel-patches` | `c9ed808e86cc1f5fafdbe208627533ee10499b5b` | 单文件、按 kernel series 组织的 BBRv3 port provider；生产每轮重新解析 provider HEAD |
+| `sbwml/r4s_build_script` | `32a48c306abc3938ae73e50fb2ae4a4549e95b0d` | R4S 优化审计样本及多文件 BBRv3 port provider；不执行其远程脚本 |
 | `sbwml/builder` | `71a27b5a5244f6b509d048cdb6eb93ccb976cb8d` | GitHub Actions、缓存、发布思想的审计样本 |
 
 “纳入 sbwml 的 R4S 专属优化”在本文中的准确含义是：每项公开能力都必须进入后文的纳入、替代或排除表，不允许因为名字带有 `r4s` 或 `optimize` 就无条件移植。Lean master 已经拥有更新或更合适实现时，保留 Lean 实现同样属于纳入该优化目标，而不是遗漏。
@@ -36,6 +36,7 @@
 6. 所有改动在同一实现分支中完成；只有 R4S 与 N5105 同时通过完整构建后才发布，不进行分阶段上线。
 7. “全部优化”指能够解释、能够审计、能够在目标设备上验证，而且不会破坏 iptables、PassWall 或可维护性的优化；不等于照搬所有第三方补丁。
 8. 两个平台默认使用 BBRv3；它作为 common 的版本化内核能力实现，不为两个设备维护两套算法补丁。
+9. 所有浮动上游采用“每轮解析最新、轮内冻结、发布可追溯”；不得为了省 hash 使用 mutable URL，也不得把一次解析出的 SHA 永久误当更新策略。
 
 ### 2.1 最终形态速览
 
@@ -44,7 +45,7 @@
 | Common | Lean master 与最新稳定上游产物单次锁定；firewall3/iptables；历史双分支共享应用 allowlist；GCC 15；OpenSSL ASM/speed；zlib speed；ccache/log/SBOM；LTO/GC/Mold 关闭；按稳定内核版本应用 BBRv3 并作为首次运行默认；software flow offload 启用、hardware flow offload 不启用 |
 | R4S | Lean 原生 rockchip/R4S target 和稳定内核；ARMv8 CRC/crypto + A72/A53 tune；native U-Boot/rkbin、r8168、SD/LED、CPU4/5 IRQ affinity、packet steering=1；无 irqbalance/RTL8152/default-settings；512 MiB LZ4 zram；schedutil/PWM fan |
 | N5105 PVE | Lean x86/64 generic 和稳定内核；x86-64-v2 + Tremont tune；CPU host、1 socket/4 vCPU、固定内存、4 queues；VirtIO + passthrough I225/igc；irqbalance；无 autocore/RPS/zram/default-settings |
-| Actions | prepare source-lock；双 profile matrix；严格 config/package/target contract；分层缓存；失败日志保留；aggregate 后 draft→重下载验 SHA→公开→cleanup |
+| Actions | prepare 动态解析并物化 source-lock；双 profile matrix；严格 config/package/target contract；分层缓存；失败日志保留；aggregate 后 draft→重下载验 SHA→公开→cleanup；仅使用官方 `actions/*@main` 直接追踪最新代码 |
 
 ## 3. 设备假设
 
@@ -137,17 +138,19 @@ source-lock.json + cache key + Release provenance
 3. workflow 的 prepare job 在下载源码前统一解析 Git ref 和受控上游 release。
 4. HAProxy 选择官方仍受支持的最高 LTS 分支及该分支最新 patch release；AdGuardHome 选择 GitHub 最新非 prerelease；GeoIP/Geosite 分别选择 Loyalsoldier 对应仓库的最新非 prerelease。
 5. 每个 release 立即展开成精确版本、不可变 tag/URL 和 SHA256。HAProxy 使用官方 `releases.json` 的 SHA256；AdGuardHome 使用精确 tag/commit、GitHub asset digest 和计算后锁定的源码归档 hash；GeoIP/Geosite 同时核对 release asset digest 与发布的 `.sha256sum`。
-6. 将 OpenWrt、所有 feeds、官方 Go feed、上游产物、每个 profile 的稳定内核系列、BBRv3 算法/适配 provenance、补丁摘要和仓库实现 SHA 写入 `source-lock.json`。
-7. build job 只 checkout 和下载 `source-lock.json` 中的精确输入，不读取远程 branch HEAD、release `latest` 或 API。
-8. `source-lock.json` 作为每次构建的产物和 Release 附件，不提交为永久版本锁。
-9. update checker 使用同一个解析脚本计算远程指纹；源码 ref 或任一受控 release 变化都触发完整双 profile 构建。
-10. workflow_dispatch 可以提供精确版本作故障回滚，但 resolver 仍负责解析不可变 URL 和 hash；不接受用户提供 `skip`。
-11. 缓存 key 至少包含：
+6. 从锁定 Lean commit 解析每个 profile 的稳定 kernel series；再按 `patchsets/common/kernel/bbr3-sources.json` 的 provider 顺序查找当前 series 的最新兼容 BBRv3 port。resolver 解析 Google `v3` HEAD 与选中 provider HEAD，下载全部 patch、计算 SHA256，并给每个文件分配 source-lock artifact 内的安全相对路径。
+7. 将 OpenWrt、所有 feeds、官方 Go feed、上游产物、每个 profile 的稳定内核系列、BBRv3 当前算法 HEAD/适配 commit/patch hash、补丁摘要、workflow 中 `actions/*@main` 的观测 HEAD 和仓库实现 SHA 写入 `source-lock.json`。
+8. prepare 随即执行 `materialize`：只从 lock 中的 commit-addressed immutable raw URL 下载 BBRv3 patch，逐文件复验 SHA256，并与 JSON 一起上传为同一个 `source-lock` artifact；精确 Linux 源码上的顺序 clean-apply 在 matrix 前完成。
+9. build job 只 checkout 和下载 source-lock 中的精确输入，不读取远程 branch HEAD、release `latest` 或 API。
+10. `source-lock.json` 及其物化 patch 作为每次构建的产物和 Release 附件，不提交为永久版本锁；仓库只保存 provider/ref/path 规则和算法身份断言。
+11. update checker 使用同一个解析脚本计算远程指纹；源码 ref、任一受控 release、Google BBRv3 HEAD、选中 port commit 或 patch hash 变化都触发完整双 profile 构建。
+12. workflow_dispatch 可以提供精确版本作故障回滚，但 resolver 仍负责解析不可变 URL 和 hash；不接受用户提供 `skip`。
+13. 缓存 key 至少包含：
    - source-lock digest
    - profile digest
    - patch digest
    - toolchain identity
-12. GitHub Actions 自身使用完整 commit SHA，而不是 `@main` 或 `@master`。
+14. GitHub Actions 自身按用户明确选择只允许官方 `actions/*@main`，直接追踪各 action 默认分支。resolver 在 prepare 观察每个 `main` 的当前完整 SHA 并写入 source-lock，使 action HEAD 变化进入 update fingerprint；由于 action 在 prepare 之前已由 GitHub 解析，该 SHA 是本轮观察值而不是可证明的执行锁，Release 必须明确披露这一边界。
 
 这样每次构建都会拿到启动时最新的 master、最新稳定 AdGuardHome/GeoIP/Geosite 和最新 HAProxy LTS，同时 BBRv3 始终绑定本次 target 的稳定内核系列，任何已发布固件都能追溯到精确输入。
 
@@ -155,7 +158,7 @@ source-lock.json + cache key + Release provenance
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "resolved_at": "UTC RFC3339",
   "repository_commit": "full SHA",
   "openwrt": {"url": "...", "requested_ref": "master", "commit": "full SHA"},
@@ -195,7 +198,8 @@ source-lock.json + cache key + Release provenance
     "bbr3": {
       "algorithm": {
         "url": "https://github.com/google/bbr.git",
-        "commit": "90210de4b779d40496dee0b89081780eeddf2a60",
+        "requested_ref": "v3",
+        "commit": "本轮解析的 full SHA",
         "module_version": 3,
         "runtime_name": "bbr"
       },
@@ -205,23 +209,36 @@ source-lock.json + cache key + Release provenance
       },
       "ports": {
         "6.12": {
+          "provider": "cachyos-single",
           "origin_url": "https://github.com/CachyOS/kernel-patches.git",
-          "origin_commit": "c9ed808e86cc1f5fafdbe208627533ee10499b5b",
-          "origin_path": "6.12/0002-bbr3.patch",
-          "origin_sha256": "15d1563b4696ee35455f02b21fad0508fb77e0364f8dd1f48e0e82671dd05299",
-          "vendored_path": "patchsets/common/kernel/6.12/0001-bbrv3.patch",
-          "vendored_sha256": "15d1563b4696ee35455f02b21fad0508fb77e0364f8dd1f48e0e82671dd05299"
+          "origin_ref": "master",
+          "origin_commit": "本轮解析的 full SHA",
+          "install_directory": "hack-6.12",
+          "patches": [
+            {
+              "origin_path": "6.12/0002-bbr3.patch",
+              "url": "commit-addressed immutable raw URL",
+              "sha256": "...",
+              "artifact_path": "bbr3/6.12/0001-bbrv3.patch",
+              "install_name": "995-bbrv3.patch"
+            }
+          ]
         }
       }
     }
   },
   "profile_digests": {"r4s": "sha256:...", "x86-n5105-pve": "sha256:..."},
   "patch_digest": "sha256:...",
-  "actions": {"actions/checkout": "full SHA"}
+  "actions": {
+    "actions/checkout": {
+      "requested_ref": "main",
+      "commit": "prepare 观察到的 full SHA"
+    }
+  }
 }
 ```
 
-JSON 写入时键排序、UTC 时间格式固定，digest 对规范化内容计算。`resolved_at` 不参与“上游是否变化”的 update fingerprint，避免仅时间变化触发无意义构建。
+JSON 写入时键排序、UTC 时间格式固定，digest 对规范化内容计算。`resolved_at` 不参与“上游是否变化”的 update fingerprint，避免仅时间变化触发无意义构建；BBRv3 patch 字节不重复嵌入 JSON，但其 immutable URL、安装顺序和 SHA256 全部参与 digest，`materialize` 后再次逐字节验证。
 
 ## 6. 目标目录结构
 
@@ -263,9 +280,7 @@ patchsets/
   common/
     series
     kernel/
-      6.12/
-        series
-        0001-bbrv3.patch
+      bbr3-sources.json
   r4s/
     series
   x86-n5105-pve/
@@ -290,6 +305,8 @@ tests/
   fixtures/source-lock/
   test-resolve-source-lock.sh
   test-apply-source-lock-artifacts.sh
+  test-apply-profile-patches.sh
+  test-profile-renderer.sh
 
 docs/
   build-architecture.md
@@ -299,7 +316,7 @@ lessons.md
 
 `profiles/x86` 一次性重命名为 `profiles/x86-n5105-pve`。workflow 输入同步从 `x86` 改为 `x86-n5105-pve`，不保留两个名字的兼容别名，避免以后把通用 x86 和 N5105 专用指令集混淆。
 
-补丁目录不放置“优化合集”。设备 `series` 和通用非内核 `series` 初始为空；`common/kernel/<series>/series` 只承载用户明确选择、无法由 UCI/Kconfig 表达且与内核系列绑定的 BBRv3 适配。每个 patch 都必须有固定 provenance、SHA256、前置/后置断言和定向测试。R4S 和 x86 均继续使用 Lean 已有 target/device 定义，不维护私有 target 分叉；master 若切换稳定内核系列而仓库没有对应目录，prepare 立即失败。
+补丁目录不放置“优化合集”。设备 `series` 和通用非内核 `series` 初始为空；`bbr3-sources.json` 只定义受信任 provider、浮动 ref、按 kernel series 展开的路径规则、安装栈和算法身份断言，不保存某一轮的 commit、hash 或 patch 内容。prepare 将选中的 patch 物化进 source-lock artifact，每个文件都必须有 SHA256、前置/后置断言和定向 clean-apply。R4S 和 x86 均继续使用 Lean 已有 target/device 定义，不维护私有 target 分叉；master 切换稳定内核系列时 resolver 自动尝试受信任 provider，若没有可 clean-apply 的 port 则在 matrix 前明确失败。
 
 ## 7. 模块职责与接口
 
@@ -330,11 +347,14 @@ render-profile.sh files     <profile> <output-directory>
 
 ```text
 resolve-source-lock.sh resolve <profile-list> <output-json>
+resolve-source-lock.sh materialize <source-lock.json> <output-directory>
 resolve-source-lock.sh digest  <source-lock.json>
 resolve-source-lock.sh compare <old-json> <new-json>
 ```
 
-这是 build 与 update checker 已出现两次的共同逻辑，必须抽取。Git ref、HAProxy LTS、AdGuardHome stable、GeoIP/Geosite release，以及锁定 Lean commit 中各 profile 的 `KERNEL_PATCHVER` 都只能在这里解析，禁止在 workflow 或 `diy-part2.sh` 维护第二份查询逻辑。resolver 必须为每个 profile 找到 `patchsets/common/kernel/<KERNEL_PATCHVER>/series` 和完整 BBRv3 provenance；缺少适配时在 matrix 启动前失败，不启用 `CONFIG_TESTING_KERNEL`、不改用另一代 BBR，也不静默跳过。
+这是 build 与 update checker 共用的唯一浮动输入解析器。Git ref、HAProxy LTS、AdGuardHome stable、GeoIP/Geosite release、Google BBR `v3` HEAD、受信任 BBRv3 port provider，以及锁定 Lean commit 中各 profile 的 `KERNEL_PATCHVER` 都只能在这里解析，禁止在 workflow 或 `diy-part2.sh` 维护第二份查询逻辑。
+
+`resolve` 只生成 schema 2 JSON；`materialize` 只下载 lock 内 commit-addressed URL，并把逐文件 hash 验证后的 BBRv3 patch 写到 lock 约定的相对路径。单文件 provider 和按序多文件 provider 由同一规范化数据结构表示。resolver 按策略顺序选择第一个确实包含当前 kernel series 的 provider，随后必须在精确 Linux tarball 上按安装顺序 clean-apply；不存在适配或任一 hunk 不兼容时在 matrix 前失败，不启用 `CONFIG_TESTING_KERNEL`、不改用另一代 BBR，也不静默跳过。
 
 ### 7.3 Locked artifact applicator
 
@@ -360,14 +380,14 @@ apply-source-lock-artifacts.sh <openwrt-root> <source-lock.json> <report-json>
 
 保留 `scripts/apply-profile-patches.sh` 这个统一入口，但改变其职责：
 
-1. 只读取仓库内 `patchsets/common/series`、source-lock 所选的 `patchsets/common/kernel/<series>/series` 和设备 `series`。
-2. source-lock 的 profile/kernel series、vendored path 与 SHA256 必须和仓库文件完全一致。
+1. 只读取仓库内 `patchsets/common/series`、设备 `series`，以及 source-lock artifact 已物化的 BBRv3 patch 清单。
+2. source-lock 的 profile/kernel series、artifact path、安装目录、安装名与逐文件 SHA256 必须自洽；所有 artifact path 必须位于 source-lock 目录内，拒绝绝对路径和 `..`。
 3. 禁止运行第三方 build script，也禁止在 apply 阶段 clone 远程仓库。
-4. 每个 patch 先执行 `git apply --check`。
+4. 仓库 common/device patch 先对 OpenWrt tree 执行 `git apply --check`；BBRv3 patch 已在 prepare 对精确 kernel 顺序 clean-apply，build 再验证物化字节的 SHA 后安装进锁定的 OpenWrt kernel patch stack。
 5. patch 应用失败立即终止；不存在 `skipped-conflict`。
 6. BBRv3 后置断言至少确认 `BBR_VERSION=3`、拥塞控制运行名为 `bbr`、`MODULE_VERSION` 存在，并确认 Lean 的 `KernelPackage/tcp-bbr` 定义未被整体替换。
 7. 每个其他 patch 也必须声明后置检查，证明预期行为确实存在。
-8. 最终生成 `patch-report.txt`，记录 profile、kernel series、origin/vendored SHA256、应用顺序和所有后置断言。
+8. 最终生成 `patch-report.txt`，记录 profile、kernel series、provider/origin commit、每个物化 patch 的 SHA256/安装顺序和所有后置断言。
 
 生产补丁路径只有这个小型、可审计的 applicator 与仓库内 series。
 
@@ -385,7 +405,7 @@ apply-source-lock-artifacts.sh <openwrt-root> <source-lock.json> <report-json>
   - firewall3/iptables 必选
   - firewall4/nftables 必须不存在
   - target、image、CPU flags 与 profile 契约相符
-  - target 稳定内核系列与 source-lock、BBRv3 versioned series 相符
+  - target 稳定内核系列与 source-lock、BBRv3 materialized port 相符
   - `kmod-tcp-bbr`、`kmod-sched` 和 TurboACC BBR CCA dependency 存在；内核源码后置断言为 BBRv3
 
 ### 7.6 Artifact verifier
@@ -418,13 +438,15 @@ verify-firmware-artifacts.sh <profile> <target-directory> <source-lock.json>
 
 ```mermaid
 flowchart LR
-    U["远程 refs + release 元数据"] --> S["resolve-source-lock"]
+    U["远程 refs + release 元数据 + BBRv3 providers"] --> S["resolve-source-lock"]
     S --> L["source-lock.json"]
+    L --> Z["materialize + kernel clean-apply"]
     C["common profile"] --> R["render-profile"]
     D["device profile"] --> R
     L --> B["locked source checkout"]
     L --> O["apply-source-lock-artifacts"]
-    P["common/device + versioned kernel series"] --> A["apply-profile-patches"]
+    P["common/device repository series"] --> A["apply-profile-patches"]
+    Z --> A
     B --> O
     O --> A
     L --> A
@@ -440,10 +462,10 @@ flowchart LR
 
 复用规则：
 
-- source ref 与受控 release 解析只属于 `resolve-source-lock.sh`。
+- source ref、受控 release 与 BBRv3 provider 解析/物化只属于 `resolve-source-lock.sh`。
 - profile 合并只属于 `render-profile.sh`。
 - 锁定 package 版本/URL/hash 的机械写入只属于 `apply-source-lock-artifacts.sh`。
-- 行为性源码变更只属于 `apply-profile-patches.sh` 和仓库内 `series`；BBRv3 的 kernel-series 选择只由 source-lock 驱动。
+- 行为性源码变更只属于 `apply-profile-patches.sh`、仓库内 common/device `series` 和 source-lock 物化的 BBRv3 port；BBRv3 的 provider/kernel-series 选择只由 resolver 驱动。
 - Kconfig/package/target 边界只属于 contract checkers。
 - 成品身份收集只属于 `collect-build-provenance.sh`，校验只属于 artifact verifier。
 - workflow 只编排这些接口，不内联第二份业务判断。
@@ -452,7 +474,8 @@ flowchart LR
 
 | 设置 | 所有者 |
 |---|---|
-| BBRv3 内核实现与版本适配 | `patchsets/common/kernel/<series>` + source-lock + patch contract |
+| BBRv3 provider 策略 | `patchsets/common/kernel/bbr3-sources.json` |
+| BBRv3 本轮内核实现与版本适配 | source-lock JSON + 同 artifact 内物化 patch + clean-apply/patch contract |
 | BBRv3 与 `fq` 模块是否进入固件 | common profile 的 `kmod-tcp-bbr`/`kmod-sched` Kconfig/package contract |
 | TurboACC 首次运行 CCA | `zz-common-turboacc` 在确认 module version `3` 后一次性设为 `bbr`，并写入完成标记 |
 | TCP CCA、software flow offload 后续运行值 | TurboACC 的 UCI/init |
@@ -464,7 +487,7 @@ flowchart LR
 | 时区/NTP | `90-common-system` |
 | DNS 包与依赖是否进入固件 | common profile 的 Kconfig/package contract |
 | DNS listener、端口、上游、规则和凭据 | 用户运行时 UCI/YAML；构建只校验包和接口兼容性 |
-| DHCPv4 / RA-DHCPv6 | dnsmasq / odhcpd，由 `90-common-network` 配置 |
+| DHCPv4 / RA-DHCPv6 | dnsmasq / odhcpd；`90-common-network` 写入用户明确指定的 `.32/232` 与 IPv6 relay 产品默认 |
 
 命名统一使用 `common`、`r4s`、`x86-n5105-pve`；文件名前缀 `90-` 表示 common、`91-` 表示设备层。`zz-` 只用于必须在上游 package uci-defaults 之后运行的一次性初始化，本方案仅有 `zz-common-turboacc`。不存在 `x86` 兼容别名、`sbwml-*` 生产 fallback 或多套 config renderer。
 
@@ -549,18 +572,18 @@ CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy=y
 
 两个设备都由 common 显式选择并要求 `kmod-tcp-bbr`，但该包在版本化 common 内核 patch 应用后承载的是 BBRv3。这里有意保持 Lean 的 package symbol、`tcp_bbr.ko` 模块名和 `bbr` 运行名不变：Google BBRv3 本身仍注册为 `bbr`，TurboACC 也已经依赖 `kmod-tcp-bbr`。算法代际不从包名猜测，而由 source-lock、patch hash、源码中的 `BBR_VERSION=3` 和模块 `version=3` 共同证明；因此不需要 fork `netsupport.mk` 或修改 TurboACC 依赖。
 
-当前审计快照中，R4S 与 x86 target 的默认稳定内核均为 Linux 6.12，精确版本为 6.12.95。当前 common 映射固定为：
+当前审计快照中，R4S 与 x86 target 的默认稳定内核均为 Linux 6.12。审计时 Google `v3` HEAD 为 `90210de4...`，CachyOS 当前 `6.12/0002-bbr3.patch` 的内容 SHA256 为 `15d1563...`；这两个值只证明设计基线，生产不永久固定它们。动态映射规则为：
 
-| 项目 | 固定值与门禁 |
+| 项目 | 动态策略与门禁 |
 |---|---|
-| 权威算法 | `google/bbr@90210de4b779d40496dee0b89081780eeddf2a60`，官方源码声明 `BBR_VERSION=3` |
-| Linux 6.12 适配 | `CachyOS/kernel-patches@c9ed808e86cc1f5fafdbe208627533ee10499b5b` 的 `6.12/0002-bbr3.patch` |
-| 规范化 SHA256 | `15d1563b4696ee35455f02b21fad0508fb77e0364f8dd1f48e0e82671dd05299` |
-| 仓库路径 | `patchsets/common/kernel/6.12/0001-bbrv3.patch`，内容 hash 必须与上项一致 |
-| 双平台适用性 | patch 对 Linux 6.12.95 `git apply --check` 通过；审计 Lean generic、rockchip 和 x86 的 6.12 patch 后，与其涉及的 16 个 TCP-core 文件没有路径重叠 |
+| 权威算法观察 | 每轮解析 `google/bbr` 的 `v3` HEAD；身份断言固定为源码 `BBR_VERSION=3`、module version `3`、运行名 `bbr` |
+| 单文件适配 provider | 每轮解析 `CachyOS/kernel-patches@master`，查找 `<series>/0002-bbr3.patch` |
+| 多文件适配 provider | 前者不提供当前 series 时，每轮解析 `sbwml/r4s_build_script@master`，查找 `openwrt/patch/kernel-<series>/bbr3/*.patch` 并保持文件顺序；不执行仓库脚本 |
+| 规范化 SHA256 | resolver 对每个 commit-addressed patch 计算；hash、URL、artifact path 和安装顺序进入本轮 source-lock digest |
+| 双平台适用性 | prepare 对精确 `kernel_version` 顺序 clean-apply；两个 profile 同 series 时复用同一物化 port，任一 hunk 不兼容即不启动 matrix |
 | 运行时身份 | `/sys/module/tcp_bbr/version` 必须为 `3`；available/current CCA 仍显示 `bbr` |
 
-sbwml 的公开 Linux 6.18 实现同样表明 BBRv3 需要一组 TCP-core patch，而不是单独拷贝 `tcp_bbr.c`。它作为 master 将来把稳定内核提升到 6.18 时的适配审计来源；每次内核系列切换仍要新建对应 versioned series 并完成双平台编译/真机门禁，不能把 6.18 patch 套到 6.12，也不能为了 BBRv3 提前启用 testing kernel：
+sbwml 的公开 Linux 6.18 实现同样表明 BBRv3 需要一组 TCP-core patch，而不是单独拷贝 `tcp_bbr.c`。它作为动态多文件 provider，使 Lean 稳定内核切换到受支持 series 时不需要先把 patch 复制进本仓库；但每轮仍必须完成精确内核 apply 和双平台门禁，不能把 6.18 patch 套到 6.12，也不能为了 BBRv3 提前启用 testing kernel：
 
 - <https://github.com/google/bbr/blob/90210de4b779d40496dee0b89081780eeddf2a60/README.md>
 - <https://github.com/google/bbr/blob/90210de4b779d40496dee0b89081780eeddf2a60/net/ipv4/tcp_bbr.c>
@@ -575,12 +598,12 @@ BBRv3 作用于路由器本机发起或终止的 TCP；PassWall/Xray 建立的�
 
 BBRv3 不依赖 ECN 才能工作。Google 的 `ecn_low` 只适合已知使用低阈值 ECN 且 ACK 提供精确 ECN 反馈的路径；本方案不对默认路由全局标记 `ecn_low`，也不覆盖 Lean 的 `tcp_ecn` 默认值。以后只有运营商或隧道明确提供 L4S/DCTCP 类语义时，才按 route 做运行时单变量测试。
 
-common network overlay 只设置共享产品默认值：
+common network overlay 只设置用户明确指定的共享产品默认值：
 
 - LAN `192.168.2.1/24`
-- dnsmasq 拥有 IPv4 DHCP；LAN 地址池从 `.100` 开始、最多 150 个租约，客户端 DNS 指向路由器
+- dnsmasq 拥有 IPv4 DHCP；LAN 地址池从 `.32` 开始、`limit=232`、租期 12 小时，客户端 DNS 指向路由器
 - WAN 首次启动使用 DHCP，PPPoE 由 LuCI 配置且不在固件中嵌入账号
-- WAN6 使用 DHCPv6 client；odhcpd 拥有 LAN RA/DHCPv6
+- WAN6 使用 DHCPv6 client；按用户常用配置保持 LAN `ra=server`，将 LAN DHCPv6/NDP 设为 relay，并将 WAN DHCPv6/NDP/RA 设为 relay master
 - 不直接写 `eth0`/`eth1`
 
 R4S 保留 Lean native 的 `eth1=LAN, eth0=WAN` 映射；N5105 设备 overlay 通过 `ethtool -i`/sysfs 识别 `virtio_net=LAN, igc=WAN`。因此删除 `diy-part2.sh` 中对 `config_generate` 的全局 `sed`，避免 master 上游文件变化或接口枚举变化时静默改错。
@@ -676,6 +699,8 @@ CONFIG_ZLIB_OPTIMIZE_SPEED=y
 ```
 
 GCC 15 是 sbwml 默认选择，但这里不使用其外部预编译工具链；由同一份、已锁定 SHA 的 Lean 源码在 CI 内构建。Lean 审计快照原生声明 GCC 15.2 及下载 hash，因此不需要工具链移植：
+
+Lean master 当前仍携带 `libsepol 3.3`。GCC 15 默认切换到 GNU C23 后，C23 关键字 `bool` 与该旧源码的结构体成员同名，即使固件不安装 SELinux，构建依赖图也会编译该库并失败。common 补丁只为这个包追加 `TARGET_CFLAGS += -std=gnu17`，保留其原始语言语义；不降低全局 GCC、不关闭错误检查，也不影响其他包使用 GCC 15。补丁通过统一 `patchsets/common/series` clean-apply，若 Lean 改变相应 Makefile 则明确失败。
 
 - <https://github.com/coolsnowwolf/lede/blob/6c92c15df3dce19c73eb7d986f48cf6b2304306f/toolchain/gcc/Config.in>
 - <https://github.com/coolsnowwolf/lede/blob/6c92c15df3dce19c73eb7d986f48cf6b2304306f/toolchain/gcc/Config.version>
@@ -1042,7 +1067,7 @@ PVE 侧要求：
 | Linux 6.18 | 生产排除 | Lean 两个 target 都原生支持但标为 testing；生产跟随默认稳定内核 |
 | 私有 Rockchip/generic tree | 排除 | 无法公开还原；其 25.12 generic patch 对审计 Lean 基线 15/15 无法直接应用 |
 | 全部 kmod Makefile replacement | 排除 | 保持 Lean `KernelPackage/tcp-bbr` 与 TurboACC 依赖；算法代际由 versioned kernel patch 和 module version 证明 |
-| BBRv3 | 纳入并默认 | common 按稳定内核系列应用固定 SHA 的 TCP-core patch；两个平台共用 `kmod-tcp-bbr`/`bbr` 契约，模块必须报告 version `3`，后续 CCA 由 TurboACC/UCI 选择 |
+| BBRv3 | 纳入并默认 | common 按稳定内核系列动态解析最新兼容 TCP-core port，并在本轮 source-lock 固定逐 patch SHA；两个平台共用 `kmod-tcp-bbr`/`bbr` 契约，模块必须报告 version `3`，后续 CCA 由 TurboACC/UCI 选择 |
 | SFE/shortcut-fe/natflow | 排除 | 避免和 iptables fullcone、PassWall、软件 flow offload 叠加多条 fast path |
 | software flow offload | 能力纳入、运行时管理 | 保持上游 TurboACC 配置接口；用户常用配置启用软件路径、关闭硬件路径，并以 PassWall/nlbwmon 真机验收决定最终运行值 |
 | BCM/nft fullcone replacement | 排除 | 固定使用 Lean firewall3 的 `kmod-ipt-fullconenat` |
@@ -1185,7 +1210,7 @@ flowchart TD
 - `cancel-in-progress: false`，新 run 不取消正在生成可发布双平台集合的旧 run
 - build job 只有 `contents: read`
 - publish/release-verify/publish-final 才获得所需的最小 `contents: write`
-- 所有 action 使用官方当前稳定且适配 GitHub-hosted runner 的 major，并固定完整 commit SHA；`.github/actions.lock.json` 与 workflow 引用必须一致，已弃用的 Node runtime 告警视为维护失败
+- 所有复用 action 必须来自官方 `actions/*` 组织并使用 `@main`；contract 拒绝其他 owner、tag、major tag 和裸 SHA。这样按用户选择直接跟踪最新默认分支，代价是单次执行无法把 action 代码完全冻结，任何上游 runtime/行为变化会直接进入下一轮构建
 
 每个 build runner 首先生成 `runner-report.txt`：
 
@@ -1205,15 +1230,15 @@ cc --version || true
 - checkout 当前仓库实际触发的 commit，不强制 checkout `master`
 - 校验 profile 合同
 - 解析所有远程 ref 与 HAProxy/AdGuardHome/GeoIP/Geosite release
-- 从锁定 Lean commit 解析两个 target 的稳定 `KERNEL_PATCHVER`，校验 BBRv3 versioned series、provenance 和 SHA256
-- 生成 `source-lock.json`
+- 从锁定 Lean commit 解析两个 target 的稳定 `KERNEL_PATCHVER`，解析最新兼容 BBRv3 provider commit 与 patch 清单
+- 生成 `source-lock.json`，物化 BBRv3 patch，逐文件验 SHA，并对精确 Linux 版本顺序 clean-apply
 - 输出 source-lock digest
 
 同一 prepare job 还生成：
 
 - `profile-digests.json`
 - `patch-digests.json`
-- action SHA 清单
+- action `main` ref 与 prepare 观察到的 HEAD SHA 清单
 - workflow/repository commit
 
 这些内容一并进入 provenance，build job 不再自行解析任何浮动 ref 或 `latest` URL。
@@ -1324,10 +1349,10 @@ release-verify job 从 draft Release 重新下载所有资产，执行 `sha256su
 |---|---|---|---|---|
 | 1 | 当前双平台配置错误消失 | `profiles/common/config.seed`, `required-packages.txt` | 修 miniupnpd provider，删除不存在的 AdGuard 翻译 symbol | 两个 profile 的 seed check 无 mismatch |
 | 2 | 配置模型无隐式冲突 | `scripts/render-profile.sh`, `check-profile-contract.sh` | 增加 symbol、provider、required/forbidden 冲突检查 | 人工制造冲突时检查必须失败 |
-| 3 | 最新源码与产物可追溯 | `resolve-source-lock.sh`, `update-checker.yml`, builder workflow | 解析所有 master/main SHA，以及 HAProxy LTS、AdGuardHome stable、GeoIP/Geosite 最新 release 的精确版本/URL/hash | 同一 lock 重读结果不变；任一 ref/release 变化产生新 digest 并触发双平台 |
-| 4 | 最新 package metadata 与 BBRv3 内核输入可审计 | `apply-source-lock-artifacts.sh`, `apply-profile-patches.sh`, `diy-part2.sh`, `patchsets/**` | 由 source-lock 写入并验证 HAProxy/AdGuardHome/GeoIP/Geosite metadata；按 profile 稳定内核系列选择固定 SHA 的 BBRv3 port | 无 `PKG_HASH:=skip`/`latest/download`；定向 download、override report、含 BBRv3 provenance 的 patch report 完整 |
-| 5 | common 工具链和库优化统一 | `profiles/common/config.seed` | Lean 原生 GCC15、ccache/log/SBOM、OpenSSL ASM/speed、zlib speed；显式关闭 LTO/GC/Mold | symbols 经 defconfig 保持，toolchain 报告为 GCC 15.2 |
-| 6 | 不再继承危险默认设置 | `profiles/*/forbidden-packages.txt`, `profiles/*/files` | 禁用 `default-settings`，以窄 UCI overlay 实现时区/NTP/设备设置 | manifest 无 default-settings，防火墙 input 未被改成 ACCEPT，无固定 root 密码 |
+| 3 | 最新源码与产物可追溯 | `resolve-source-lock.sh`, `update-checker.yml`, builder workflow | 解析所有 master/main SHA，以及 HAProxy LTS、AdGuardHome stable、GeoIP/Geosite 最新 release、Google BBRv3 HEAD 与兼容 port provider 的精确 commit/URL/hash | 同一 lock 重读结果不变；任一 ref/release/action-observed-head/BBRv3 patch 变化产生新 digest 并触发双平台 |
+| 4 | 最新 package metadata 与 BBRv3 内核输入可审计 | `apply-source-lock-artifacts.sh`, `apply-profile-patches.sh`, `diy-part2.sh`, `patchsets/common/kernel/bbr3-sources.json` | 由 source-lock 写入并验证 package metadata；按 profile 稳定内核系列动态解析、物化并 clean-apply 最新兼容 BBRv3 port | 无 `PKG_HASH:=skip`/`latest/download`；BBRv3 每文件 immutable URL/hash/顺序完整；定向 download、override report、patch report 完整 |
+| 5 | common 工具链和库优化统一 | `profiles/common/config.seed`, `patchsets/common/0001-libsepol-build-as-gnu17-with-gcc15.patch` | Lean 原生 GCC15、ccache/log/SBOM、OpenSSL ASM/speed、zlib speed；仅让旧 `libsepol 3.3` 保持 GNU17；显式关闭 LTO/GC/Mold | symbols 经 defconfig 保持，`libsepol` 编译通过，toolchain 报告为 GCC 15.2 |
+| 6 | 不再继承危险默认设置 | `profiles/*/forbidden-packages.txt`, `profiles/*/files` | 禁用 `default-settings`，以窄 UCI overlay 实现时区/NTP、DHCP `.32/232`、IPv6 relay 与设备设置 | manifest 无 default-settings，网络默认 fixture 精确，防火墙 input 未被改成 ACCEPT，无固定 root 密码 |
 | 7 | BBRv3 成为可回退的 common 默认 | `patchsets/common/kernel/**`, `profiles/common/config.seed`, `required-packages.txt`, `files/etc/uci-defaults/zz-common-turboacc` | 两个平台应用同一内核系列的 BBRv3 port，显式编译 `kmod-tcp-bbr` 和 `kmod-sched`；上游 TurboACC 探测完成后、确认 module version `3` 与 `sch_fq` provider 再一次性选择 `bbr`，并保护后续用户设置；software flow on、hardware flow off | 双平台 build module version 为 `3` 且含 `sch_fq.ko`；三次冷启动 UCI/sysctl/firewall 一致，完成 BBRv3/cubic A/B 与 PassWall/nlbwmon 真机测试 |
 | 8 | DNS 组件齐全且不覆盖用户运行时配置 | `profiles/common/config.seed`, package contracts, `README.md` | 编译所需包，端口、上游、规则和凭据由设备 UCI/YAML 管理；确认上游 factory defaults 不争抢 53 | manifest 检查；新装默认服务检查；应用用户常用配置后按实际 UCI/YAML 做 `ss`、iptables redirect、逐跳查询和断环测试 |
 | 9 | R4S 为 RK3399 专用且不重复调优 | `profiles/r4s/**` | O2、ARMv8 crypto/CRC、A72/A53 tune、native boot/IRQ/r8168、512MiB LZ4 zram、无 irqbalance/RTL8152 | flags/manifest、CPU4/5 affinity、zram/温控检查 |
@@ -1363,8 +1388,10 @@ bash scripts/check-profile-contract.sh x86-n5105-pve
 - x86 的 autocore-x86/zram 是 forbidden
 - release fixture 能正确排除 prerelease、选择最新 LTS/stable，并拒绝缺失或非 SHA256 hash
 - artifact applicator 对三个 package provider、四个产物执行精确替换，面对多重匹配、未知字段、`skip` 或 lock 不完整时必须失败
-- resolver 解析出的每个 profile 稳定内核系列都有唯一 BBRv3 versioned series，且与 source-lock 一致
-- BBRv3 vendored patch SHA256 与 source-lock/origin 一致；所有 patch 能 `git apply --check`，且 `BBR_VERSION=3`、运行名 `bbr`、`MODULE_VERSION` 等后置断言通过
+- resolver 解析出的每个 profile 稳定内核系列都有唯一 BBRv3 provider/patch 清单，且与 materialized source-lock 一致
+- BBRv3 每个物化 patch SHA256 与 source-lock/origin 一致；按序对精确 Linux 源码 clean-apply，且 `BBR_VERSION=3`、运行名 `bbr`、`MODULE_VERSION` 等后置断言通过
+- `90-common-network` fixture 证明 DHCP `start=32`、`limit=232`、LAN DHCPv6/NDP relay 和 WAN relay master
+- workflow 中所有复用 action 都严格匹配 `actions/*@main`，没有第三方 action、tag 或固定 SHA
 
 ### 15.2 每个 profile 的 Kconfig 验证
 
@@ -1449,7 +1476,7 @@ sha256sum -c SHA256SUMS
 - `config.buildinfo` 中 CPU flags 符合 profile
 - `version.buildinfo`、`feeds.buildinfo`、原始 `sha256sums` 存在
 - source-lock、artifact-override-report、patch-report、SBOM、runner/toolchain report 存在
-- patch-report 证明 BBRv3 port 的 origin/vendored SHA256、kernel series 和 build module version
+- patch-report 证明 BBRv3 port 的 provider/origin commit、materialized patch SHA256、kernel series 和 build module version
 - artifact verifier 能从 manifest 证明无 `default-settings`
 - Release draft 资产重新下载后仍通过同一组 SHA 和契约检查
 
@@ -1615,7 +1642,7 @@ openwrt-<YYYY.MM.DD-HHMMSS>-<lede-short-sha>
 - feed commits
 - HAProxy、AdGuardHome、GeoIP、Geosite 的锁定版本与 SHA256
 - R4S/x86 kernel version
-- BBRv3 algorithm commit、kernel-series port SHA256 和双平台 module version
+- BBRv3 本轮观察到的 algorithm HEAD、provider commit、逐 patch SHA256 和双平台 module version
 - GCC/binutils/musl identity
 - profile CPU flags
 - R4S U-Boot/rkbin/BL31 identity
@@ -1640,7 +1667,7 @@ openwrt-<YYYY.MM.DD-HHMMSS>-<lede-short-sha>
 - R4S 与 x86-n5105-pve 在同一 source-lock 下完整编译成功
 - source-lock 中的 HAProxy 最新 LTS、AdGuardHome 最新 stable 和 GeoIP/Geosite 最新 release 均通过 hash 与 package metadata 验证
 - 两个平台使用 target 默认稳定内核、GCC 15，并通过各自最终 config contract
-- 两个平台按各自稳定内核系列应用 source-lock 指定的 BBRv3 port，`tcp_bbr.ko` 与真机均报告 module version `3`，并在构建与真机分别证明 `sch_fq.ko`/`sch_fq` 存在
+- 两个平台按各自稳定内核系列应用 source-lock 动态解析并物化的 BBRv3 port，`tcp_bbr.ko` 与真机均报告 module version `3`，并在构建与真机分别证明 `sch_fq.ko`/`sch_fq` 存在
 - 两套产物通过 artifact verifier
 - 一个双设备 Release 成功创建并可重新下载校验
 - 失败注入证明不会误发布或误删旧 Release
@@ -1658,7 +1685,7 @@ openwrt-<YYYY.MM.DD-HHMMSS>-<lede-short-sha>
 | 最新 HAProxy/AdGuardHome 与当前 feed recipe 暂不兼容 | 严格失败并修 recipe；必要时 workflow_dispatch 指定精确已知版本并重新生成 lock，不自动回退 |
 | release 元数据或资产不完整 | HAProxy 官方 SHA256、GitHub asset digest、发布的 checksum 交叉校验；任一缺失或不一致即失败 |
 | AdGuardHome 设备自更新破坏 OPKG/回滚 | 保持非特权 jail 和 `--no-check-update`；由 update checker 触发新的可验证双平台固件 |
-| master 提升稳定内核后没有对应 BBRv3 port | resolver 在 matrix 前因缺少 `patchsets/common/kernel/<series>` 失败；完成新系列 apply、双平台编译和真机门禁后再发布，不切 testing kernel、不回退算法代际 |
+| master 提升稳定内核后 provider 尚无对应 BBRv3 port | resolver 按策略查询受信任单文件/多文件 provider，并在 matrix 前明确失败；provider 发布兼容 port 后下一轮自动吸收并执行 clean-apply，不切 testing kernel、不回退算法代际 |
 | BBRv3 patch 已应用但模块身份不符 | 源码后置断言、build `modinfo version=3`、真机 `/sys/module/tcp_bbr/version=3` 三重门禁 |
 | `default_qdisc=fq` 但固件缺少 provider | common 显式选择 `kmod-sched`；build 检查 `sch_fq.ko`，真机检查 `/sys/module/sch_fq` 与实际 qdisc |
 | GCC 15 对个别 master package 暴露新错误 | 严格失败并修根因；不下载外部 toolchain、不用 GCC13 自动 fallback |
@@ -1672,6 +1699,7 @@ openwrt-<YYYY.MM.DD-HHMMSS>-<lede-short-sha>
 | default-settings 被 target 默认重新选入 | config 显式禁用 + forbidden + manifest 三重门禁 |
 | feed 同名包覆盖 | feed ownership contract，冲突立即失败 |
 | 追最新导致构建中输入变化 | `latest` 只在 prepare 解析，build 只使用 source-lock 的不可变 URL 与 SHA256 |
+| `actions/*@main` 在运行间或运行中漂移 | 这是用户明确选择的最新跟踪策略；只允许官方 `actions/*` owner，prepare 记录观察 HEAD，任何 runtime/行为不兼容直接使工作流失败，不把观察 SHA 冒充执行锁 |
 | GitHub runner 磁盘不足 | 固定 runner、白名单本地清理、45GiB 前置门槛和磁盘报告 |
 | ccache/dl 污染 | 分层、严格 identity、OpenWrt hash 复验、只信任维护分支 |
 | 发布步骤在失败后继续 | draft transaction，严格依赖两个 build/aggregate/re-download verification |
@@ -1686,7 +1714,8 @@ openwrt-<YYYY.MM.DD-HHMMSS>-<lede-short-sha>
 - 保持 firewall3/iptables
 - 只包含明确选择的应用和硬件支持
 - R4S 与 N5105 共用共同配置
-- 两个平台按稳定内核系列共用 BBRv3 patch，显式编译 `kmod-tcp-bbr` 与 `kmod-sched`，首次运行默认 `bbr`/`fq` 且允许通过 TurboACC 回退 cubic
+- 两个平台按稳定内核系列动态解析并共用最新兼容 BBRv3 port，显式编译 `kmod-tcp-bbr` 与 `kmod-sched`，首次运行默认 `bbr`/`fq` 且允许通过 TurboACC 回退 cubic
+- 官方 GitHub Actions 直接跟踪 `actions/*@main`
 - 两台设备分别采用 CPU、驱动、镜像、内核和运行时优化
 - 对 sbwml R4S/工具链/执行层逐项给出纳入、替代或排除结论
 - 保留 Lean 更新的 R4S boot、IRQ、SD、LED、r8168 和稳定内核实现
