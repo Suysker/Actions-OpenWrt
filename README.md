@@ -49,7 +49,7 @@ profiles/x86-n5105-pve/      N5105 PVE target、CPU flags、硬件包和运行�
 - 共享应用只修改 `profiles/common/config.seed`。
 - 设备 target、镜像、CPU flags、驱动和设备调优只修改对应设备的 `config.seed`。
 - 每个必需包或 Kconfig 进入 `required-packages.txt`。
-- 不允许进入 manifest 的包写入 `forbidden-packages.txt`；普通精简不删除源码。
+- 不允许进入 manifest 的包写入 `forbidden-packages.txt`；其中 `exact:` 规则会自动成为 Kconfig 负选择，并在 `make defconfig` 后及最终 manifest 再次校验，普通精简不删除源码。
 - rootfs 文件放在对应 `files/`。common 与设备层同路径会直接失败，不允许静默覆盖。
 - 同一 Kconfig symbol 或 required/forbidden 规则不能同时归 common 与设备层所有。
 

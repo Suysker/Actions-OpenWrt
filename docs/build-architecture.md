@@ -320,8 +320,9 @@ render-profile.sh files     <profile> <output-directory>
 1. `common` 先于设备 profile。
 2. config 中同一个 symbol 不得在 common 和设备层重复出现。
 3. required/forbidden 中重复规则视为错误，不静默去重。
-4. required 和 forbidden 指向同一 package/config 时立即失败。
-5. rootfs files 默认不允许同路径覆盖；当前方案不需要 override 机制。
+4. `exact:` forbidden package 自动渲染为 `# CONFIG_PACKAGE_<name> is not set`；seed 若正向选择同一包立即失败，随后仍由 defconfig 和 manifest 门禁复验。
+5. required 和 forbidden 指向同一 package/config 时立即失败。
+6. rootfs files 默认不允许同路径覆盖；当前方案不需要 override 机制。
 
 ### 7.2 Source resolver
 

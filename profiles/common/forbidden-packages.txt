@@ -53,6 +53,8 @@ regex:^kmod-nft-
 exact:luci-app-ddns
 exact:ddns-scripts
 exact:ddns-scripts-services
+exact:ddns-scripts_aliyun
+exact:ddns-scripts_dnspod
 regex:^ddns-scripts_
 
 # Alternative proxy and fast-path stacks are not selected.

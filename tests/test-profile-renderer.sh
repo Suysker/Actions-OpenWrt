@@ -13,6 +13,8 @@ for profile in "${profiles[@]}"; do
     > "$tmpdir/$profile.contract.txt"
   bash "$repo_root/scripts/render-profile.sh" config "$profile" "$tmpdir/$profile.config"
   grep -qx 'CONFIG_LUCI_LANG_zh_Hans=y' "$tmpdir/$profile.config"
+  grep -qx '# CONFIG_PACKAGE_luci-app-ssr-plus is not set' "$tmpdir/$profile.config"
+  grep -qx '# CONFIG_PACKAGE_block-mount is not set' "$tmpdir/$profile.config"
   if grep -q '^CONFIG_PACKAGE_luci-i18n-.*-zh-cn=y$' "$tmpdir/$profile.config"; then
     echo "renderer emitted a hidden per-package LuCI translation seed for $profile" >&2
     exit 1
@@ -31,6 +33,18 @@ if PROFILE_ROOT_OVERRIDE="$tmpdir/profiles" \
   exit 1
 fi
 grep -q 'both own entries' "$tmpdir/collision.out"
+
+# An exact-forbidden package must never be selected by either seed layer.
+rm -rf "$tmpdir/profiles"
+cp -a "$repo_root/profiles" "$tmpdir/profiles"
+printf '\nCONFIG_PACKAGE_luci-app-ssr-plus=y\n' >> "$tmpdir/profiles/common/config.seed"
+if PROFILE_ROOT_OVERRIDE="$tmpdir/profiles" \
+  bash "$repo_root/scripts/render-profile.sh" config r4s "$tmpdir/forbidden.config" \
+  >"$tmpdir/forbidden.out" 2>&1; then
+  echo "renderer accepted an exact-forbidden selected package" >&2
+  exit 1
+fi
+grep -q 'Forbidden exact package is selected' "$tmpdir/forbidden.out"
 
 # A rootfs collision must be rejected instead of silently overriding common.
 rm -rf "$tmpdir/profiles"
