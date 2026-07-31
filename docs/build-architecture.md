@@ -101,10 +101,9 @@ missing selected symbol: CONFIG_PACKAGE_luci-i18n-adguardhome-zh-cn=y
 1. `miniupnpd` 是 provider 名，不是当前 Lean feed 的实际 Kconfig 包名。
    - `CONFIG_PACKAGE_miniupnpd=y` 改为 `CONFIG_PACKAGE_miniupnpd-iptables=y`
    - `package:miniupnpd` 改为 `package:miniupnpd-iptables`
-2. `luci-app-adguardhome` 已内置 `adguardhome.zh-cn.lmo`。
-   - 删除不存在的 `CONFIG_PACKAGE_luci-i18n-adguardhome-zh-cn=y`
-   - 不添加任何替代翻译包
-3. 保留严格的 seed drift 检查。
+2. `luci-app-adguardhome` 已内置 `adguardhome.zh-cn.lmo`，不需要独立翻译包。
+3. 当前 LuCI 把各应用的 `luci-i18n-*-zh-cn` 定义为隐藏生成包；common 只选择公开入口 `CONFIG_LUCI_LANG_zh_Hans=y`，由 Kconfig 为已选应用生成对应翻译。
+4. 保留严格的 seed drift 检查。
    - 不允许通过放宽 `check-seed-config.sh` 掩盖上游 Kconfig 漂移
 
 同时必须修复以下 CI 根因：
@@ -510,7 +509,7 @@ common 层保留：
 - ZeroTier/WireGuard/bonding
 - firewall4/nftables/natflow
 
-该 allowlist 已再次对照历史 `R4S`、`X86` 分支：两边共同使用的 LuCI、PassWall、DNS、DDNS、监控和维护工具进入 common；BBRv3 作为共享内核能力进入 common；cpufreq/PWM fan/zram 与 VirtIO/igc 等硬件差异留在设备层。翻译包只选择当前 feed 实际存在的一个命名，不同时保留 `zh_Hans`/`zh-cn` 历史别名。
+该 allowlist 已再次对照历史 `R4S`、`X86` 分支：两边共同使用的 LuCI、PassWall、DNS、DDNS、监控和维护工具进入 common；BBRv3 作为共享内核能力进入 common；cpufreq/PWM fan/zram 与 VirtIO/igc 等硬件差异留在设备层。简体中文由 common 的公开语言入口 `CONFIG_LUCI_LANG_zh_Hans=y` 统一选择，各应用的隐藏翻译包交给当前 LuCI Kconfig 生成。
 
 ### 8.2 网络栈
 
@@ -1183,7 +1182,7 @@ flowchart TD
 - `cancel-in-progress: false`，新 run 不取消正在生成可发布双平台集合的旧 run
 - build job 只有 `contents: read`
 - publish/release-verify/publish-final 才获得所需的最小 `contents: write`
-- 所有第三方 action 固定完整 commit SHA
+- 所有 action 使用官方当前稳定且适配 GitHub-hosted runner 的 major，并固定完整 commit SHA；`.github/actions.lock.json` 与 workflow 引用必须一致，已弃用的 Node runtime 告警视为维护失败
 
 每个 build runner 首先生成 `runner-report.txt`：
 

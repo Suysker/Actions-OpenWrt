@@ -10,6 +10,7 @@ config:CONFIG_DOWNLOAD_CHECK_CERTIFICATE
 config:CONFIG_OPENSSL_OPTIMIZE_SPEED
 config:CONFIG_OPENSSL_WITH_ASM
 config:CONFIG_ZLIB_OPTIMIZE_SPEED
+config:CONFIG_LUCI_LANG_zh_Hans
 
 package:luci
 package:luci-app-firewall

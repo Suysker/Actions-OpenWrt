@@ -11,6 +11,7 @@
 - 配置包规则：`default-settings` 一类名称不能被视为无害基础包。选择前必须审读全部首次启动副作用；软件源、固定密码、签名、防火墙、OTA 和 steering 等跨域行为应拆成项目自己的窄 overlay，并把原整包加入 forbidden/manifest 契约。
 - 上游移植规则：先比较当前基座，再判断“版本替换”是否真是升级。sbwml 的 boot chain 比当前 Lean 更旧，r8168 的小版本 bump也缺少当前问题证据；已有更新、依赖更完整的 native 实现应保留。
 - Kconfig 规则：第三方 config 中看似合理的 symbol 也可能无效。当前 R4S zram 必须同时选择 `CONFIG_KERNEL_ZRAM_BACKEND_LZ4` 和 `CONFIG_KERNEL_ZRAM_DEF_COMP_LZ4`；N5105 的 `CONFIG_VIRTIO_SUPPORT` 则是不可见的 target 内部 symbol，不能写进 seed，应该检查 x86 kernel config 中真实 built-in 的 `CONFIG_VIRTIO_NET`/`CONFIG_SCSI_VIRTIO`。所有优化 symbol 必须以当前 source-lock 执行 `make defconfig` 后证明仍然存在。
+- LuCI 翻译规则：当前 LuCI 的 `luci-i18n-*-zh-cn` 是随应用生成的隐藏 package symbol，不能作为逐项 seed 输入；common 应选择公开的 `CONFIG_LUCI_LANG_zh_Hans=y`，再由 required manifest 和镜像清单验证实际翻译产物。遇到 seed drift 必须检查 symbol 的 prompt/default/dependency，不能把隐藏输出当作用户配置入口。
 - CPU 规则：微架构名不等于具体 SKU 的完整 ISA 合约。N5105 可以用 `-mtune=tremont` 做调度优化，但整机 ISA 使用可验证的 `x86-64-v2`；设备启动前必须验证 `-march` 所要求的 CPU features。
 - 网络队列规则：硬件/虚拟 multiqueue、RPS、手工 affinity 和 irqbalance 都会影响包落在哪个 CPU。每个平台只允许一套明确所有权：R4S 使用 native affinity + packet steering；N5105 使用 4 queues + irqbalance，并关闭 RPS。
 - DNS 组合规则：安装 dnsmasq、AdGuardHome、MosDNS、SmartDNS 和 PassWall 时，运行时必须能解释唯一的 LAN `:53` 有效入口、完整转发图和各层缓存行为；不强制所有服务只监听 loopback，也不擅自把用户的多级缓存改成单一所有者，但必须证明没有端口争用、WAN 暴露和可触发的查询环路。
@@ -23,3 +24,4 @@
 - Feed provider 规则：同一 package 同时存在于默认与自定义 feed 时，不能依赖 `feeds install -a` 的偶然遍历顺序。只有真实 provider 冲突才允许在锁定 feed checkout 中删除未选 source directory，随后必须重建相关 feed index，并用共享 provider contract 同时约束 selector、artifact applicator 和最终 profile checker。
 - 构建优化规则：运行性能优化、固件体积优化和链接速度优化必须分开评价。LTO/GC sections 是实验项，Mold 主要缩短链接时间；不能为了“全开”让持续 master 的生产构建积累单包 opt-out 和隐性 fallback。
 - CI 缓存规则：ccache、下载缓存和 toolchain 缓存必须分层。key 至少绑定架构、编译器、profile、patch 和 source-lock；不恢复 fork 缓存，不使用无完整 identity 的第三方预编译工具链。
+- Actions runtime 规则：固定完整 commit SHA 只能保证身份，不能保证所用 major 仍受 runner 支持。应从官方 `actions/*` release 选择当前稳定、无 runtime 弃用告警的 major，把精确 commit 同时写入 action lock 与全部 workflow，并由仓库合同检查二者一致；扫描器必须同时识别 YAML 的 `uses:` 映射行与 `- uses:` 行内列表形式。

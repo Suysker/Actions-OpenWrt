@@ -8,6 +8,7 @@ import importlib.util
 import json
 import pathlib
 import sys
+import tempfile
 
 root = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location("source_lock", root / "scripts/source_lock.py")
@@ -68,6 +69,23 @@ assert module.lock_digest(base) == module.lock_digest(changed_time)
 changed_source = json.loads(json.dumps(base))
 changed_source["openwrt"]["commit"] = "8" * 40
 assert module.lock_digest(base) != module.lock_digest(changed_source)
+
+module.validate_action_refs(
+    root / ".github/actions.lock.json",
+    sorted((root / ".github/workflows").glob("*.yml")),
+)
+with tempfile.TemporaryDirectory() as directory:
+    workflow = pathlib.Path(directory) / "invalid.yml"
+    workflow.write_text(
+        "steps:\n  - uses: actions/checkout@v7\n",
+        encoding="utf-8",
+    )
+    try:
+        module.validate_action_refs(root / ".github/actions.lock.json", [workflow])
+    except module.ResolutionError as exc:
+        assert "not pinned to a full commit SHA" in str(exc)
+    else:
+        raise AssertionError("mutable action ref was accepted")
 
 print("Source-lock resolver fixture tests passed.")
 PY

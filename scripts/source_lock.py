@@ -23,6 +23,7 @@ SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 FEED_RE = re.compile(r"^(src-git(?:-full)?)\s+([A-Za-z0-9_.-]+)\s+(\S+)$")
+ACTION_USE_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^@\s]+)@([^\s#]+)")
 
 
 class ResolutionError(RuntimeError):
@@ -529,6 +530,54 @@ def validate_lock(lock: dict[str, Any]) -> None:
     require_sha256(lock.get("patch_digest", ""), "patch digest")
 
 
+def validate_action_refs(
+    lock_path: pathlib.Path, workflow_paths: Iterable[pathlib.Path]
+) -> None:
+    try:
+        locked = json.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ResolutionError(f"cannot read action lock {lock_path}: {exc}") from exc
+    if not isinstance(locked, dict) or not locked:
+        raise ResolutionError("action lock must be a non-empty JSON object")
+
+    for name, value in locked.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise ResolutionError("action lock names and refs must be strings")
+        require_sha1(value, f"action {name}")
+
+    observed: set[str] = set()
+    for workflow_path in workflow_paths:
+        try:
+            lines = workflow_path.read_text(encoding="utf-8").splitlines()
+        except OSError as exc:
+            raise ResolutionError(f"cannot read workflow {workflow_path}: {exc}") from exc
+        for line_no, line in enumerate(lines, start=1):
+            match = ACTION_USE_RE.match(line)
+            if not match:
+                continue
+            name, ref = match.groups()
+            if name.startswith("./") or name.startswith("docker://"):
+                continue
+            observed.add(name)
+            if not SHA1_RE.fullmatch(ref):
+                raise ResolutionError(
+                    f"{workflow_path}:{line_no}: action {name} is not pinned to a full commit SHA"
+                )
+            expected = locked.get(name)
+            if expected is None:
+                raise ResolutionError(
+                    f"{workflow_path}:{line_no}: action {name} is absent from {lock_path}"
+                )
+            if ref != expected:
+                raise ResolutionError(
+                    f"{workflow_path}:{line_no}: action {name} uses {ref}, lock requires {expected}"
+                )
+
+    unused = sorted(set(locked) - observed)
+    if unused:
+        raise ResolutionError(f"action lock contains unused entries: {', '.join(unused)}")
+
+
 def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
     if not profiles:
         raise ResolutionError("at least one profile is required")
@@ -719,7 +768,8 @@ def parse_profiles(raw: str) -> list[str]:
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(
-            "Usage: source_lock.py resolve <profiles> <output> | digest <lock> | compare <old> <new>",
+            "Usage: source_lock.py resolve <profiles> <output> | digest <lock> | "
+            "compare <old> <new> | validate-actions <action-lock> <workflow>...",
             file=sys.stderr,
         )
         return 2
@@ -748,6 +798,12 @@ def main(argv: list[str]) -> int:
             return 0
         print(f"changed {old_digest} -> {new_digest}")
         return 1
+    if command == "validate-actions" and len(argv) >= 4:
+        validate_action_refs(
+            pathlib.Path(argv[2]), (pathlib.Path(value) for value in argv[3:])
+        )
+        print("Action lock validation passed.")
+        return 0
     print("invalid source-lock command or arguments", file=sys.stderr)
     return 2
 

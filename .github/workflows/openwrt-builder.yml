@@ -52,7 +52,7 @@ jobs:
       source_digest: ${{ steps.lock.outputs.source_digest }}
     steps:
       - name: Checkout implementation
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Select profiles
         id: select
@@ -84,6 +84,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          bash scripts/resolve-source-lock.sh validate-actions \
+            .github/actions.lock.json .github/workflows/*.yml
           bash -n diy-part1.sh diy-part2.sh scripts/*.sh \
             profiles/common/files/etc/uci-defaults/* \
             profiles/r4s/files/etc/uci-defaults/* \
@@ -162,7 +164,7 @@ jobs:
           done
 
       - name: Upload immutable build inputs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: source-lock
           path: ${{ runner.temp }}/source-lock
@@ -188,10 +190,10 @@ jobs:
       CCACHE_MAXSIZE: 5G
     steps:
       - name: Checkout implementation
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Download immutable build inputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: source-lock
           path: source-input
@@ -257,7 +259,7 @@ jobs:
           mkdir -p "$OPENWRT_ROOT/dl" "$CCACHE_DIR"
 
       - name: Restore source downloads
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: /builder/openwrt/dl
           key: openwrt-dl-${{ runner.os }}-${{ needs.prepare.outputs.source_digest }}
@@ -265,7 +267,7 @@ jobs:
             openwrt-dl-${{ runner.os }}-
 
       - name: Restore profile ccache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: /builder/.ccache
           key: openwrt-ccache-${{ runner.os }}-gcc15-${{ matrix.profile }}-${{ steps.identity.outputs.profile_digest }}-${{ steps.identity.outputs.patch_digest }}-${{ needs.prepare.outputs.source_digest }}
@@ -389,7 +391,7 @@ jobs:
 
       - name: Upload diagnostics
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: diagnostics-${{ matrix.profile }}
           path: diagnostics/${{ matrix.profile }}
@@ -397,7 +399,7 @@ jobs:
           retention-days: 30
 
       - name: Upload verified firmware
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: firmware-${{ matrix.profile }}
           path: delivery/${{ matrix.profile }}
@@ -417,22 +419,22 @@ jobs:
       release_tag: ${{ steps.release.outputs.release_tag }}
     steps:
       - name: Checkout implementation
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Download source lock
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: source-lock
           path: source-input
 
       - name: Download R4S firmware
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: firmware-r4s
           path: aggregate/r4s
 
       - name: Download N5105 firmware
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: firmware-x86-n5105-pve
           path: aggregate/x86-n5105-pve
@@ -476,7 +478,7 @@ jobs:
           echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Upload aggregate transaction artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-transaction
           path: release-assets
@@ -493,7 +495,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout implementation
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Download every draft asset
         shell: bash

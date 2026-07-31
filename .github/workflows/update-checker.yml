@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout current default-branch implementation
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Resolve one dual-profile source lock
         id: lock
@@ -44,7 +44,7 @@ jobs:
 
       - name: Look up the exact lock fingerprint
         id: fingerprint
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .source-state
           key: source-lock-v1-${{ steps.lock.outputs.source_digest }}

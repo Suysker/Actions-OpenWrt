@@ -11,6 +11,12 @@ mapfile -t profiles < <(bash "$repo_root/scripts/render-profile.sh" list)
 for profile in "${profiles[@]}"; do
   bash "$repo_root/scripts/check-profile-contract.sh" "$profile" \
     > "$tmpdir/$profile.contract.txt"
+  bash "$repo_root/scripts/render-profile.sh" config "$profile" "$tmpdir/$profile.config"
+  grep -qx 'CONFIG_LUCI_LANG_zh_Hans=y' "$tmpdir/$profile.config"
+  if grep -q '^CONFIG_PACKAGE_luci-i18n-.*-zh-cn=y$' "$tmpdir/$profile.config"; then
+    echo "renderer emitted a hidden per-package LuCI translation seed for $profile" >&2
+    exit 1
+  fi
   bash "$repo_root/scripts/render-profile.sh" files "$profile" "$tmpdir/$profile-files"
   [ -f "$tmpdir/$profile-files/etc/uci-defaults/90-common-network" ]
 done
