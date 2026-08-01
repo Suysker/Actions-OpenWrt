@@ -5,7 +5,7 @@
 - NanoPi R4S：RK3399、原生 Lean 启动链与网口 IRQ 策略、ARMv8 CRC/crypto、R8168、PWM fan、512 MiB LZ4 zram。
 - N5105 PVE：`x86-64-v2 + mtune=tremont`、squashfs combined EFI、VirtIO NET/SCSI、I225/igc 直通、4 队列与 irqbalance。
 
-两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列动态解析的 BBRv3。Lean master 的 `libsepol` 仅在该包内保持 GNU17 兼容语义，不降低全局编译器；Go、`libtirpc`、`nlbwmon`、`libwebsockets` 与 GMP 从各自当轮锁定的 OpenWrt 官方 master 同步，仓库和 source→target 映射只在 common `source-overlays.json` 声明一次。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
+两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列动态解析的 BBRv3。Lean master 的 `libsepol` 仅在该包内保持 GNU17 兼容语义，不降低全局编译器；Go、`libtirpc`、`nlbwmon`、`libwebsockets`、`unzip` 与 GMP 从各自当轮锁定的 OpenWrt 官方 master 同步，仓库和 source→target 映射只在 common `source-overlays.json` 声明一次。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
 
 ## 构建模型
 

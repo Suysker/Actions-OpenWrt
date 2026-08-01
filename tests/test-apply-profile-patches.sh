@@ -57,6 +57,7 @@ lock = {
                 {"source": "libs/libtirpc", "target": "feeds/packages/libs/libtirpc"},
                 {"source": "libs/libwebsockets", "target": "feeds/packages/libs/libwebsockets"},
                 {"source": "net/nlbwmon", "target": "feeds/packages/net/nlbwmon"},
+                {"source": "utils/unzip", "target": "feeds/packages/utils/unzip"},
             ],
         },
     },

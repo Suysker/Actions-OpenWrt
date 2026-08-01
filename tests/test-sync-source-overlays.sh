@@ -14,12 +14,14 @@ mkdir -p \
   "$packages_origin/libs/libwebsockets" \
   "$packages_origin/net/nlbwmon" \
   "$packages_origin/net/unrelated" \
+  "$packages_origin/utils/unzip/patches" \
   "$core_origin/package/libs/gmp/patches" \
   "$core_origin/package/libs/unrelated" \
   "$openwrt/feeds/packages/lang/golang" \
   "$openwrt/feeds/packages/libs/libtirpc" \
   "$openwrt/feeds/packages/libs/libwebsockets" \
   "$openwrt/feeds/packages/net/nlbwmon" \
+  "$openwrt/feeds/packages/utils/unzip" \
   "$openwrt/package/libs/gmp"
 
 printf 'GO_DEFAULT_VERSION:=9.9.9\n' \
@@ -33,6 +35,10 @@ PKG_NAME:=nlbwmon
 PKG_SOURCE_VERSION:=ffffffffffffffffffffffffffffffffffffffff
 PKG_MIRROR_HASH:=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 EOF
+printf 'official-unzip\n' \
+  > "$packages_origin/utils/unzip/Makefile"
+printf 'canonical-gcc15-fix\n' \
+  > "$packages_origin/utils/unzip/patches/012-fix-gcc15-build.patch"
 printf 'must-not-be-copied\n' > "$packages_origin/net/unrelated/Makefile"
 printf 'official-gmp\n' > "$core_origin/package/libs/gmp/Makefile"
 printf 'canonical-c23-fix\n' \
@@ -43,6 +49,7 @@ printf 'old-go\n' > "$openwrt/feeds/packages/lang/golang/old"
 printf 'old-libtirpc\n' > "$openwrt/feeds/packages/libs/libtirpc/old"
 printf 'old-libwebsockets\n' > "$openwrt/feeds/packages/libs/libwebsockets/old"
 printf 'old-nlbwmon\n' > "$openwrt/feeds/packages/net/nlbwmon/old"
+printf 'old-unzip\n' > "$openwrt/feeds/packages/utils/unzip/old"
 printf 'old-gmp\n' > "$openwrt/package/libs/gmp/old"
 
 for origin in "$packages_origin" "$core_origin"; do
@@ -79,7 +86,8 @@ cat > "$lock" <<EOF
         {"source": "lang/golang", "target": "feeds/packages/lang/golang"},
         {"source": "libs/libtirpc", "target": "feeds/packages/libs/libtirpc"},
         {"source": "libs/libwebsockets", "target": "feeds/packages/libs/libwebsockets"},
-        {"source": "net/nlbwmon", "target": "feeds/packages/net/nlbwmon"}
+        {"source": "net/nlbwmon", "target": "feeds/packages/net/nlbwmon"},
+        {"source": "utils/unzip", "target": "feeds/packages/utils/unzip"}
       ]
     }
   }
@@ -106,6 +114,10 @@ grep -Fxq 'PKG_SOURCE_VERSION:=ffffffffffffffffffffffffffffffffffffffff' \
   "$openwrt/feeds/packages/net/nlbwmon/Makefile"
 grep -Eq '^PKG_MIRROR_HASH:=[0-9a-f]{64}$' \
   "$openwrt/feeds/packages/net/nlbwmon/Makefile"
+grep -Fxq 'official-unzip' \
+  "$openwrt/feeds/packages/utils/unzip/Makefile"
+grep -Fxq 'canonical-gcc15-fix' \
+  "$openwrt/feeds/packages/utils/unzip/patches/012-fix-gcc15-build.patch"
 grep -Fxq 'official-gmp' "$openwrt/package/libs/gmp/Makefile"
 grep -Fxq 'canonical-c23-fix' \
   "$openwrt/package/libs/gmp/patches/001-c23.patch"
@@ -113,6 +125,7 @@ grep -Fxq 'canonical-c23-fix' \
 [ ! -e "$openwrt/feeds/packages/libs/libtirpc/old" ]
 [ ! -e "$openwrt/feeds/packages/libs/libwebsockets/old" ]
 [ ! -e "$openwrt/feeds/packages/net/nlbwmon/old" ]
+[ ! -e "$openwrt/feeds/packages/utils/unzip/old" ]
 [ ! -e "$openwrt/package/libs/gmp/old" ]
 [ ! -e "$openwrt/feeds/packages/net/unrelated" ]
 [ ! -e "$openwrt/package/libs/unrelated" ]

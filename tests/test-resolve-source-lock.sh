@@ -69,6 +69,7 @@ assert [mapping["target"] for mapping in overlay_contracts[1]["mappings"]] == [
     "feeds/packages/libs/libtirpc",
     "feeds/packages/libs/libwebsockets",
     "feeds/packages/net/nlbwmon",
+    "feeds/packages/utils/unzip",
 ]
 for unsafe_path in (
     "package/libs/./gmp",
@@ -199,6 +200,10 @@ base = {
                 {
                     "source": "net/nlbwmon",
                     "target": "feeds/packages/net/nlbwmon",
+                },
+                {
+                    "source": "utils/unzip",
+                    "target": "feeds/packages/utils/unzip",
                 },
             ],
         },

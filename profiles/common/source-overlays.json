@@ -32,6 +32,10 @@
         {
           "source": "net/nlbwmon",
           "target": "feeds/packages/net/nlbwmon"
+        },
+        {
+          "source": "utils/unzip",
+          "target": "feeds/packages/utils/unzip"
         }
       ]
     }
