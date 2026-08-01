@@ -32,9 +32,13 @@ import pathlib
 import sys
 
 output, patch_sha, repo_root_s = sys.argv[1:]
+repo_root = pathlib.Path(repo_root_s)
+sys.path.insert(0, str(repo_root / "tests"))
+from source_lock_fixtures import current_source_overlays
+
 feeds = {}
 feed_order = 0
-for raw in (pathlib.Path(repo_root_s) / "feeds.custom.conf").read_text(
+for raw in (repo_root / "feeds.custom.conf").read_text(
     encoding="utf-8"
 ).splitlines():
     line = raw.split("#", 1)[0].strip()
@@ -66,18 +70,7 @@ lock = {
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
     "feeds": feeds,
-    "source_overlays": {
-        "openwrt-core": {
-            "url": "https://github.com/openwrt/openwrt.git",
-            "requested_ref": "master",
-            "resolved_ref": "refs/heads/master",
-            "commit": "4" * 40,
-            "mappings": [
-                {"source": "package/libs/gmp", "target": "package/libs/gmp"},
-                {"source": "package/libs/pcre2", "target": "package/libs/pcre2"},
-            ],
-        },
-    },
+    "source_overlays": current_source_overlays(repo_root),
     "upstream_artifacts": {
         "haproxy": {
             "policy": "latest-lts",

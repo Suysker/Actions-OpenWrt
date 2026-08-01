@@ -13,6 +13,10 @@
         {
           "source": "package/libs/pcre2",
           "target": "package/libs/pcre2"
+        },
+        {
+          "source": "package/system/mtd",
+          "target": "package/system/mtd"
         }
       ]
     }

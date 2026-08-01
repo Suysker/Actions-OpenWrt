@@ -90,7 +90,7 @@ Intel 文档确认 N5105 是 Jasper Lake 产品且不支持 SGX；GCC 的 Tremon
 
 ## 4. 当前故障和必须消除的根因
 
-连续失败并不是三个互不相关的偶发包错误。定向 `make -j1 V=sc <target>/compile` 已分别确认：`small/tcping` 的自定义编译入口漏传目标工具链环境，Lean `wol` 的旧式函数声明不兼容 GCC 15/C23，Lean packages 中的旧 `lsof` 在 eventfd feature 关闭时仍调用未声明函数。逐包追加补丁只能把同一类问题推迟到下一个旧包。
+连续失败并不是互不相关的偶发包错误。定向 `make -j1 V=sc <target>/compile` 已分别确认：`small/tcping` 的自定义编译入口漏传目标工具链环境，Lean `wol` 的旧式函数声明不兼容 GCC 15/C23，Lean packages 中的旧 `lsof` 在 eventfd feature 关闭时仍调用未声明函数，Lean core `mtd` 的 K&R MD5 声明也在 GCC 15/C23 下失效。逐包追加私有补丁只能把同一类问题推迟到下一个旧包；能由持续维护的 canonical 上游完整提供的目录必须在统一 provider/overlay 边界解决。
 
 以 run `30711847843` 的最终 `.config`、`package-list.txt`、source-lock 和构建日志为边界，本轮实际进入 `feeds/packages` 构建闭包的源码目录共 32 个；其中 30 个已有 OpenWrt 官方 packages master 的持续维护实现。其余两个分别是：
 
@@ -129,7 +129,7 @@ source-lock.json + cache key + Release provenance
 4. HAProxy 选择官方仍受支持的最高 LTS 分支及该分支最新 patch release；AdGuardHome 选择 GitHub 最新非 prerelease；GeoIP/Geosite 分别选择 Loyalsoldier 对应仓库的最新非 prerelease。
 5. 每个 release 立即展开成精确版本、不可变 tag/URL 和 SHA256。HAProxy 使用官方 `releases.json` 的 SHA256；AdGuardHome 使用精确 tag/commit、GitHub asset digest 和计算后锁定的源码归档 hash；GeoIP/Geosite 同时核对 release asset digest 与发布的 `.sha256sum`。
 6. 从锁定 Lean commit 解析每个 profile 的稳定 kernel series；再按 `patchsets/common/kernel/bbr3-sources.json` 的 provider 顺序查找当前 series 的最新兼容 BBRv3 port。resolver 解析 Google `v3` HEAD 与选中 provider HEAD，下载全部 patch、计算 SHA256，并给每个文件分配 source-lock artifact 内的安全相对路径。
-7. 将 OpenWrt、所有 feeds、声明式官方 core 覆盖、上游产物、每个 profile 的稳定内核系列、BBRv3 当前算法 HEAD/适配 commit/patch hash、补丁摘要、workflow 中 `actions/*@main` 的观测 HEAD 和仓库实现 SHA 写入 `source-lock.json`。当前通用 package 由锁定的 `openwrt/packages@master` 整体提供；`profiles/common/source-overlays.json` 只声明 `openwrt/openwrt@master` 中的 GMP 与 PCRE2 core 子树。resolver 按仓库只解析一次 commit，执行层不枚举 package 版本或 hash。
+7. 将 OpenWrt、所有 feeds、声明式官方 core 覆盖、上游产物、每个 profile 的稳定内核系列、BBRv3 当前算法 HEAD/适配 commit/patch hash、补丁摘要、workflow 中 `actions/*@main` 的观测 HEAD 和仓库实现 SHA 写入 `source-lock.json`。当前通用 package 由锁定的 `openwrt/packages@master` 整体提供；`profiles/common/source-overlays.json` 只声明 `openwrt/openwrt@master` 中的 GMP、PCRE2 与 MTD core 子树。resolver 按仓库只解析一次 commit，执行层不枚举 package 版本或 hash。
 8. prepare 随即执行 `materialize`：只从 lock 中的 commit-addressed immutable raw URL 下载 BBRv3 patch，逐文件复验 SHA256，并与 JSON 一起上传为同一个 `source-lock` artifact；精确 Linux 源码上的顺序 clean-apply 在 matrix 前完成。
 9. build job 只 checkout 和下载 source-lock 中的精确输入，不读取远程 branch HEAD、release `latest` 或 API。
 10. `source-lock.json` 及其物化 patch 作为每次构建的产物和 Release 附件，不提交为永久版本锁；仓库只保存 provider/ref/path 规则和算法身份断言。
@@ -320,6 +320,7 @@ scripts/
 
 tests/
   fixtures/source-lock/
+  source_lock_fixtures.py
   test-resolve-source-lock.sh
   test-apply-source-lock-artifacts.sh
   test-apply-profile-patches.sh
@@ -391,13 +392,13 @@ Feed 合并规则同样由 resolver 唯一实现：`feeds.conf.default` 与 `fee
 
 ### 7.3 Source overlay synchronizer
 
-`scripts/sync-source-overlays.sh` 是唯一 core 源码覆盖同步器；当前只处理官方 OpenWrt core 中的 GMP 与 PCRE2，不承担整个 packages feed 已能表达的工作。模块划分为：
+`scripts/sync-source-overlays.sh` 是唯一 core 源码覆盖同步器；当前只处理官方 OpenWrt core 中的 GMP、PCRE2 与 MTD，不承担整个 packages feed 已能表达的工作。模块划分为：
 
 1. `profiles/common/source-overlays.json` 是唯一声明接口。repository `id` 使用小写 kebab-case；每条映射只包含上游 `source` 与 Lean tree 内 `target`，两者都使用 POSIX 相对路径并保持上游目录命名。
 2. `resolve-source-lock.sh` 按 repository `id` 各解析一次浮动 ref，验证每个 source 子树存在、所有 target 全局唯一，并把完整 commit 与原序映射冻结进 `source_overlays`。
 3. `sync-source-overlays.sh` 只接受 schema 3 lock；每个 repository 只做一次稀疏 checkout，再按映射完整替换目标子树。它不知道版本、hash 或编译错误类型。
-4. target 只允许位于 `feeds/packages/<category>/<package>` 或 `package/libs/<package>`；同步前解析真实父目录并证明仍在 OpenWrt root 下，拒绝绝对路径、`..`、重复 target、控制字符与 symlink 越界。
-5. `test-sync-source-overlays.sh` 使用本地 Git origin 和多个映射，证明按仓库复用 checkout、旧目录完整替换、未声明目录不复制、重复 target 与越界路径拒绝。
+4. target 只允许位于 `package/<category-or-subtree>/<component>` 或 `feeds/<feed>/<category-or-subtree>/<component>`；不枚举 `libs`、`system` 等具体分类。同步前解析真实父目录并证明仍在 OpenWrt root 下，拒绝绝对路径、`..`、重复 target、控制字符与 symlink 越界。
+5. `test-sync-source-overlays.sh` 直接读取同一份 manifest，为其中全部 repository/mapping 动态生成本地 Git origin、lock、旧目标和期望 marker，证明按仓库复用 checkout、旧目录完整替换及未声明目录不复制；增加或删除映射无需再修改测试清单。重复 target、非 canonical 路径和越界 root 由 resolver fixture 继续验证。
 6. profile digest 覆盖 common overlay 合同，所以映射变化同时失效两个平台缓存；每个 overlay commit 进入 source-lock digest，任一官方仓库变化都会触发双平台重建。
 
 依赖接口固定为：
@@ -407,7 +408,7 @@ profiles/common/source-overlays.json
   -> resolve-source-lock.sh
   -> source-lock.json:source_overlays
   -> sync-source-overlays.sh
-  -> package/libs/gmp | package/libs/pcre2
+  -> package/libs/gmp | package/libs/pcre2 | package/system/mtd
   -> defconfig/download/build/provenance
 ```
 
@@ -858,6 +859,11 @@ Lean core 的旧 `package/libs/gmp` 同样早于 GCC 15 默认 GNU C23：其 `ac
 - <https://github.com/openwrt/openwrt/tree/master/package/libs/gmp>
 
 官方 packages feed 不再内置 PCRE2，而当前 HAProxy/wget 等依赖仍需要 `libpcre2`。同一 `openwrt-core` overlay 因此同步官方 `package/libs/pcre2` 到 Lean core；它与 GMP 共用一个 repository checkout 和 source-lock commit，不另建 package provider 或固定版本。
+
+Lean core `package/system/mtd` 仍保留 K&R 风格的 MD5 声明与定义；GCC 15 默认 C23 将空参数列表解释为零参数，因此调用 `MD5_Update`/`Transform` 时直接报 prototype mismatch。OpenWrt 官方 core 已在同一目录把公开函数、内部函数和定义全部改为完整原型，并保持相同 package 接口。common 因而把整个 MTD 子树加入同一个 `openwrt-core` overlay，不复制两文件补丁、不写 release/hash 特判；每轮随官方 master 解析并与 GMP/PCRE2 共用 commit。其 package-scoped LTO 由官方 recipe 自己声明，不改变 common 对全局 LTO 的关闭策略。
+
+- <https://github.com/openwrt/openwrt/commit/090add1e8783b4e82f87851f8ec36c814809764b>
+- <https://github.com/openwrt/openwrt/tree/master/package/system/mtd>
 
 - <https://github.com/coolsnowwolf/lede/blob/6c92c15df3dce19c73eb7d986f48cf6b2304306f/toolchain/gcc/Config.in>
 - <https://github.com/coolsnowwolf/lede/blob/6c92c15df3dce19c73eb7d986f48cf6b2304306f/toolchain/gcc/Config.version>
@@ -1516,7 +1522,7 @@ release-verify job 从 draft Release 重新下载所有资产，执行 `sha256su
 | 2 | 配置模型无隐式冲突 | `scripts/render-profile.sh`, `normalize-forbidden-suboptions.py`, `check-profile-contract.sh` | 增加 symbol、provider、required/forbidden 冲突检查；统一清理已禁父应用残留子选项，阻止 `3proxy` 等非产品依赖进入选择图 | 人工制造冲突或第二次 defconfig 恢复子选项时检查必须失败；最终 manifest 无 `3proxy` |
 | 3 | 最新源码与产物可追溯 | `resolve-source-lock.sh`, `update-checker.yml`, builder workflow | 解析所有 master/main SHA，以及 HAProxy LTS、AdGuardHome stable、GeoIP/Geosite 最新 release、Google BBRv3 HEAD 与兼容 port provider 的精确 commit/URL/hash | 同一 lock 重读结果不变；任一 ref/release/action-observed-head/BBRv3 patch 变化产生新 digest 并触发双平台 |
 | 4 | 最新 package metadata 与 BBRv3 内核输入可审计 | `profiles/common/geodata-sources.json`, `apply-source-lock-artifacts.sh`, `apply-profile-patches.sh`, `diy-part2.sh`, `patchsets/common/kernel/bbr3-sources.json` | Geo 静态来源/字段只声明一次，resolver/validator/applicator 共用；由 source-lock 写入并验证动态 package metadata；按 profile 稳定内核系列动态解析、物化并 clean-apply 最新兼容 BBRv3 port | 执行代码无重复 Geo tuple，无 `PKG_HASH:=skip`/`latest/download`；BBRv3 每文件 immutable URL/hash/顺序完整；定向 download、override report、patch report 完整 |
-| 5 | common 工具链和实际 package 闭包统一 | `feeds.custom.conf`, `profiles/common/providers.tsv`, `source-overlays.json`, `package-compatibility.json`, `manage-custom-feeds.sh`, `select-package-providers.sh`, `sync-source-overlays.sh` | 固定 GCC15；同名 `packages` feed 每轮锁定 OpenWrt 官方 master；GMP/PCRE2 来自同一官方 core lock；只为 `libsepol`/`wol`/current `small/tcping` 保留已证明必要的语义规则；按 canonical feed 选择 PassWall/MosDNS/SmartDNS 等当前 provider；显式关闭 LTO/GC/Mold | source-lock 中 `packages` URL/ref/origin 精确，全部锁定 feed 已重建索引；无仓库内普通 package 版本/hash；当前闭包全部下载并用 GCC 15.x 完整编译通过 |
+| 5 | common 工具链和实际 package 闭包统一 | `feeds.custom.conf`, `profiles/common/providers.tsv`, `source-overlays.json`, `package-compatibility.json`, `manage-custom-feeds.sh`, `select-package-providers.sh`, `sync-source-overlays.sh` | 固定 GCC15；同名 `packages` feed 每轮锁定 OpenWrt 官方 master；GMP/PCRE2/MTD 来自同一官方 core lock；只为 `libsepol`/`wol`/current `small/tcping` 保留已证明必要的语义规则；按 canonical feed 选择 PassWall/MosDNS/SmartDNS 等当前 provider；显式关闭全局 LTO/GC/Mold | source-lock 中 `packages` URL/ref/origin 精确，全部锁定 feed 已重建索引；无仓库内普通 package 版本/hash；当前闭包全部下载并用 GCC 15.x 完整编译通过 |
 | 6 | 不再继承危险默认设置 | `profiles/*/forbidden-packages.txt`, `profiles/*/files` | 禁用 `default-settings`，以窄 UCI overlay 实现时区/NTP、DHCP `.32/232`、IPv6 relay 与设备设置 | manifest 无 default-settings，网络默认 fixture 精确，防火墙 input 未被改成 ACCEPT，无固定 root 密码 |
 | 7 | BBRv3 成为可回退的 common 默认 | `patchsets/common/kernel/**`, `profiles/common/required-packages.txt`, `profiles/common/semantics.json` | 两个平台应用同一内核系列的 BBRv3 port，显式编译 `kmod-tcp-bbr` 和 `kmod-sched`；上游 TurboACC 探测完成后、确认 module version `3` 与 `sch_fq` provider 再一次性选择 `bbr`，并保护后续用户设置；software flow on、hardware flow off | 双平台 build module version 为 `3` 且含 `sch_fq.ko`；三次冷启动 UCI/sysctl/firewall 一致，完成 BBRv3/cubic A/B 与 PassWall/nlbwmon 真机测试 |
 | 8 | DNS 组件齐全且不覆盖用户运行时配置 | `profiles/common/required-packages.txt`, package contracts, `README.md` | 编译所需包，端口、上游、规则和凭据由设备 UCI/YAML 管理；确认上游 factory defaults 不争抢 53 | manifest 检查；新装默认服务检查；应用用户常用配置后按实际 UCI/YAML 做 `ss`、iptables redirect、逐跳查询和断环测试 |

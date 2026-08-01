@@ -59,18 +59,6 @@
       "order": 5
     }
   },
-  "source_overlays": {
-    "openwrt-core": {
-      "url": "https://github.com/openwrt/openwrt.git",
-      "requested_ref": "master",
-      "resolved_ref": "refs/heads/master",
-      "commit": "5555555555555555555555555555555555555555",
-      "mappings": [
-        {"source": "package/libs/gmp", "target": "package/libs/gmp"},
-        {"source": "package/libs/pcre2", "target": "package/libs/pcre2"}
-      ]
-    }
-  },
   "profiles": {
     "r4s": {
       "kernel_series": "6.12"

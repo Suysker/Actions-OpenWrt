@@ -245,15 +245,13 @@ def require_overlay_path(value: Any, label: str, *, target: bool = False) -> str
     ):
         raise ResolutionError(f"unsafe {label}: {value!r}")
     if target:
-        is_feed_package = len(path.parts) == 4 and path.parts[:2] == (
-            "feeds",
-            "packages",
+        is_core_package_subtree = (
+            path.parts[0] == "package" and len(path.parts) >= 3
         )
-        is_core_library = len(path.parts) == 3 and path.parts[:2] == (
-            "package",
-            "libs",
+        is_feed_package_subtree = (
+            path.parts[0] == "feeds" and len(path.parts) >= 4
         )
-        if not (is_feed_package or is_core_library):
+        if not (is_core_package_subtree or is_feed_package_subtree):
             raise ResolutionError(f"unsupported source overlay target: {value!r}")
     return value
 

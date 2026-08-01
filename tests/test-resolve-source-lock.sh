@@ -13,6 +13,9 @@ import tempfile
 
 root = pathlib.Path(sys.argv[1])
 sys.path.insert(0, str(root / "scripts"))
+sys.path.insert(0, str(root / "tests"))
+from source_lock_fixtures import current_source_overlays
+
 spec = importlib.util.spec_from_file_location("source_lock", root / "scripts/source_lock.py")
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -58,11 +61,26 @@ with tempfile.TemporaryDirectory() as directory:
         raise AssertionError("duplicate geodata contract entry was accepted")
 
 overlay_contracts = module.load_source_overlay_contracts(root)
-assert [item["id"] for item in overlay_contracts] == ["openwrt-core"]
-assert overlay_contracts[0]["mappings"] == [
-    {"source": "package/libs/gmp", "target": "package/libs/gmp"},
-    {"source": "package/libs/pcre2", "target": "package/libs/pcre2"},
+raw_overlay_contracts = json.loads(
+    (root / "profiles/common/source-overlays.json").read_text(encoding="utf-8")
+)["repositories"]
+assert [item["id"] for item in overlay_contracts] == [
+    item["id"] for item in raw_overlay_contracts
 ]
+assert [item["mappings"] for item in overlay_contracts] == [
+    item["mappings"] for item in raw_overlay_contracts
+]
+for supported_target in (
+    "package/example/component",
+    "package/network/services/component",
+    "feeds/example/category/component",
+):
+    assert (
+        module.require_overlay_path(
+            supported_target, "fixture target", target=True
+        )
+        == supported_target
+    )
 for unsafe_path in (
     "package/libs/./gmp",
     "package//libs/gmp",
@@ -74,6 +92,17 @@ for unsafe_path in (
         assert "unsafe fixture target" in str(exc)
     else:
         raise AssertionError(f"non-canonical overlay path was accepted: {unsafe_path}")
+for unsupported_target in ("package/libs", "feeds/packages/net", "tools/example"):
+    try:
+        module.require_overlay_path(
+            unsupported_target, "fixture target", target=True
+        )
+    except module.ResolutionError as exc:
+        assert "unsupported source overlay target" in str(exc)
+    else:
+        raise AssertionError(
+            f"unsupported overlay root was accepted: {unsupported_target}"
+        )
 with tempfile.TemporaryDirectory() as directory:
     temporary_root = pathlib.Path(directory)
     contract_path = temporary_root / "profiles/common/source-overlays.json"
@@ -81,7 +110,9 @@ with tempfile.TemporaryDirectory() as directory:
     invalid_contract = json.loads(
         (root / "profiles/common/source-overlays.json").read_text(encoding="utf-8")
     )
-    invalid_contract["repositories"][0]["mappings"][1]["target"] = "package/libs/gmp"
+    duplicate_target = dict(invalid_contract["repositories"][0]["mappings"][0])
+    duplicate_target["source"] = "package/libs/duplicate-fixture"
+    invalid_contract["repositories"][0]["mappings"].append(duplicate_target)
     contract_path.write_text(json.dumps(invalid_contract), encoding="utf-8")
     try:
         module.load_source_overlay_contracts(temporary_root)
@@ -218,24 +249,7 @@ base = {
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
     "feeds": fixture_feeds(),
-    "source_overlays": {
-        "openwrt-core": {
-            "url": "https://github.com/openwrt/openwrt.git",
-            "requested_ref": "master",
-            "resolved_ref": "refs/heads/master",
-            "commit": "4" * 40,
-            "mappings": [
-                {
-                    "source": "package/libs/gmp",
-                    "target": "package/libs/gmp",
-                },
-                {
-                    "source": "package/libs/pcre2",
-                    "target": "package/libs/pcre2",
-                },
-            ],
-        },
-    },
+    "source_overlays": current_source_overlays(root),
     "upstream_artifacts": {
         "haproxy": {
             "policy": "latest-lts",

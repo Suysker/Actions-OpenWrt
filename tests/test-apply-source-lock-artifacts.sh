@@ -8,6 +8,8 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 cp -a "$fixture/openwrt" "$tmpdir/openwrt"
 cp "$fixture/source-lock.json" "$tmpdir/source-lock.json"
+python3 "$repo_root/tests/source_lock_fixtures.py" \
+  "$tmpdir/source-lock.json" "$repo_root"
 bash "$repo_root/scripts/apply-source-lock-artifacts.sh" \
   "$tmpdir/openwrt" "$tmpdir/source-lock.json" "$tmpdir/report.json"
 
