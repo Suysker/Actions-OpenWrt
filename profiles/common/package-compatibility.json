@@ -10,6 +10,14 @@
       "standard": "gnu17"
     },
     {
+      "id": "wol-gnu17",
+      "operation": "language-standard",
+      "path": "package/lean/wol/Makefile",
+      "anchor": "include $(INCLUDE_DIR)/package.mk",
+      "line": "TARGET_CFLAGS += -std=gnu17",
+      "standard": "gnu17"
+    },
+    {
       "id": "tcping-target-make-environment",
       "operation": "make-environment",
       "path": "feeds/small/tcping/Makefile",

@@ -11,6 +11,7 @@ mkdir -p "$lock_dir/bbr3/6.12" \
   "$openwrt/target/linux/rockchip" \
   "$openwrt/target/linux/generic/hack-6.12" \
   "$openwrt/package/libs/libsepol" \
+  "$openwrt/package/lean/wol" \
   "$openwrt/feeds/small/tcping" \
   "$openwrt/package/kernel/linux/modules"
 
@@ -157,6 +158,11 @@ PKG_NAME:=libsepol
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/host-build.mk
 EOF
+cat > "$openwrt/package/lean/wol/Makefile" <<'EOF'
+include $(TOPDIR)/rules.mk
+PKG_NAME:=wol
+include $(INCLUDE_DIR)/package.mk
+EOF
 cat > "$openwrt/feeds/small/tcping/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk
 PKG_NAME:=tcping
@@ -184,6 +190,11 @@ if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/package/libs/libsepol/Makefile"; t
   echo "libsepol compatibility fixture unexpectedly depends on version/hash fields" >&2
   exit 1
 fi
+grep -Fxq 'TARGET_CFLAGS += -std=gnu17' "$openwrt/package/lean/wol/Makefile"
+if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/package/lean/wol/Makefile"; then
+  echo "wol compatibility fixture unexpectedly depends on version/hash fields" >&2
+  exit 1
+fi
 grep -Fxq $'\t$(MAKE) -C $(PKG_BUILD_DIR) $(TARGET_CONFIGURE_OPTS) CC="$(TARGET_CC)" CFLAGS="$(TARGET_CFLAGS) -Wall" LDFLAGS="$(TARGET_LDFLAGS)"' \
   "$openwrt/feeds/small/tcping/Makefile"
 if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/feeds/small/tcping/Makefile"; then
@@ -192,6 +203,8 @@ if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/feeds/small/tcping/Makefile"; then
 fi
 grep -qx 'compatibility_libsepol_gnu17_status=inserted' "$report"
 grep -qx 'compatibility_libsepol_gnu17_detail=gnu17' "$report"
+grep -qx 'compatibility_wol_gnu17_status=inserted' "$report"
+grep -qx 'compatibility_wol_gnu17_detail=gnu17' "$report"
 grep -qx 'compatibility_tcping_target_make_environment_status=inserted' "$report"
 grep -qx 'compatibility_tcping_target_make_environment_detail=$(TARGET_CONFIGURE_OPTS)' "$report"
 grep -qx 'bbrv3_provider=fixture-single' "$report"
@@ -202,8 +215,10 @@ second_report="$tmpdir/patch-report-second.txt"
 bash "$repo_root/scripts/apply-profile-patches.sh" \
   r4s "$openwrt" "$lock_dir/source-lock.json" "$second_report"
 [ "$(grep -Fxc 'TARGET_CFLAGS += -std=gnu17' "$openwrt/package/libs/libsepol/Makefile")" -eq 1 ]
+[ "$(grep -Fxc 'TARGET_CFLAGS += -std=gnu17' "$openwrt/package/lean/wol/Makefile")" -eq 1 ]
 [ "$(grep -Fo '$(TARGET_CONFIGURE_OPTS)' "$openwrt/feeds/small/tcping/Makefile" | wc -l)" -eq 1 ]
 grep -qx 'compatibility_libsepol_gnu17_status=upstream' "$second_report"
+grep -qx 'compatibility_wol_gnu17_status=upstream' "$second_report"
 grep -qx 'compatibility_tcping_target_make_environment_status=upstream' "$second_report"
 
 cat > "$openwrt/feeds/small/tcping/Makefile" <<'EOF'
