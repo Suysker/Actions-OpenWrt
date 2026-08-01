@@ -163,63 +163,6 @@ apply_series() {
   done < "$series_file"
 }
 
-apply_libsepol_language_compatibility() {
-  python3 - "$openwrt_dir/package/libs/libsepol/Makefile" "$report" <<'PY'
-import os
-import pathlib
-import re
-import sys
-
-path = pathlib.Path(sys.argv[1])
-report = pathlib.Path(sys.argv[2])
-if not path.is_file():
-    raise SystemExit(f"::error::libsepol package Makefile is missing: {path}")
-
-text = path.read_text(encoding="utf-8")
-assignment = re.compile(
-    r"^(?:TARGET_(?:C|CPP)FLAGS|PKG_(?:C|CPP)FLAGS)\s*(?::|\+|\?)?=.*(?:^|\s)-std=([A-Za-z0-9+_.-]+)",
-    re.MULTILINE,
-)
-standards = assignment.findall(text)
-if len(standards) > 1:
-    raise SystemExit(
-        "::error::libsepol declares multiple language standards; refusing an ambiguous override"
-    )
-
-if standards:
-    status = "upstream"
-    standard = standards[0]
-else:
-    anchor = "include $(INCLUDE_DIR)/package.mk"
-    if text.splitlines().count(anchor) != 1:
-        raise SystemExit(
-            "::error::libsepol package Makefile must contain exactly one package.mk include anchor"
-        )
-    addition = (
-        anchor
-        + "\n\n# GCC 15 defaults to GNU C23; retain this package's compatible C dialect."
-        + "\nTARGET_CFLAGS += -std=gnu17"
-    )
-    text = text.replace(anchor, addition, 1)
-    temporary = path.with_name(path.name + ".compatibility-tmp")
-    temporary.write_text(text, encoding="utf-8")
-    os.chmod(temporary, path.stat().st_mode)
-    os.replace(temporary, path)
-    status = "inserted"
-    standard = "gnu17"
-
-final = path.read_text(encoding="utf-8")
-final_standards = assignment.findall(final)
-if final_standards != [standard]:
-    raise SystemExit("::error::libsepol language-standard postcondition failed")
-
-with report.open("a", encoding="utf-8") as handle:
-    handle.write(f"compatibility_libsepol_status={status}\n")
-    handle.write(f"compatibility_libsepol_standard={standard}\n")
-    handle.write("compatibility_libsepol_anchor=package.mk-include\n")
-PY
-}
-
 source_lock_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$source_lock")"
 {
   echo "patch-report-v1"
@@ -230,7 +173,8 @@ source_lock_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$
   echo "kernel_version=$kernel_version"
 } > "$report"
 
-apply_libsepol_language_compatibility
+python3 "$repo_root/scripts/apply-package-compatibility.py" \
+  "$repo_root/profiles/common/package-compatibility.json" "$openwrt_dir" "$report"
 apply_series common "$repo_root/patchsets/common"
 apply_series device "$repo_root/patchsets/$profile"
 

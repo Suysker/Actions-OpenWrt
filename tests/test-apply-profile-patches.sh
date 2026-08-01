@@ -11,6 +11,7 @@ mkdir -p "$lock_dir/bbr3/6.12" \
   "$openwrt/target/linux/rockchip" \
   "$openwrt/target/linux/generic/hack-6.12" \
   "$openwrt/package/libs/libsepol" \
+  "$openwrt/feeds/small/tcping" \
   "$openwrt/package/kernel/linux/modules"
 
 cat > "$lock_dir/bbr3/6.12/0001-bbrv3.patch" <<'PATCH'
@@ -156,6 +157,15 @@ PKG_NAME:=libsepol
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/host-build.mk
 EOF
+cat > "$openwrt/feeds/small/tcping/Makefile" <<'EOF'
+include $(TOPDIR)/rules.mk
+PKG_NAME:=tcping
+include $(INCLUDE_DIR)/package.mk
+
+define Build/Compile
+	$(MAKE) -C $(PKG_BUILD_DIR) CC="$(TARGET_CC)" CFLAGS="$(TARGET_CFLAGS) -Wall" LDFLAGS="$(TARGET_LDFLAGS)"
+endef
+EOF
 cat > "$openwrt/package/kernel/linux/modules/netsupport.mk" <<'EOF'
 define KernelPackage/tcp-bbr
 FILES:=$(LINUX_DIR)/net/ipv4/tcp_bbr.ko
@@ -174,8 +184,16 @@ if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/package/libs/libsepol/Makefile"; t
   echo "libsepol compatibility fixture unexpectedly depends on version/hash fields" >&2
   exit 1
 fi
-grep -qx 'compatibility_libsepol_status=inserted' "$report"
-grep -qx 'compatibility_libsepol_standard=gnu17' "$report"
+grep -Fxq $'\t$(MAKE) -C $(PKG_BUILD_DIR) $(TARGET_CONFIGURE_OPTS) CC="$(TARGET_CC)" CFLAGS="$(TARGET_CFLAGS) -Wall" LDFLAGS="$(TARGET_LDFLAGS)"' \
+  "$openwrt/feeds/small/tcping/Makefile"
+if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/feeds/small/tcping/Makefile"; then
+  echo "tcping compatibility fixture unexpectedly depends on version/hash fields" >&2
+  exit 1
+fi
+grep -qx 'compatibility_libsepol_gnu17_status=inserted' "$report"
+grep -qx 'compatibility_libsepol_gnu17_detail=gnu17' "$report"
+grep -qx 'compatibility_tcping_target_make_environment_status=inserted' "$report"
+grep -qx 'compatibility_tcping_target_make_environment_detail=$(TARGET_CONFIGURE_OPTS)' "$report"
 grep -qx 'bbrv3_provider=fixture-single' "$report"
 grep -qx 'bbrv3_patch_count=1' "$report"
 grep -qx 'assertion_BBR_VERSION=3' "$report"
@@ -184,6 +202,40 @@ second_report="$tmpdir/patch-report-second.txt"
 bash "$repo_root/scripts/apply-profile-patches.sh" \
   r4s "$openwrt" "$lock_dir/source-lock.json" "$second_report"
 [ "$(grep -Fxc 'TARGET_CFLAGS += -std=gnu17' "$openwrt/package/libs/libsepol/Makefile")" -eq 1 ]
-grep -qx 'compatibility_libsepol_status=upstream' "$second_report"
+[ "$(grep -Fo '$(TARGET_CONFIGURE_OPTS)' "$openwrt/feeds/small/tcping/Makefile" | wc -l)" -eq 1 ]
+grep -qx 'compatibility_libsepol_gnu17_status=upstream' "$second_report"
+grep -qx 'compatibility_tcping_target_make_environment_status=upstream' "$second_report"
+
+cat > "$openwrt/feeds/small/tcping/Makefile" <<'EOF'
+include $(TOPDIR)/rules.mk
+PKG_NAME:=tcping
+include $(INCLUDE_DIR)/package.mk
+
+define Build/Compile
+	$(MAKE) -C $(PKG_BUILD_DIR) $(MAKE_FLAGS)
+endef
+EOF
+third_report="$tmpdir/package-compatibility-upstream.txt"
+python3 "$repo_root/scripts/apply-package-compatibility.py" \
+  "$repo_root/profiles/common/package-compatibility.json" "$openwrt" "$third_report"
+grep -qx 'compatibility_tcping_target_make_environment_status=upstream' "$third_report"
+grep -qx 'compatibility_tcping_target_make_environment_detail=$(MAKE_FLAGS)' "$third_report"
+
+cat > "$openwrt/feeds/small/tcping/Makefile" <<'EOF'
+include $(TOPDIR)/rules.mk
+PKG_NAME:=tcping
+include $(INCLUDE_DIR)/package.mk
+
+define Build/Compile
+	$(MAKE) -C $(PKG_BUILD_DIR) CC="$(TARGET_CC)"
+endef
+EOF
+if python3 "$repo_root/scripts/apply-package-compatibility.py" \
+  "$repo_root/profiles/common/package-compatibility.json" "$openwrt" \
+  "$tmpdir/package-compatibility-drift.txt" >"$tmpdir/package-compatibility-drift.out" 2>&1; then
+  echo "tcping compatibility unexpectedly accepted a changed custom recipe" >&2
+  exit 1
+fi
+grep -Fq 'recipe no longer contains required fragments' "$tmpdir/package-compatibility-drift.out"
 
 echo "Dynamic BBRv3 patch applicator tests passed."

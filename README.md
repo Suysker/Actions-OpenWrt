@@ -109,6 +109,7 @@ python3 tests/test-optimization-contract.py
 bash tests/test-resolve-source-lock.sh
 bash tests/test-apply-source-lock-artifacts.sh
 bash tests/test-apply-profile-patches.sh
+bash tests/test-build-failure-diagnostics.sh
 bash tests/test-locked-feeds.sh
 bash tests/test-sync-source-overlays.sh
 bash scripts/check-profile-contract.sh r4s

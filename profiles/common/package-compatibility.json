@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "rules": [
+    {
+      "id": "libsepol-gnu17",
+      "operation": "language-standard",
+      "path": "package/libs/libsepol/Makefile",
+      "anchor": "include $(INCLUDE_DIR)/package.mk",
+      "line": "TARGET_CFLAGS += -std=gnu17",
+      "standard": "gnu17"
+    },
+    {
+      "id": "tcping-target-make-environment",
+      "operation": "make-environment",
+      "path": "feeds/small/tcping/Makefile",
+      "anchor": "$(MAKE) -C $(PKG_BUILD_DIR)",
+      "token": "$(TARGET_CONFIGURE_OPTS)",
+      "accepted_tokens": [
+        "$(TARGET_CONFIGURE_OPTS)",
+        "$(MAKE_FLAGS)"
+      ],
+      "required_fragments": [
+        "CC=\"$(TARGET_CC)\"",
+        "CFLAGS=\"$(TARGET_CFLAGS) -Wall\"",
+        "LDFLAGS=\"$(TARGET_LDFLAGS)\""
+      ],
+      "upstream_default_marker": "define Build/Compile"
+    }
+  ]
+}

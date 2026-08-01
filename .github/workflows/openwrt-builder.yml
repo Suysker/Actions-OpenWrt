@@ -359,7 +359,9 @@ jobs:
           cd "$OPENWRT_ROOT"
           set -o pipefail
           if ! make -j"$BUILD_JOBS" 2>&1 | tee "$GITHUB_WORKSPACE/build.parallel.log"; then
-            make -j1 V=s 2>&1 | tee "$GITHUB_WORKSPACE/build.serial.log" || true
+            bash "$GITHUB_WORKSPACE/scripts/collect-build-failure-diagnostics.sh" \
+              "$OPENWRT_ROOT" "$GITHUB_WORKSPACE/build.parallel.log" \
+              "$GITHUB_WORKSPACE/build.serial.log"
             exit 1
           fi
           ccache --show-stats | tee "$GITHUB_WORKSPACE/ccache-stats.txt"
