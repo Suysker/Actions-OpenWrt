@@ -68,6 +68,13 @@ import sys
 ) = sys.argv[1:]
 
 repo_root = pathlib.Path(repo_root_s)
+sys.path.insert(0, str(repo_root / "scripts"))
+from optimization_contract import (  # noqa: E402
+    OptimizationContractError,
+    check_contract,
+    load_contract,
+)
+
 config_path = pathlib.Path(config_s)
 required_path = pathlib.Path(required_s)
 forbidden_path = pathlib.Path(forbidden_s)
@@ -200,23 +207,9 @@ for symbol in (
 if "default-settings" not in exact_forbidden:
     problems.append("default-settings must be explicitly forbidden")
 
-common_sysctl = files_root / "etc/sysctl.d/90-router-performance.conf"
-if common_sysctl.is_file():
-    sysctl = clean_lines(common_sysctl)
-    expected_sysctl = {
-        "net.core.default_qdisc=fq",
-        "net.core.rmem_max=16777216",
-        "net.core.wmem_max=16777216",
-    }
-    if set(sysctl) != expected_sysctl:
-        problems.append("common sysctl contract contains unexpected or missing keys")
-else:
-    problems.append("common performance sysctl overlay is missing")
-
 for relative in (
     "etc/uci-defaults/90-common-system",
     "etc/uci-defaults/90-common-network",
-    "etc/uci-defaults/zz-common-turboacc",
 ):
     if not (files_root / relative).is_file():
         problems.append(f"missing common rootfs contract: {relative}")
@@ -278,13 +271,12 @@ if profile == "r4s":
     )
     require_value(config, "CONFIG_KERNEL_ZRAM_BACKEND_LZ4", "y")
     require_value(config, "CONFIG_KERNEL_ZRAM_DEF_COMP_LZ4", "y")
+    require_value(config, "CONFIG_COREMARK_NUMBER_OF_THREADS", "6")
     require_value(config, "CONFIG_PACKAGE_irqbalance", "n")
     require_value(config, "CONFIG_PACKAGE_kmod-usb-net", "n")
     for package in ("irqbalance", "kmod-usb-net", "kmod-usb-net-rtl8152"):
         if package not in exact_forbidden:
             problems.append(f"R4S must forbid {package}")
-    if not (files_root / "etc/uci-defaults/91-r4s-performance").is_file():
-        problems.append("R4S performance overlay is missing")
 elif profile == "x86-n5105-pve":
     require_value(config, "CONFIG_TARGET_x86_64_DEVICE_generic", "y")
     require_value(
@@ -294,6 +286,7 @@ elif profile == "x86-n5105-pve":
     )
     require_value(config, "CONFIG_GRUB_EFI_IMAGES", "y")
     require_value(config, "CONFIG_GRUB_IMAGES", "n")
+    require_value(config, "CONFIG_COREMARK_NUMBER_OF_THREADS", "4")
     require_value(config, "CONFIG_PACKAGE_kmod-igc", "y")
     require_value(config, "CONFIG_PACKAGE_irqbalance", "y")
     require_value(config, "CONFIG_PACKAGE_autocore-x86", "n")
@@ -305,12 +298,6 @@ elif profile == "x86-n5105-pve":
     for package in ("autocore-x86", "zram-swap", "kmod-zram"):
         if package not in exact_forbidden:
             problems.append(f"N5105 PVE must forbid {package}")
-    for relative in (
-        "etc/uci-defaults/91-x86-n5105-performance",
-        "etc/hotplug.d/net/91-n5105-multiqueue",
-    ):
-        if not (files_root / relative).is_file():
-            problems.append(f"N5105 performance overlay is missing: {relative}")
 else:
     problems.append(f"unsupported maintained profile: {profile}")
 
@@ -322,6 +309,7 @@ if source_lock_s:
     except (OSError, json.JSONDecodeError) as exc:
         problems.append(f"invalid source lock: {exc}")
 
+kernel_series = None
 if openwrt:
     providers = repo_root / "profiles/common/providers.tsv"
     for raw in providers.read_text(encoding="utf-8").splitlines():
@@ -365,7 +353,6 @@ if openwrt:
 
     kernel_target = env.get("KERNEL_TARGET")
     target_makefile = openwrt / f"target/linux/{kernel_target}/Makefile"
-    kernel_series = None
     if target_makefile.is_file():
         match = re.search(
             r"^KERNEL_PATCHVER\s*:?=\s*([0-9]+\.[0-9]+)\s*$",
@@ -392,38 +379,6 @@ if openwrt:
         if not bbr:
             problems.append(f"source-lock has no BBRv3 port for kernel {kernel_series}")
 
-    if kernel_series and profile == "x86-n5105-pve":
-        kernel_config = openwrt / f"target/linux/x86/64/config-{kernel_series}"
-        if not kernel_config.is_file():
-            problems.append(f"x86_64 stable kernel config is missing: {kernel_config}")
-        else:
-            content = kernel_config.read_text(encoding="utf-8")
-            for symbol in ("CONFIG_VIRTIO_NET=y", "CONFIG_SCSI_VIRTIO=y"):
-                if not re.search(rf"^{re.escape(symbol)}$", content, re.MULTILINE):
-                    problems.append(f"x86 stable kernel does not build in {symbol}")
-
-    if kernel_series and profile == "r4s":
-        kernel_config = openwrt / f"target/linux/rockchip/armv8/config-{kernel_series}"
-        if not kernel_config.is_file():
-            problems.append(f"R4S stable kernel config is missing: {kernel_config}")
-        else:
-            content = kernel_config.read_text(encoding="utf-8")
-            crypto_alternatives = (
-                ("CONFIG_CRYPTO_AES_ARM64_CE=y", "CONFIG_CRYPTO_AES_ARM64_CE_BLK=y"),
-                ("CONFIG_CRYPTO_GHASH_ARM64_CE=y",),
-                ("CONFIG_CRYPTO_CRC32=y",),
-                ("CONFIG_CRYPTO_CRC32C=y",),
-            )
-            for alternatives in crypto_alternatives:
-                if not any(
-                    re.search(rf"^{re.escape(symbol)}$", content, re.MULTILINE)
-                    for symbol in alternatives
-                ):
-                    problems.append(
-                        "R4S stable kernel misses ARM64 crypto/CRC provider: "
-                        + " or ".join(alternatives)
-                    )
-
     turboacc = openwrt / "feeds/luci/applications/luci-app-turboacc/Makefile"
     if turboacc.is_file():
         content = turboacc.read_text(encoding="utf-8")
@@ -433,6 +388,22 @@ if openwrt:
             problems.append("TurboACC no longer exposes the locked flow-offload symbol")
     else:
         problems.append("selected TurboACC Makefile is missing")
+
+optimization_contract_path = repo_root / "profiles/optimization-contracts.json"
+try:
+    optimization_contract = load_contract(optimization_contract_path)
+    optimization_checks, optimization_problems = check_contract(
+        optimization_contract,
+        profile,
+        files_root,
+        openwrt_root=openwrt,
+        kernel_series=kernel_series,
+    )
+except OptimizationContractError as exc:
+    problems.append(f"invalid optimization contract: {exc}")
+else:
+    checks.extend(optimization_checks)
+    problems.extend(optimization_problems)
 
 if lock and profile not in lock.get("profiles", {}):
     problems.append(f"source-lock does not contain profile {profile}")

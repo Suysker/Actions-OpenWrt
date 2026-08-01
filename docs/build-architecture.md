@@ -417,6 +417,14 @@ apply-source-lock-artifacts.sh <openwrt-root> <source-lock.json> <report-json>
   - target、image、CPU flags 与 profile 契约相符
   - target 稳定内核系列与 source-lock、BBRv3 materialized port 相符
   - `kmod-tcp-bbr`、`kmod-sched` 和 TurboACC BBR CCA dependency 存在；内核源码后置断言为 BBRv3
+  - 统一读取 `profiles/optimization-contracts.json`，验证 common、R4S 与 N5105 的 rootfs 调优语义；不能只检查 overlay 文件存在
+  - 对本轮锁定 Lean tree/feeds 执行 source-aware 优化检查：TurboACC 的 software-flow runtime；R4S 的 LAN/WAN 映射、CPU4/CPU5 IRQ affinity、stable-kernel `schedutil`、RK3399 OPP；N5105 的 VirtIO built-in、I225/I226 EEE disable 与 igc VLAN tag offload
+
+`optimization-contracts.json` 是这些性能意图的唯一声明层。它只保存稳定的功能语义、相对路径模板和内容断言，不保存 kernel 版本、Lean commit、patch 文件名或逐轮 hash。`check-profile-contract.sh` 提供一个通用解释器：rootfs 规则在 prepare 的静态检查中执行；带 `{kernel_series}` 的 upstream 规则在 build 已 checkout 本轮 source-lock 后展开；需要在 patch stack 中定位的能力按目录 glob 和语义内容匹配，而不是依赖可能被上游改名的 patch。任一声明必须命中且不得靠另一个 profile 的文件满足。
+
+每个平台的 `profile_digest` 统一覆盖 `profiles/common/`、对应设备目录和这份共享优化合同。修改任何共同性能意图都会同时改变 R4S/N5105 的 profile/cache/update 身份；修改某一设备目录仍只改变该设备身份。路径集合只在 resolver 的 `profile_digest()` 中定义，workflow 不复制。
+
+规则命名统一使用 `<scope>.<capability>`，例如 `r4s.irq-affinity`、`x86-n5105-pve.igc-vlan-offload`；检查结果使用相同名称写入 `profile-contract-report.txt`。新优化必须先在这个声明层定义可验证行为，再进入配置或文档；不建立第二套设备专用 checker。
 
 ### 7.6 Artifact verifier
 
@@ -451,6 +459,7 @@ flowchart LR
     U["远程 refs + release 元数据 + BBRv3 providers"] --> S["resolve-source-lock"]
     GC["geodata-sources contract"] --> S
     GC --> O
+    OC["optimization-contracts"] --> PC["profile contract checker"]
     S --> L["source-lock.json"]
     L --> Z["materialize + kernel clean-apply"]
     L --> OP["sync-official-packages<br/>Go + nlbwmon allowlist"]
@@ -469,6 +478,7 @@ flowchart LR
     R --> K["seed/files/contracts"]
     F --> K
     K --> Q["defconfig + contract checks"]
+    PC --> Q
     Q --> M["OpenWrt build"]
     M --> G["collect-build-provenance"]
     G --> V["verify-firmware-artifacts"]
@@ -484,6 +494,7 @@ flowchart LR
 - 锁定 package 版本/URL/hash 的机械写入只属于 `apply-source-lock-artifacts.sh`。
 - 行为性源码变更只属于 `apply-profile-patches.sh`、仓库内 common/device `series` 和 source-lock 物化的 BBRv3 port；不依赖版本/hash 行的窄语义兼容变换也由该接口执行并写入 patch report。BBRv3 的 provider/kernel-series 选择只由 resolver 驱动。
 - Kconfig/package/target 边界只属于 contract checkers。
+- 运行时调优与 Lean 继承优化的稳定语义只在 `profiles/optimization-contracts.json` 声明；`check-profile-contract.sh` 通用解释 rootfs/source 规则，kernel series 由本轮 source-lock/target 动态提供，不在声明或代码中复制版本与 patch 文件名。
 - 成品身份收集只属于 `collect-build-provenance.sh`，校验只属于 artifact verifier。
 - workflow 只编排这些接口，不内联第二份业务判断。
 
@@ -1382,8 +1393,8 @@ release-verify job 从 draft Release 重新下载所有资产，执行 `sha256su
 | 6 | 不再继承危险默认设置 | `profiles/*/forbidden-packages.txt`, `profiles/*/files` | 禁用 `default-settings`，以窄 UCI overlay 实现时区/NTP、DHCP `.32/232`、IPv6 relay 与设备设置 | manifest 无 default-settings，网络默认 fixture 精确，防火墙 input 未被改成 ACCEPT，无固定 root 密码 |
 | 7 | BBRv3 成为可回退的 common 默认 | `patchsets/common/kernel/**`, `profiles/common/config.seed`, `required-packages.txt`, `files/etc/uci-defaults/zz-common-turboacc` | 两个平台应用同一内核系列的 BBRv3 port，显式编译 `kmod-tcp-bbr` 和 `kmod-sched`；上游 TurboACC 探测完成后、确认 module version `3` 与 `sch_fq` provider 再一次性选择 `bbr`，并保护后续用户设置；software flow on、hardware flow off | 双平台 build module version 为 `3` 且含 `sch_fq.ko`；三次冷启动 UCI/sysctl/firewall 一致，完成 BBRv3/cubic A/B 与 PassWall/nlbwmon 真机测试 |
 | 8 | DNS 组件齐全且不覆盖用户运行时配置 | `profiles/common/config.seed`, package contracts, `README.md` | 编译所需包，端口、上游、规则和凭据由设备 UCI/YAML 管理；确认上游 factory defaults 不争抢 53 | manifest 检查；新装默认服务检查；应用用户常用配置后按实际 UCI/YAML 做 `ss`、iptables redirect、逐跳查询和断环测试 |
-| 9 | R4S 为 RK3399 专用且不重复调优 | `profiles/r4s/**` | O2、ARMv8 crypto/CRC、A72/A53 tune、native boot/IRQ/r8168、512MiB LZ4 zram、无 irqbalance/RTL8152 | flags/manifest、CPU4/5 affinity、zram/温控检查 |
-| 10 | x86 为 N5105 PVE 专用 | `profiles/x86` → `profiles/x86-n5105-pve` | x86-64-v2 + Tremont tune、稳定内核、driver-based LAN/WAN、VirtIO/I225、4 queues、无 autocore/RPS/zram | target/flags/interface roles/queues/IRQ/manifest 检查 |
+| 9 | R4S 为 RK3399 专用且不重复调优 | `profiles/r4s/**`, `profiles/optimization-contracts.json` | O2、ARMv8 crypto/CRC、A72/A53 tune、native boot/IRQ/r8168、512MiB LZ4 zram、无 irqbalance/RTL8152 | flags/manifest、锁定源码的 CPU4/5 affinity/schedutil/OPP 语义、zram/温控检查 |
+| 10 | x86 为 N5105 PVE 专用 | `profiles/x86` → `profiles/x86-n5105-pve`, `profiles/optimization-contracts.json` | x86-64-v2 + Tremont tune、稳定内核、driver-based LAN/WAN、VirtIO/I225、4 queues、无 autocore/RPS/zram | target/flags/interface roles/queues/IRQ/manifest，以及锁定源码的 EEE/VLAN/VirtIO 语义检查 |
 | 11 | Runner 能稳定容纳双构建 | `scripts/prepare-runner.sh`, `openwrt-builder.yml` | `ubuntu-latest`、实际镜像资源报告、白名单清理、磁盘门槛、受控并发 | 清理路径边界测试；每 job 构建前 ≥45GiB |
 | 12 | 缓存不会污染构建 | builder workflow | ccache/dl 分层、严格 key、只信任维护分支、不用第三方 toolchain | 两次相同 lock 命中；换 profile/compiler 不交叉恢复 |
 | 13 | 失败留下根因且不误发布 | builder workflow | 并行日志 + 单线程 `V=s` 诊断，去掉 `IGNORE_ERRORS/continue-on-error` | 注入失败后 job 红、诊断 artifact 存在、无公开 Release/cleanup |
@@ -1398,6 +1409,7 @@ release-verify job 从 draft Release 重新下载所有资产，执行 `sha256su
 
 ```sh
 bash -n diy-part1.sh diy-part2.sh scripts/*.sh profiles/*/files/etc/uci-defaults/*
+python3 tests/test-optimization-contract.py
 bash tests/test-resolve-source-lock.sh
 bash tests/test-apply-source-lock-artifacts.sh
 bash scripts/check-profile-contract.sh r4s
@@ -1418,6 +1430,7 @@ bash scripts/check-profile-contract.sh x86-n5105-pve
 - resolver 解析出的每个 profile 稳定内核系列都有唯一 BBRv3 provider/patch 清单，且与 materialized source-lock 一致
 - BBRv3 每个物化 patch SHA256 与 source-lock/origin 一致；按序对精确 Linux 源码 clean-apply，且 `BBR_VERSION=3`、运行名 `bbr`、`MODULE_VERSION` 等后置断言通过
 - `90-common-network` fixture 证明 DHCP `start=32`、`limit=232`、LAN DHCPv6/NDP relay 和 WAN relay master
+- 优化合同 fixture 证明 common/R4S/N5105 rootfs 语义完整，且 source rule 按动态 kernel series 展开、按同一文件的内容语义匹配；实际 build tree 还必须命中 TurboACC flow runtime、R4S affinity/接口映射/schedutil/crypto/OPP 与 N5105 VirtIO/EEE/VLAN 语义
 - workflow 中所有复用 action 都严格匹配 `actions/*@main`，没有第三方 action、tag 或固定 SHA
 
 ### 15.2 每个 profile 的 Kconfig 验证

@@ -93,6 +93,7 @@ jobs:
             profiles/x86-n5105-pve/files/etc/hotplug.d/net/*
           python3 -m py_compile scripts/*.py
           bash tests/test-profile-renderer.sh
+          python3 tests/test-optimization-contract.py
           bash tests/test-resolve-source-lock.sh
           bash tests/test-apply-source-lock-artifacts.sh
           bash tests/test-apply-profile-patches.sh

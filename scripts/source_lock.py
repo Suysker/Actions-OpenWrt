@@ -535,6 +535,19 @@ def tree_digest(paths: Iterable[pathlib.Path], root: pathlib.Path) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
+def profile_digest(repo_root: pathlib.Path, profile: str) -> str:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", profile):
+        raise ResolutionError(f"invalid profile name for digest: {profile!r}")
+    return tree_digest(
+        [
+            repo_root / "profiles/common",
+            repo_root / f"profiles/{profile}",
+            repo_root / "profiles/optimization-contracts.json",
+        ],
+        repo_root,
+    )
+
+
 def github_repo_slug(repo_url: str) -> str:
     parsed = urllib.parse.urlparse(repo_url.removesuffix(".git"))
     slug = parsed.path.strip("/")
@@ -1142,11 +1155,7 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
             ports[kernel_series].update(kernel_versions[kernel_series])
 
     profile_digests = {
-        profile: tree_digest(
-            [repo_root / "profiles/common", repo_root / f"profiles/{profile}"],
-            repo_root,
-        )
-        for profile in profiles
+        profile: profile_digest(repo_root, profile) for profile in profiles
     }
     patch_digest = tree_digest([repo_root / "patchsets"], repo_root)
     actions = resolve_actions(sorted((repo_root / ".github/workflows").glob("*.yml")))

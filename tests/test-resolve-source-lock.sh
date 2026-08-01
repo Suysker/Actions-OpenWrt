@@ -56,6 +56,29 @@ with tempfile.TemporaryDirectory() as directory:
     else:
         raise AssertionError("duplicate geodata contract entry was accepted")
 
+with tempfile.TemporaryDirectory() as directory:
+    digest_root = pathlib.Path(directory)
+    for profile in ("common", "r4s", "x86-n5105-pve"):
+        profile_root = digest_root / "profiles" / profile
+        profile_root.mkdir(parents=True)
+        (profile_root / "config.seed").write_text(profile, encoding="utf-8")
+    optimization_contract = digest_root / "profiles/optimization-contracts.json"
+    optimization_contract.write_text('{"schema":1}\n', encoding="utf-8")
+
+    r4s_before = module.profile_digest(digest_root, "r4s")
+    x86_before = module.profile_digest(digest_root, "x86-n5105-pve")
+    optimization_contract.write_text('{"schema":2}\n', encoding="utf-8")
+    r4s_after_contract = module.profile_digest(digest_root, "r4s")
+    assert r4s_after_contract != r4s_before
+    assert module.profile_digest(digest_root, "x86-n5105-pve") != x86_before
+
+    x86_after_contract = module.profile_digest(digest_root, "x86-n5105-pve")
+    (digest_root / "profiles/r4s/config.seed").write_text(
+        "r4s-changed", encoding="utf-8"
+    )
+    assert module.profile_digest(digest_root, "r4s") != r4s_after_contract
+    assert module.profile_digest(digest_root, "x86-n5105-pve") == x86_after_contract
+
 index = (fixtures / "haproxy-index.html").read_text(encoding="utf-8")
 assert module.select_haproxy_branch(index) == "3.4"
 releases = json.loads((fixtures / "haproxy-releases.json").read_text(encoding="utf-8"))
