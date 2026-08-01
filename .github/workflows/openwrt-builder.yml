@@ -93,12 +93,16 @@ jobs:
             profiles/x86-n5105-pve/files/etc/hotplug.d/net/*
           python3 -m py_compile scripts/*.py
           bash tests/test-profile-renderer.sh
-          python3 tests/test-optimization-contract.py
+          python3 tests/test-profile-semantics.py
           bash tests/test-resolve-source-lock.sh
           bash tests/test-apply-source-lock-artifacts.sh
           bash tests/test-apply-profile-patches.sh
+          bash tests/test-build-failure-diagnostics.sh
           bash tests/test-locked-feeds.sh
+          bash tests/test-select-package-providers.sh
+          bash tests/test-install-profile-feeds.sh
           bash tests/test-sync-source-overlays.sh
+          python3 tests/test-normalize-forbidden-suboptions.py
           bash scripts/check-profile-contract.sh r4s
           bash scripts/check-profile-contract.sh x86-n5105-pve
 
@@ -279,6 +283,16 @@ jobs:
           restore-keys: |
             openwrt-ccache-${{ runner.os }}-gcc15-${{ matrix.profile }}-${{ steps.identity.outputs.profile_digest }}-${{ steps.identity.outputs.patch_digest }}-
 
+      - name: Render profile declarations
+        shell: bash
+        run: |
+          set -euo pipefail
+          profile_dir="$GITHUB_WORKSPACE/profile-input"
+          mkdir -p "$profile_dir"
+          bash scripts/render-profile.sh config "$PROFILE" "$profile_dir/config.seed"
+          bash scripts/render-profile.sh required "$PROFILE" "$profile_dir/required.txt"
+          bash scripts/render-profile.sh forbidden "$PROFILE" "$profile_dir/forbidden.txt"
+
       - name: Checkout locked feeds and select providers
         shell: bash
         run: |
@@ -290,10 +304,11 @@ jobs:
             "$OPENWRT_ROOT" "$GITHUB_WORKSPACE/provider-selection-report.txt"
           bash "$GITHUB_WORKSPACE/scripts/sync-source-overlays.sh" \
             apply-lock "$SOURCE_LOCK" "$OPENWRT_ROOT"
-          for feed in packages small kenzo xiaorouji; do
-            ./scripts/feeds update -i "$feed"
-          done
-          ./scripts/feeds install -a
+          bash "$GITHUB_WORKSPACE/scripts/manage-custom-feeds.sh" \
+            reindex-lock "$SOURCE_LOCK" "$OPENWRT_ROOT"
+          bash "$GITHUB_WORKSPACE/scripts/install-profile-feeds.sh" \
+            "$OPENWRT_ROOT" "$GITHUB_WORKSPACE/profile-input/required.txt" \
+            "$GITHUB_WORKSPACE/profile-feed-install-report.txt"
 
       - name: Apply locked artifacts and profile patches
         shell: bash
@@ -305,15 +320,11 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/apply-profile-patches.sh" \
             "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" "$GITHUB_WORKSPACE/patch-report.txt"
 
-      - name: Render profile configuration and rootfs
+      - name: Install profile configuration and rootfs
         shell: bash
         run: |
           set -euo pipefail
           profile_dir="$GITHUB_WORKSPACE/profile-input"
-          mkdir -p "$profile_dir"
-          bash scripts/render-profile.sh config "$PROFILE" "$profile_dir/config.seed"
-          bash scripts/render-profile.sh required "$PROFILE" "$profile_dir/required.txt"
-          bash scripts/render-profile.sh forbidden "$PROFILE" "$profile_dir/forbidden.txt"
           bash scripts/render-profile.sh files "$PROFILE" "$OPENWRT_ROOT/files"
           cp "$profile_dir/config.seed" "$OPENWRT_ROOT/.config"
 
@@ -323,6 +334,14 @@ jobs:
           set -euo pipefail
           cd "$OPENWRT_ROOT"
           make defconfig
+          python3 "$GITHUB_WORKSPACE/scripts/normalize-forbidden-suboptions.py" apply \
+            .config "$GITHUB_WORKSPACE/profile-input/forbidden.txt" \
+            "$GITHUB_WORKSPACE/forbidden-suboptions-report.txt" \
+            tmp/.config-package.in
+          make defconfig
+          python3 "$GITHUB_WORKSPACE/scripts/normalize-forbidden-suboptions.py" check \
+            .config "$GITHUB_WORKSPACE/profile-input/forbidden.txt" \
+            "$GITHUB_WORKSPACE/forbidden-suboptions-check.txt"
           ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/config.effective"
           bash "$GITHUB_WORKSPACE/scripts/check-seed-config.sh" \
             "$GITHUB_WORKSPACE/profile-input/config.seed" .config "$GITHUB_WORKSPACE"
@@ -386,8 +405,10 @@ jobs:
           diagnostics="$GITHUB_WORKSPACE/diagnostics/$PROFILE"
           mkdir -p "$diagnostics"
           for file in runner-report.txt provider-selection-report.txt \
+            profile-feed-install-report.txt \
             artifact-override-report.json patch-report.txt profile-contract-report.txt \
             config.effective package-list.txt forbidden-packages.detected.txt \
+            forbidden-suboptions-report.txt forbidden-suboptions-check.txt \
             seed-config.mismatches.txt small-downloads.txt build.parallel.log \
             build.serial.log ccache-stats.txt; do
             [ -e "$GITHUB_WORKSPACE/$file" ] && cp "$GITHUB_WORKSPACE/$file" "$diagnostics/"

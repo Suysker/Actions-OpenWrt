@@ -6,6 +6,7 @@ usage() {
 Usage:
   manage-custom-feeds.sh apply <feeds.custom.conf> <feeds.conf.default>
   manage-custom-feeds.sh apply-lock <source-lock.json> <feeds.conf.default>
+  manage-custom-feeds.sh reindex-lock <source-lock.json> <openwrt-root>
   manage-custom-feeds.sh refs <feeds.custom.conf>
 EOF
 }
@@ -50,6 +51,79 @@ parse_feeds() {
 
 cmd="${1:-}"
 case "$cmd" in
+  reindex-lock)
+    lock_file="${2:-}"
+    openwrt_root="${3:-}"
+
+    if [ -z "$lock_file" ] || [ -z "$openwrt_root" ]; then
+      usage
+      exit 2
+    fi
+    if [ ! -r "$lock_file" ]; then
+      echo "::error::Source lock not found: $lock_file" >&2
+      exit 2
+    fi
+    if [ ! -x "$openwrt_root/scripts/feeds" ]; then
+      echo "::error::OpenWrt feeds helper not found: $openwrt_root/scripts/feeds" >&2
+      exit 2
+    fi
+
+    openwrt_root="$(cd "$openwrt_root" && pwd -P)"
+    names_file="$(mktemp)"
+    trap 'rm -f "$names_file"' EXIT
+    python3 - "$lock_file" > "$names_file" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+lock_path = pathlib.Path(sys.argv[1])
+lock = json.loads(lock_path.read_text(encoding="utf-8"))
+if lock.get("schema") != 3:
+    raise SystemExit("::error::Unsupported source-lock schema")
+feeds = lock.get("feeds")
+if not isinstance(feeds, dict) or not feeds:
+    raise SystemExit("::error::Source lock contains no feeds")
+for name, feed in feeds.items():
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+        raise SystemExit(f"::error::Invalid locked feed name: {name}")
+    if not isinstance(feed, dict):
+        raise SystemExit(f"::error::Invalid locked feed entry: {name}")
+
+ordered = sorted(
+    feeds.items(),
+    key=lambda item: (
+        0 if item[1].get("origin") == "custom" else 1,
+        item[1].get("order", -1),
+        item[0],
+    ),
+)
+seen_orders = {"custom": set(), "default": set()}
+for name, feed in ordered:
+    origin = feed.get("origin")
+    order = feed.get("order")
+    if (
+        origin not in seen_orders
+        or isinstance(order, bool)
+        or not isinstance(order, int)
+        or order < 0
+        or order in seen_orders[origin]
+    ):
+        raise SystemExit(f"::error::Invalid locked feed origin/order: {name}")
+    seen_orders[origin].add(order)
+    print(name)
+PY
+    mapfile -t feed_names < "$names_file"
+    [ "${#feed_names[@]}" -gt 0 ] || {
+      echo "::error::Source lock contains no feeds" >&2
+      exit 2
+    }
+    for feed in "${feed_names[@]}"; do
+      (cd "$openwrt_root" && ./scripts/feeds update -i "$feed")
+    done
+    echo "Reindexed ${#feed_names[@]} source-locked feed(s)."
+    ;;
+
   apply-lock)
     lock_file="${2:-}"
     target_file="${3:-}"

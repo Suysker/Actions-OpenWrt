@@ -216,6 +216,20 @@ def parse_feeds(text: str, label: str) -> list[dict[str, str]]:
     return result
 
 
+def merge_feed_specs(
+    custom_specs: list[dict[str, str]], default_specs: list[dict[str, str]]
+) -> list[tuple[str, int, dict[str, str]]]:
+    custom_names = {spec["name"] for spec in custom_specs}
+    return [
+        *[("custom", order, spec) for order, spec in enumerate(custom_specs)],
+        *[
+            ("default", order, spec)
+            for order, spec in enumerate(default_specs)
+            if spec["name"] not in custom_names
+        ],
+    ]
+
+
 def parse_env(path: pathlib.Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
@@ -650,7 +664,8 @@ def profile_digest(repo_root: pathlib.Path, profile: str) -> str:
         [
             repo_root / "profiles/common",
             repo_root / f"profiles/{profile}",
-            repo_root / "profiles/optimization-contracts.json",
+            repo_root / "profiles/profile-semantics.json",
+            repo_root / "feeds.custom.conf",
         ],
         repo_root,
     )
@@ -994,6 +1009,83 @@ def validate_source_overlays(value: Any, repo_root: pathlib.Path) -> None:
             raise ResolutionError(f"source overlay {identifier} mappings differ")
 
 
+def validate_locked_feeds(value: Any, repo_root: pathlib.Path) -> None:
+    if not isinstance(value, dict) or not value:
+        raise ResolutionError("source-lock contains no feeds")
+
+    custom_specs = parse_feeds(
+        (repo_root / "feeds.custom.conf").read_text(encoding="utf-8"),
+        "feeds.custom.conf",
+    )
+    expected_custom = {
+        spec["name"]: (order, spec) for order, spec in enumerate(custom_specs)
+    }
+    locked_custom: set[str] = set()
+    seen_orders: dict[str, set[int]] = {"custom": set(), "default": set()}
+    expected_fields = {
+        "type",
+        "url",
+        "requested_ref",
+        "resolved_ref",
+        "commit",
+        "origin",
+        "order",
+    }
+
+    for name, feed in value.items():
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+            raise ResolutionError(f"invalid locked feed name: {name!r}")
+        if not isinstance(feed, dict) or set(feed) != expected_fields:
+            raise ResolutionError(f"feed {name} has invalid lock fields")
+        if feed["type"] not in {"src-git", "src-git-full"}:
+            raise ResolutionError(f"feed {name} has unsupported type")
+        if not isinstance(feed["url"], str) or not feed["url"].startswith("https://"):
+            raise ResolutionError(f"feed {name} has an invalid URL")
+        if not isinstance(feed["requested_ref"], str) or not feed["requested_ref"]:
+            raise ResolutionError(f"feed {name} has an invalid requested ref")
+        resolved_ref = feed["resolved_ref"]
+        if not isinstance(resolved_ref, str) or not (
+            resolved_ref.startswith("refs/") or SHA1_RE.fullmatch(resolved_ref)
+        ):
+            raise ResolutionError(f"feed {name} has an invalid resolved ref")
+        require_sha1(feed["commit"], f"feed {name} commit")
+        origin = feed["origin"]
+        order = feed["order"]
+        if (
+            origin not in seen_orders
+            or isinstance(order, bool)
+            or not isinstance(order, int)
+            or order < 0
+        ):
+            raise ResolutionError(f"feed {name} has invalid origin/order")
+        if order in seen_orders[origin]:
+            raise ResolutionError(f"feed origin {origin} reuses order {order}")
+        seen_orders[origin].add(order)
+
+        if name in expected_custom:
+            expected_order, expected = expected_custom[name]
+            for field, wanted in (
+                ("type", expected["type"]),
+                ("url", expected["url"]),
+                ("requested_ref", expected["requested_ref"]),
+                ("origin", "custom"),
+                ("order", expected_order),
+            ):
+                if feed[field] != wanted:
+                    raise ResolutionError(
+                        f"custom feed {name} {field} differs from feeds.custom.conf"
+                    )
+            locked_custom.add(name)
+        elif origin != "default":
+            raise ResolutionError(f"source-lock contains undeclared custom feed {name}")
+
+    missing_custom = sorted(set(expected_custom) - locked_custom)
+    if missing_custom:
+        raise ResolutionError(
+            "source-lock misses custom feeds: " + ", ".join(missing_custom)
+        )
+
+
 def validate_lock(
     lock: dict[str, Any], repo_root: pathlib.Path | None = None
 ) -> None:
@@ -1004,8 +1096,7 @@ def validate_lock(
         raise ResolutionError("source-lock schema must be 3")
     require_sha1(lock.get("repository_commit", ""), "repository commit")
     require_sha1(lock.get("openwrt", {}).get("commit", ""), "OpenWrt commit")
-    for name, feed in lock.get("feeds", {}).items():
-        require_sha1(feed.get("commit", ""), f"feed {name} commit")
+    validate_locked_feeds(lock.get("feeds"), repo_root)
     validate_source_overlays(lock.get("source_overlays"), repo_root)
     validate_upstream_artifacts(lock.get("upstream_artifacts"), geodata_contracts)
     for name, value in lock.get("actions", {}).items():
@@ -1174,22 +1265,16 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         (repo_root / "feeds.custom.conf").read_text(encoding="utf-8"),
         "feeds.custom.conf",
     )
-    all_names: set[str] = set()
     feeds: dict[str, Any] = {}
-    # Custom feeds intentionally precede defaults, matching the repository's
-    # historical provider priority. Critical duplicates are still resolved by
-    # the explicit provider contract rather than relying on this order alone.
-    for origin, specs in (("custom", custom_specs), ("default", feed_specs)):
-        for order, spec in enumerate(specs):
-            name = spec["name"]
-            if name in all_names:
-                raise ResolutionError(f"default/custom feeds reuse name {name!r}")
-            all_names.add(name)
-            resolved = resolve_git_ref(spec["url"], spec["requested_ref"])
-            resolved["type"] = spec["type"]
-            resolved["origin"] = origin
-            resolved["order"] = order
-            feeds[name] = resolved
+    # A same-name custom feed is an explicit replacement for the corresponding
+    # Lean default. Package-level conflicts remain governed by providers.tsv.
+    for origin, order, spec in merge_feed_specs(custom_specs, feed_specs):
+        name = spec["name"]
+        resolved = resolve_git_ref(spec["url"], spec["requested_ref"])
+        resolved["type"] = spec["type"]
+        resolved["origin"] = origin
+        resolved["order"] = order
+        feeds[name] = resolved
 
     source_overlays: dict[str, Any] = {}
     for contract in load_source_overlay_contracts(repo_root):

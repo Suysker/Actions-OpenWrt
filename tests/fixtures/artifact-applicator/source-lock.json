@@ -4,23 +4,59 @@
   "repository_commit": "1111111111111111111111111111111111111111",
   "openwrt": {"commit": "2222222222222222222222222222222222222222"},
   "feeds": {
-    "packages": {
+    "small": {
       "type": "src-git",
-      "url": "https://github.com/coolsnowwolf/packages",
+      "url": "https://github.com/kenzok8/small.git",
       "requested_ref": "HEAD",
       "resolved_ref": "refs/heads/master",
       "commit": "3333333333333333333333333333333333333333",
-      "origin": "default",
+      "origin": "custom",
       "order": 0
+    },
+    "kenzo": {
+      "type": "src-git",
+      "url": "https://github.com/kenzok8/openwrt-packages.git",
+      "requested_ref": "HEAD",
+      "resolved_ref": "refs/heads/master",
+      "commit": "4444444444444444444444444444444444444444",
+      "origin": "custom",
+      "order": 1
+    },
+    "sbwml": {
+      "type": "src-git",
+      "url": "https://github.com/sbwml/luci-app-mosdns.git",
+      "requested_ref": "HEAD",
+      "resolved_ref": "refs/heads/master",
+      "commit": "5555555555555555555555555555555555555555",
+      "origin": "custom",
+      "order": 2
+    },
+    "xiaorouji": {
+      "type": "src-git",
+      "url": "https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git",
+      "requested_ref": "main",
+      "resolved_ref": "refs/heads/main",
+      "commit": "6666666666666666666666666666666666666666",
+      "origin": "custom",
+      "order": 3
     },
     "passwall": {
       "type": "src-git",
       "url": "https://github.com/Openwrt-Passwall/openwrt-passwall.git",
       "requested_ref": "main",
       "resolved_ref": "refs/heads/main",
-      "commit": "4444444444444444444444444444444444444444",
+      "commit": "7777777777777777777777777777777777777777",
       "origin": "custom",
-      "order": 0
+      "order": 4
+    },
+    "packages": {
+      "type": "src-git",
+      "url": "https://github.com/openwrt/packages.git",
+      "requested_ref": "master",
+      "resolved_ref": "refs/heads/master",
+      "commit": "8888888888888888888888888888888888888888",
+      "origin": "custom",
+      "order": 5
     }
   },
   "source_overlays": {
@@ -30,20 +66,8 @@
       "resolved_ref": "refs/heads/master",
       "commit": "5555555555555555555555555555555555555555",
       "mappings": [
-        {"source": "package/libs/gmp", "target": "package/libs/gmp"}
-      ]
-    },
-    "openwrt-packages": {
-      "url": "https://github.com/openwrt/packages.git",
-      "requested_ref": "master",
-      "resolved_ref": "refs/heads/master",
-      "commit": "6666666666666666666666666666666666666666",
-      "mappings": [
-        {"source": "lang/golang", "target": "feeds/packages/lang/golang"},
-        {"source": "libs/libtirpc", "target": "feeds/packages/libs/libtirpc"},
-        {"source": "libs/libwebsockets", "target": "feeds/packages/libs/libwebsockets"},
-        {"source": "net/nlbwmon", "target": "feeds/packages/net/nlbwmon"},
-        {"source": "utils/unzip", "target": "feeds/packages/utils/unzip"}
+        {"source": "package/libs/gmp", "target": "package/libs/gmp"},
+        {"source": "package/libs/pcre2", "target": "package/libs/pcre2"}
       ]
     }
   },

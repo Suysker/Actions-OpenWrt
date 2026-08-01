@@ -57,19 +57,10 @@ with tempfile.TemporaryDirectory() as directory:
         raise AssertionError("duplicate geodata contract entry was accepted")
 
 overlay_contracts = module.load_source_overlay_contracts(root)
-assert [item["id"] for item in overlay_contracts] == [
-    "openwrt-core",
-    "openwrt-packages",
-]
+assert [item["id"] for item in overlay_contracts] == ["openwrt-core"]
 assert overlay_contracts[0]["mappings"] == [
-    {"source": "package/libs/gmp", "target": "package/libs/gmp"}
-]
-assert [mapping["target"] for mapping in overlay_contracts[1]["mappings"]] == [
-    "feeds/packages/lang/golang",
-    "feeds/packages/libs/libtirpc",
-    "feeds/packages/libs/libwebsockets",
-    "feeds/packages/net/nlbwmon",
-    "feeds/packages/utils/unzip",
+    {"source": "package/libs/gmp", "target": "package/libs/gmp"},
+    {"source": "package/libs/pcre2", "target": "package/libs/pcre2"},
 ]
 for unsafe_path in (
     "package/libs/./gmp",
@@ -89,9 +80,7 @@ with tempfile.TemporaryDirectory() as directory:
     invalid_contract = json.loads(
         (root / "profiles/common/source-overlays.json").read_text(encoding="utf-8")
     )
-    invalid_contract["repositories"][1]["mappings"][0]["target"] = (
-        "package/libs/gmp"
-    )
+    invalid_contract["repositories"][0]["mappings"][1]["target"] = "package/libs/gmp"
     contract_path.write_text(json.dumps(invalid_contract), encoding="utf-8")
     try:
         module.load_source_overlay_contracts(temporary_root)
@@ -106,12 +95,17 @@ with tempfile.TemporaryDirectory() as directory:
         profile_root = digest_root / "profiles" / profile
         profile_root.mkdir(parents=True)
         (profile_root / "config.seed").write_text(profile, encoding="utf-8")
-    optimization_contract = digest_root / "profiles/optimization-contracts.json"
-    optimization_contract.write_text('{"schema":1}\n', encoding="utf-8")
+    profile_semantics = digest_root / "profiles/profile-semantics.json"
+    profile_semantics.write_text('{"schema":1}\n', encoding="utf-8")
+    custom_feeds = digest_root / "feeds.custom.conf"
+    custom_feeds.write_text(
+        "src-git packages https://github.com/openwrt/packages.git;master\n",
+        encoding="utf-8",
+    )
 
     r4s_before = module.profile_digest(digest_root, "r4s")
     x86_before = module.profile_digest(digest_root, "x86-n5105-pve")
-    optimization_contract.write_text('{"schema":2}\n', encoding="utf-8")
+    profile_semantics.write_text('{"schema":2}\n', encoding="utf-8")
     r4s_after_contract = module.profile_digest(digest_root, "r4s")
     assert r4s_after_contract != r4s_before
     assert module.profile_digest(digest_root, "x86-n5105-pve") != x86_before
@@ -122,6 +116,39 @@ with tempfile.TemporaryDirectory() as directory:
     )
     assert module.profile_digest(digest_root, "r4s") != r4s_after_contract
     assert module.profile_digest(digest_root, "x86-n5105-pve") == x86_after_contract
+
+    r4s_before_feeds = module.profile_digest(digest_root, "r4s")
+    x86_before_feeds = module.profile_digest(digest_root, "x86-n5105-pve")
+    custom_feeds.write_text(
+        "src-git packages https://github.com/openwrt/packages.git;main\n",
+        encoding="utf-8",
+    )
+    assert module.profile_digest(digest_root, "r4s") != r4s_before_feeds
+    assert module.profile_digest(digest_root, "x86-n5105-pve") != x86_before_feeds
+
+custom_specs = module.parse_feeds(
+    (root / "feeds.custom.conf").read_text(encoding="utf-8"),
+    "feeds.custom.conf",
+)
+default_specs = module.parse_feeds(
+    "\n".join(
+        (
+            "src-git packages https://github.com/coolsnowwolf/packages",
+            "src-git luci https://github.com/coolsnowwolf/luci",
+        )
+    ),
+    "fixture defaults",
+)
+merged_specs = module.merge_feed_specs(custom_specs, default_specs)
+assert [(origin, spec["name"]) for origin, _, spec in merged_specs].count(
+    ("custom", "packages")
+) == 1
+assert ("default", "packages") not in [
+    (origin, spec["name"]) for origin, _, spec in merged_specs
+]
+assert ("default", "luci") in [
+    (origin, spec["name"]) for origin, _, spec in merged_specs
+]
 
 index = (fixtures / "haproxy-index.html").read_text(encoding="utf-8")
 assert module.select_haproxy_branch(index) == "3.4"
@@ -163,12 +190,33 @@ origin_path = "6.12/0002-bbr3.patch"
 raw_url = module.github_raw_url(
     "https://github.com/CachyOS/kernel-patches.git", port_commit, origin_path
 )
+
+
+def fixture_feeds():
+    result = {}
+    for order, feed in enumerate(custom_specs):
+        result[feed["name"]] = {
+            "type": feed["type"],
+            "url": feed["url"],
+            "requested_ref": feed["requested_ref"],
+            "resolved_ref": (
+                f"refs/heads/{feed['requested_ref']}"
+                if feed["requested_ref"] != "HEAD"
+                else "refs/heads/master"
+            ),
+            "commit": f"{order + 1:x}" * 40,
+            "origin": "custom",
+            "order": order,
+        }
+    return result
+
+
 base = {
     "schema": 3,
     "resolved_at": "2026-01-01T00:00:00Z",
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
-    "feeds": {"packages": {"commit": "3" * 40}},
+    "feeds": fixture_feeds(),
     "source_overlays": {
         "openwrt-core": {
             "url": "https://github.com/openwrt/openwrt.git",
@@ -176,34 +224,13 @@ base = {
             "resolved_ref": "refs/heads/master",
             "commit": "4" * 40,
             "mappings": [
-                {"source": "package/libs/gmp", "target": "package/libs/gmp"}
-            ],
-        },
-        "openwrt-packages": {
-            "url": "https://github.com/openwrt/packages.git",
-            "requested_ref": "master",
-            "resolved_ref": "refs/heads/master",
-            "commit": "9" * 40,
-            "mappings": [
                 {
-                    "source": "lang/golang",
-                    "target": "feeds/packages/lang/golang",
+                    "source": "package/libs/gmp",
+                    "target": "package/libs/gmp",
                 },
                 {
-                    "source": "libs/libtirpc",
-                    "target": "feeds/packages/libs/libtirpc",
-                },
-                {
-                    "source": "libs/libwebsockets",
-                    "target": "feeds/packages/libs/libwebsockets",
-                },
-                {
-                    "source": "net/nlbwmon",
-                    "target": "feeds/packages/net/nlbwmon",
-                },
-                {
-                    "source": "utils/unzip",
-                    "target": "feeds/packages/utils/unzip",
+                    "source": "package/libs/pcre2",
+                    "target": "package/libs/pcre2",
                 },
             ],
         },
@@ -289,6 +316,26 @@ base = {
     "patch_digest": "sha256:" + "7" * 64,
 }
 module.validate_lock(base)
+wrong_packages_feed = json.loads(json.dumps(base))
+wrong_packages_feed["feeds"]["packages"]["url"] = (
+    "https://github.com/coolsnowwolf/packages"
+)
+try:
+    module.validate_lock(wrong_packages_feed)
+except module.ResolutionError as exc:
+    assert "custom feed packages url differs" in str(exc)
+else:
+    raise AssertionError("incoming lock changed the canonical packages feed")
+
+missing_custom_feed = json.loads(json.dumps(base))
+del missing_custom_feed["feeds"]["sbwml"]
+try:
+    module.validate_lock(missing_custom_feed)
+except module.ResolutionError as exc:
+    assert "misses custom feeds" in str(exc)
+else:
+    raise AssertionError("incoming lock omitted a declared custom feed")
+
 rollback = json.loads(json.dumps(base))
 for artifact in rollback["upstream_artifacts"].values():
     artifact["policy"] = "exact-override"

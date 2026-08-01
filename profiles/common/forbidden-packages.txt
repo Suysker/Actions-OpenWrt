@@ -58,6 +58,7 @@ exact:ddns-scripts_dnspod
 regex:^ddns-scripts_
 
 # Alternative proxy and fast-path stacks are not selected.
+exact:3proxy
 exact:mihomo
 exact:mihomo-alpha
 exact:mihomo-meta

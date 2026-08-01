@@ -110,46 +110,18 @@ render_pair() {
 render_config() (
   local profile="$1"
   local output="$2"
-  local pdir rendered rules rule package symbol
+  local seed required forbidden
 
-  pdir="$(profile_dir "$profile")"
-  rendered="$(mktemp)"
-  rules="$(mktemp)"
-  trap 'rm -f "$rendered" "$rules"' EXIT
+  seed="$(mktemp)"
+  required="$(mktemp)"
+  forbidden="$(mktemp)"
+  trap 'rm -f "$seed" "$required" "$forbidden"' EXIT
 
-  render_pair config.seed "$profile" "$rendered"
-  assert_pair_has_no_duplicates forbidden-packages.txt \
-    "$profiles_root/common/forbidden-packages.txt" \
-    "$pdir/forbidden-packages.txt"
-  {
-    normalized_rules "$profiles_root/common/forbidden-packages.txt"
-    normalized_rules "$pdir/forbidden-packages.txt"
-  } | sort -u > "$rules"
-
-  printf '\n# Derived from exact forbidden package contracts.\n' >> "$rendered"
-  while IFS= read -r rule; do
-    case "$rule" in
-      exact:*)
-        package="${rule#exact:}"
-        if ! printf '%s\n' "$package" | grep -Eq '^[A-Za-z0-9_.+-]+$'; then
-          echo "::error::Invalid exact forbidden package name: $package" >&2
-          exit 2
-        fi
-        symbol="CONFIG_PACKAGE_$package"
-        if grep -Fxq "# $symbol is not set" "$rendered"; then
-          continue
-        fi
-        if awk -v symbol="$symbol" 'index($0, symbol "=") == 1 { found = 1 } END { exit found ? 0 : 1 }' "$rendered"; then
-          echo "::error::Forbidden exact package is selected in config seed: $package" >&2
-          exit 1
-        fi
-        printf '# %s is not set\n' "$symbol" >> "$rendered"
-        ;;
-    esac
-  done < "$rules"
-
-  mkdir -p "$(dirname "$output")"
-  cp "$rendered" "$output"
+  render_pair config.seed "$profile" "$seed"
+  render_pair required-packages.txt "$profile" "$required"
+  render_pair forbidden-packages.txt "$profile" "$forbidden"
+  python3 "$repo_root/scripts/profile_model.py" derive-config \
+    "$seed" "$required" "$forbidden" "$output"
 )
 
 render_env() (

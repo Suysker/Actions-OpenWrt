@@ -12,38 +12,35 @@ for profile in "${profiles[@]}"; do
   bash "$repo_root/scripts/check-profile-contract.sh" "$profile" \
     > "$tmpdir/$profile.contract.txt"
   bash "$repo_root/scripts/render-profile.sh" config "$profile" "$tmpdir/$profile.config"
-  grep -qx 'CONFIG_LUCI_LANG_zh_Hans=y' "$tmpdir/$profile.config"
-  grep -qx '# CONFIG_PACKAGE_luci-app-ssr-plus is not set' "$tmpdir/$profile.config"
-  grep -qx '# CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Mihomo is not set' "$tmpdir/$profile.config"
-  grep -qx '# CONFIG_PACKAGE_block-mount is not set' "$tmpdir/$profile.config"
+  bash "$repo_root/scripts/render-profile.sh" required "$profile" "$tmpdir/$profile.required"
+  bash "$repo_root/scripts/render-profile.sh" forbidden "$profile" "$tmpdir/$profile.forbidden"
+  python3 - "$repo_root" "$tmpdir/$profile.config" \
+    "$tmpdir/$profile.required" "$tmpdir/$profile.forbidden" <<'PY'
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "scripts"))
+from profile_model import load_forbidden, load_required, parse_config
+
+config = parse_config(pathlib.Path(sys.argv[2]))
+required = load_required(pathlib.Path(sys.argv[3]))
+forbidden = load_forbidden(pathlib.Path(sys.argv[4]))
+for package in required.packages:
+    assert config[f"CONFIG_PACKAGE_{package}"] == "y"
+for symbol in required.configs:
+    assert config[symbol] == "y"
+for package in forbidden.exact:
+    assert config[f"CONFIG_PACKAGE_{package}"] == "n"
+PY
   if grep -q '^CONFIG_PACKAGE_luci-i18n-.*-zh-cn=y$' "$tmpdir/$profile.config"; then
     echo "renderer emitted a hidden per-package LuCI translation seed for $profile" >&2
-    exit 1
-  fi
-  bash "$repo_root/scripts/render-profile.sh" files "$profile" "$tmpdir/$profile-files"
-  network_defaults="$tmpdir/$profile-files/etc/uci-defaults/90-common-network"
-  [ -f "$network_defaults" ]
-  for expected in \
-    "set dhcp.lan.start='32'" \
-    "set dhcp.lan.limit='232'" \
-    "set dhcp.lan.ra='server'" \
-    "set dhcp.lan.dhcpv6='relay'" \
-    "set dhcp.lan.ndp='relay'" \
-    "set dhcp.wan.ra='relay'" \
-    "set dhcp.wan.dhcpv6='relay'" \
-    "set dhcp.wan.ndp='relay'" \
-    "set dhcp.wan.master='1'"; do
-    grep -Fqx "$expected" "$network_defaults"
-  done
-  if grep -Fqx "set dhcp.lan.dhcpv6='server'" "$network_defaults"; then
-    echo "renderer retained the unwanted LAN DHCPv6 server default for $profile" >&2
     exit 1
   fi
 done
 
 # A common/device symbol collision must be rejected.
 cp -a "$repo_root/profiles" "$tmpdir/profiles"
-printf '\nCONFIG_PACKAGE_firewall=y\n' >> "$tmpdir/profiles/r4s/config.seed"
+printf '\nCONFIG_DEVEL=y\n' >> "$tmpdir/profiles/r4s/config.seed"
 if PROFILE_ROOT_OVERRIDE="$tmpdir/profiles" \
   bash "$repo_root/scripts/render-profile.sh" config r4s "$tmpdir/collision.config" \
   >"$tmpdir/collision.out" 2>&1; then
@@ -51,6 +48,19 @@ if PROFILE_ROOT_OVERRIDE="$tmpdir/profiles" \
   exit 1
 fi
 grep -q 'both own entries' "$tmpdir/collision.out"
+
+# A symbol derived from required rules must not be copied into config.seed.
+rm -rf "$tmpdir/profiles"
+cp -a "$repo_root/profiles" "$tmpdir/profiles"
+printf '\nCONFIG_PACKAGE_firewall=y\n' >> "$tmpdir/profiles/common/config.seed"
+if PROFILE_ROOT_OVERRIDE="$tmpdir/profiles" \
+  bash "$repo_root/scripts/render-profile.sh" config r4s "$tmpdir/required-owner.config" \
+  >"$tmpdir/required-owner.out" 2>&1; then
+  echo "renderer accepted duplicate seed/required ownership" >&2
+  exit 1
+fi
+grep -q 'repeats symbols owned by required/forbidden rules' \
+  "$tmpdir/required-owner.out"
 
 # An exact-forbidden package must never be selected by either seed layer.
 rm -rf "$tmpdir/profiles"
@@ -62,7 +72,8 @@ if PROFILE_ROOT_OVERRIDE="$tmpdir/profiles" \
   echo "renderer accepted an exact-forbidden selected package" >&2
   exit 1
 fi
-grep -q 'Forbidden exact package is selected' "$tmpdir/forbidden.out"
+grep -q 'repeats symbols owned by required/forbidden rules' \
+  "$tmpdir/forbidden.out"
 
 # A rootfs collision must be rejected instead of silently overriding common.
 rm -rf "$tmpdir/profiles"

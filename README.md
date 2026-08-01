@@ -5,7 +5,7 @@
 - NanoPi R4S：RK3399、原生 Lean 启动链与网口 IRQ 策略、ARMv8 CRC/crypto、R8168、PWM fan、512 MiB LZ4 zram。
 - N5105 PVE：`x86-64-v2 + mtune=tremont`、squashfs combined EFI、VirtIO NET/SCSI、I225/igc 直通、4 队列与 irqbalance。
 
-两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列动态解析的 BBRv3。Lean master 的 `libsepol` 仅在该包内保持 GNU17 兼容语义，不降低全局编译器；Go、`libtirpc`、`nlbwmon`、`libwebsockets`、`unzip` 与 GMP 从各自当轮锁定的 OpenWrt 官方 master 同步，仓库和 source→target 映射只在 common `source-overlays.json` 声明一次。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
+两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列动态解析的 BBRv3。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP 与 PCRE2 从同一轮锁定的 OpenWrt 官方 core 同步。只有 `libsepol`、旧 `wol` CLI 和 current `small/tcping` 保留经真实构建证明必要的窄语义兼容，不降低全局编译器。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
 
 ## 构建模型
 
@@ -46,17 +46,19 @@ profiles/r4s/                R4S target、CPU flags、硬件包和运行时设�
 profiles/x86-n5105-pve/      N5105 PVE target、CPU flags、硬件包和运行时设置
 ```
 
-- 共享应用只修改 `profiles/common/config.seed`。
-- 设备 target、镜像、CPU flags、驱动和设备调优只修改对应设备的 `config.seed`。
-- 每个必需包或 Kconfig 进入 `required-packages.txt`。
-- 不允许进入 manifest 的包写入 `forbidden-packages.txt`；其中 `exact:` 规则会自动成为 Kconfig 负选择，并在 `make defconfig` 后及最终 manifest 再次校验，普通精简不删除源码。
+- 共享/设备必选包与值为 `y` 的公开 Kconfig 只写入对应 `required-packages.txt`，renderer 自动生成正选择；不在 `config.seed` 再抄一份。
+- target、镜像布局、CPU flags、数值/字符串和不能由 package 清单表达的功能选项写入 common 或设备 `config.seed`；renderer 会拒绝与派生 symbol 重复所有权。
+- 不允许进入 manifest 的包只写入 `forbidden-packages.txt`；其中 `exact:` 规则自动成为 Kconfig 负选择。首次 `make defconfig` 后还会统一清理已禁父包遗留的 `CONFIG_PACKAGE_<parent>_*` 正选择，再次 defconfig 并复验；普通精简不删除源码。
 - rootfs 文件放在对应 `files/`。common 与设备层同路径会直接失败，不允许静默覆盖。
 - 同一 Kconfig symbol 或 required/forbidden 规则不能同时归 common 与设备层所有。
-- `profiles/optimization-contracts.json` 是运行时调优及 Lean 继承优化的唯一语义合同。它使用动态 `{kernel_series}` 和 patch 目录 glob，不保存某轮 kernel 版本、commit、hash 或 patch 文件名；静态检查验证 rootfs，构建检查再验证本轮锁定 Lean tree/feeds。它进入两套 profile digest，修改共同性能意图会同时改变两个 profile digest；完整 source-lock 仍独立包含仓库 commit。
+- `profiles/profile-semantics.json` 是网络默认、运行时调优及 Lean 继承优化的唯一语义合同。它使用动态 `{kernel_series}` 和 patch 目录 glob，不保存某轮 kernel 版本、commit、hash 或 patch 文件名；静态检查验证 rootfs，构建检查再验证本轮锁定 Lean tree/feeds。它进入两套 profile digest，修改 common 行为会同时改变两个 profile digest；完整 source-lock 仍独立包含仓库 commit。
+- `scripts/check-profile-contract.sh` 只编排通用关系验证，没有 R4S/N5105、包名、CPU flags 或网络值分支；新增组件或 profile 不需要修改 checker 代码。
 
-`profiles/common/providers.tsv` 是关键 package provider 的唯一合同。当前明确选择默认 packages feed 的 HAProxy、kenzo 的 AdGuardHome、xiaorouji 的 `v2ray-geodata` 和 Lean LuCI 的 TurboACC；真实冲突 provider 会在 feed checkout 后被精确移除并重新索引。Geo 数据角色与来源映射则只定义在 `profiles/common/geodata-sources.json`：`v2ray-geodata` 是同时产出 `v2ray-geoip` 与 `v2ray-geosite` 的 package recipe，不是第三份规则数据；resolver、validator 和 applicator 共用该合同，把两个 download block 改写成对应 Loyalsoldier 载荷的当轮精确 tag、URL 与 SHA256，执行代码不再各自枚举仓库和字段。
+`profiles/common/providers.tsv` 是当前产品重复 package provider 的唯一合同。HAProxy 来自官方 packages；PassWall app 来自 canonical `passwall` feed；MosDNS app/core 来自 `sbwml`；SmartDNS 与 AdGuardHome 来自 `kenzo`；PassWall 依赖按合同在 `xiaorouji` 与 `small` 中唯一选择。真实冲突目录会被精确移除，随后从 source-lock 枚举并重建全部 feed 索引。Geo 数据角色与来源映射只定义在 `profiles/common/geodata-sources.json`：`v2ray-geodata` 同时产出 `v2ray-geoip` 与 `v2ray-geosite`，resolver、validator 和 applicator 共用该合同，把两个 download block 改写成 Loyalsoldier 载荷的当轮精确 tag、URL 与 SHA256。
 
-自定义 Feed 统一从 `feeds.custom.conf` 解析并在每轮冻结 commit。`small`、`kenzo`、`sbwml` 使用用户指定的上游；PassWall 使用旧 `xiaorouji` 地址当前指向的 canonical `Openwrt-Passwall` 组织，避免依赖重定向或已不存在的旧仓库。配置中的 `main`/默认分支是浮动跟踪策略，不是永久版本锁。
+feed 索引覆盖全部锁定源，但安装阶段只提交当前 profile 的 required package，并由 OpenWrt feeds installer 递归展开 source/build/runtime dependency。未使用应用不会进入 Kconfig，也不会因为它们自身陈旧而扩大维护范围。
+
+自定义 Feed 统一从 `feeds.custom.conf` 解析并在每轮冻结 commit。同名 `packages` 条目明确覆盖 Lean 默认 packages 为 OpenWrt 官方 master；`small`、`kenzo`、`sbwml` 使用用户指定上游，PassWall 使用 canonical `Openwrt-Passwall` 组织。配置中的 `main`/`master`/默认分支是浮动跟踪策略，不是永久版本锁；incoming source-lock 必须逐项匹配这些静态身份。
 
 ## 固件内容与边界
 
@@ -105,13 +107,16 @@ serial0: socket
 bash -n diy-part1.sh diy-part2.sh scripts/*.sh profiles/*/files/etc/uci-defaults/*
 python3 -m py_compile scripts/*.py
 bash tests/test-profile-renderer.sh
-python3 tests/test-optimization-contract.py
+python3 tests/test-profile-semantics.py
 bash tests/test-resolve-source-lock.sh
 bash tests/test-apply-source-lock-artifacts.sh
 bash tests/test-apply-profile-patches.sh
 bash tests/test-build-failure-diagnostics.sh
 bash tests/test-locked-feeds.sh
+bash tests/test-select-package-providers.sh
+bash tests/test-install-profile-feeds.sh
 bash tests/test-sync-source-overlays.sh
+python3 tests/test-normalize-forbidden-suboptions.py
 bash scripts/check-profile-contract.sh r4s
 bash scripts/check-profile-contract.sh x86-n5105-pve
 ```
@@ -126,7 +131,7 @@ bash scripts/resolve-source-lock.sh materialize \
 bash scripts/resolve-source-lock.sh digest /tmp/source-input/source-lock.json
 ```
 
-GitHub build 还会执行 `make defconfig`、required/forbidden/provider 契约、锁定源码的优化语义合同、定向下载、完整 `make download`、一次并行编译、实际 `tcp_bbr.ko` module version 3、`sch_fq.ko`、GCC 15、镜像 gzip、manifest、buildinfo、SBOM 和所有 SHA256 验证。
+GitHub build 还会执行两次 `make defconfig` 及 forbidden 子选项收敛、required/forbidden/provider 契约、锁定源码的优化语义合同、定向下载、完整 `make download`、一次并行编译、实际 `tcp_bbr.ko` module version 3、`sch_fq.ko`、GCC 15、镜像 gzip、manifest、buildinfo、SBOM 和所有 SHA256 验证。
 
 ## 产物与迁移说明
 

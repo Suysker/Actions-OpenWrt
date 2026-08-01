@@ -4,6 +4,42 @@
     "common": {
       "rootfs": [
         {
+          "name": "common.network-defaults",
+          "path": "etc/uci-defaults/90-common-network",
+          "contains": [
+            "set network.lan.proto='static'",
+            "set network.lan.ipaddr='192.168.2.1'",
+            "set network.lan.netmask='255.255.255.0'",
+            "set network.lan.ip6assign='64'",
+            "set network.lan.delegate='0'",
+            "set network.wan.proto='dhcp'",
+            "set network.wan6.proto='dhcpv6'",
+            "set dhcp.lan.start='32'",
+            "set dhcp.lan.limit='232'",
+            "set dhcp.lan.leasetime='12h'",
+            "set dhcp.lan.ra='server'",
+            "set dhcp.lan.dhcpv6='relay'",
+            "set dhcp.lan.ndp='relay'",
+            "set dhcp.wan.ra='relay'",
+            "set dhcp.wan.dhcpv6='relay'",
+            "set dhcp.wan.ndp='relay'",
+            "set dhcp.wan.master='1'"
+          ],
+          "forbidden": [
+            "set dhcp.lan.dhcpv6='server'"
+          ]
+        },
+        {
+          "name": "common.system-defaults",
+          "path": "etc/uci-defaults/90-common-system",
+          "contains": [
+            "set system.@system[0].zonename='Asia/Shanghai'",
+            "set system.@system[0].timezone='CST-8'",
+            "set system.ntp.enabled='1'",
+            "set system.ntp.enable_server='0'"
+          ]
+        },
+        {
           "name": "common.bbr3-fq-turboacc-default",
           "path": "etc/uci-defaults/zz-common-turboacc",
           "contains": [

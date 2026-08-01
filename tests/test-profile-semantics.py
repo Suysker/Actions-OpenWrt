@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the generic optimization contract with real overlays and fixtures."""
+"""Exercise generic profile semantics with real overlays and fixtures."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import tempfile
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
-from optimization_contract import check_contract, load_contract  # noqa: E402
+from profile_semantics import check_contract, load_contract  # noqa: E402
 
 
 def render_rootfs(profile: str, destination: pathlib.Path) -> None:
@@ -61,15 +61,15 @@ def assert_no_problems(label: str, problems: list[str]) -> None:
 
 
 def main() -> int:
-    contract_path = REPO_ROOT / "profiles/optimization-contracts.json"
+    contract_path = REPO_ROOT / "profiles/profile-semantics.json"
     contract = load_contract(contract_path)
     text = contract_path.read_text(encoding="utf-8")
     if "6.12" in text or '"commit"' in text or '"sha256"' in text:
-        raise AssertionError("optimization contract contains per-run version/hash state")
+        raise AssertionError("profile semantics contain per-run version/hash state")
 
     profiles = sorted(scope for scope in contract["scopes"] if scope != "common")
     if profiles != ["r4s", "x86-n5105-pve"]:
-        raise AssertionError(f"unexpected maintained optimization scopes: {profiles}")
+        raise AssertionError(f"unexpected maintained profile scopes: {profiles}")
 
     for scope in profiles:
         for rule in contract["scopes"][scope]["source"]:
@@ -121,10 +121,10 @@ def main() -> int:
             )
             if not any(rule["name"] in problem for problem in broken_problems):
                 raise AssertionError(
-                    f"{profile} did not reject a missing source optimization semantic"
+                    f"{profile} did not reject a missing source semantic"
                 )
 
-    print("Optimization contract tests passed.")
+    print("Profile semantic tests passed.")
     return 0
 
 

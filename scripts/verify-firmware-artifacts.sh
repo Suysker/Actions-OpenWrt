@@ -14,6 +14,14 @@ source_lock="${3:-}"
 [ -r "$source_lock" ] || { echo "::error::Source lock missing: $source_lock" >&2; exit 2; }
 
 artifact_dir="$(cd "$artifact_dir" && pwd -P)"
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+bash "$repo_root/scripts/render-profile.sh" config "$profile" \
+  "$tmpdir/profile.config"
+bash "$repo_root/scripts/render-profile.sh" required "$profile" \
+  "$tmpdir/required.txt"
+bash "$repo_root/scripts/render-profile.sh" forbidden "$profile" \
+  "$tmpdir/forbidden.txt"
 image_pattern="$(python3 - "$source_lock" "$profile" <<'PY'
 import json, sys
 lock = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -82,7 +90,8 @@ embedded_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$art
 }
 
 python3 - "$repo_root" "$profile" "$manifest" "$config_buildinfo" \
-  "$artifact_dir" "$expected_digest" <<'PY'
+  "$artifact_dir" "$expected_digest" "$tmpdir/profile.config" \
+  "$tmpdir/required.txt" "$tmpdir/forbidden.txt" <<'PY'
 import json
 import hashlib
 import pathlib
@@ -96,6 +105,12 @@ manifest = pathlib.Path(sys.argv[3])
 config_buildinfo = pathlib.Path(sys.argv[4])
 artifacts = pathlib.Path(sys.argv[5])
 expected_digest = sys.argv[6]
+expected_config_path = pathlib.Path(sys.argv[7])
+required_path = pathlib.Path(sys.argv[8])
+forbidden_path = pathlib.Path(sys.argv[9])
+
+sys.path.insert(0, str(root / "scripts"))
+from profile_model import load_forbidden, load_required, parse_config
 
 lock = json.loads((artifacts / "source-lock.json").read_text(encoding="utf-8"))
 expected_bbr_patches = {
@@ -108,7 +123,12 @@ with tarfile.open(artifacts / "bbr3-patches.tar.gz", "r:gz") as archive:
     for member in archive.getmembers():
         if member.isdir():
             continue
-        if not member.isfile() or member.name.startswith("/") or ".." in pathlib.PurePosixPath(member.name).parts:
+        unsafe = (
+            not member.isfile()
+            or member.name.startswith("/")
+            or ".." in pathlib.PurePosixPath(member.name).parts
+        )
+        if unsafe:
             raise SystemExit(f"::error::Unsafe BBRv3 archive member: {member.name}")
         handle = archive.extractfile(member)
         if handle is None:
@@ -117,37 +137,38 @@ with tarfile.open(artifacts / "bbr3-patches.tar.gz", "r:gz") as archive:
 if observed_bbr_patches != expected_bbr_patches:
     raise SystemExit("::error::Materialized BBRv3 archive differs from source-lock")
 
-def clean(path):
-    result = []
-    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if line:
-            result.append(line)
-    return result
+packages = {
+    line.split()[0]
+    for line in manifest.read_text(encoding="utf-8").splitlines()
+    if line.strip()
+}
+required = load_required(required_path)
+for package in required.packages:
+    if package not in packages:
+        raise SystemExit(f"::error::Manifest misses required package {package}")
 
-packages = {line.split()[0] for line in manifest.read_text(encoding="utf-8").splitlines() if line.strip()}
-required = clean(root / "profiles/common/required-packages.txt") + clean(root / f"profiles/{profile}/required-packages.txt")
-for rule in required:
-    if rule.startswith("package:") and rule.removeprefix("package:") not in packages:
-        raise SystemExit(f"::error::Manifest misses required package {rule.removeprefix('package:')}")
-
-forbidden = clean(root / "profiles/common/forbidden-packages.txt") + clean(root / f"profiles/{profile}/forbidden-packages.txt")
-for rule in forbidden:
-    if rule.startswith("exact:") and rule.removeprefix("exact:") in packages:
-        raise SystemExit(f"::error::Manifest contains forbidden package {rule.removeprefix('exact:')}")
-    if rule.startswith("regex:"):
-        pattern = re.compile(rule.removeprefix("regex:"))
-        matches = sorted(item for item in packages if pattern.search(item))
-        if matches:
-            raise SystemExit(f"::error::Manifest packages match forbidden {pattern.pattern}: {matches}")
+forbidden = load_forbidden(forbidden_path)
+for package in forbidden.exact:
+    if package in packages:
+        raise SystemExit(f"::error::Manifest contains forbidden package {package}")
+for expression in forbidden.regex:
+    pattern = re.compile(expression)
+    matches = sorted(item for item in packages if pattern.search(item))
+    if matches:
+        raise SystemExit(
+            f"::error::Manifest packages match forbidden {pattern.pattern}: {matches}"
+        )
 
 config = config_buildinfo.read_text(encoding="utf-8", errors="replace")
-if profile == "r4s":
-    required_flags = '-march=armv8-a+crc+crypto -mtune=cortex-a72.cortex-a53'
-else:
-    required_flags = '-march=x86-64-v2 -mtune=tremont'
-if required_flags not in config:
-    raise SystemExit(f"::error::config.buildinfo misses CPU flags: {required_flags}")
+expected_config = parse_config(expected_config_path)
+target_optimization = expected_config.get("CONFIG_TARGET_OPTIMIZATION")
+if target_optimization is None:
+    raise SystemExit("::error::Rendered profile has no CONFIG_TARGET_OPTIMIZATION")
+expected_optimization = f"CONFIG_TARGET_OPTIMIZATION={target_optimization}"
+if expected_optimization not in config.splitlines():
+    raise SystemExit(
+        f"::error::config.buildinfo misses profile optimization: {expected_optimization}"
+    )
 
 override = json.loads((artifacts / "artifact-override-report.json").read_text(encoding="utf-8"))
 provenance = json.loads((artifacts / "provenance.json").read_text(encoding="utf-8"))

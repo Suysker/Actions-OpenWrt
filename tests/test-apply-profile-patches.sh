@@ -26,11 +26,38 @@ diff --git a/net/ipv4/tcp_bbr.c b/net/ipv4/tcp_bbr.c
 PATCH
 
 patch_sha="$(sha256sum "$lock_dir/bbr3/6.12/0001-bbrv3.patch" | awk '{print $1}')"
-python3 - "$lock_dir/source-lock.json" "$patch_sha" <<'PY'
+python3 - "$lock_dir/source-lock.json" "$patch_sha" "$repo_root" <<'PY'
 import json
+import pathlib
 import sys
 
-output, patch_sha = sys.argv[1:]
+output, patch_sha, repo_root_s = sys.argv[1:]
+feeds = {}
+feed_order = 0
+for raw in (pathlib.Path(repo_root_s) / "feeds.custom.conf").read_text(
+    encoding="utf-8"
+).splitlines():
+    line = raw.split("#", 1)[0].strip()
+    if not line:
+        continue
+    feed_type, name, spec = line.split()
+    url, separator, requested_ref = spec.rpartition(";")
+    if not separator:
+        url, requested_ref = spec, "HEAD"
+    feeds[name] = {
+        "type": feed_type,
+        "url": url,
+        "requested_ref": requested_ref,
+        "resolved_ref": (
+            f"refs/heads/{requested_ref}"
+            if requested_ref != "HEAD"
+            else "refs/heads/master"
+        ),
+        "commit": f"{feed_order + 1:x}" * 40,
+        "origin": "custom",
+        "order": feed_order,
+    }
+    feed_order += 1
 origin_commit = "9" * 40
 origin_path = "6.12/bbr3.patch"
 lock = {
@@ -38,7 +65,7 @@ lock = {
     "resolved_at": "2026-01-01T00:00:00Z",
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
-    "feeds": {"packages": {"commit": "3" * 40}},
+    "feeds": feeds,
     "source_overlays": {
         "openwrt-core": {
             "url": "https://github.com/openwrt/openwrt.git",
@@ -46,20 +73,8 @@ lock = {
             "resolved_ref": "refs/heads/master",
             "commit": "4" * 40,
             "mappings": [
-                {"source": "package/libs/gmp", "target": "package/libs/gmp"}
-            ],
-        },
-        "openwrt-packages": {
-            "url": "https://github.com/openwrt/packages.git",
-            "requested_ref": "master",
-            "resolved_ref": "refs/heads/master",
-            "commit": "8" * 40,
-            "mappings": [
-                {"source": "lang/golang", "target": "feeds/packages/lang/golang"},
-                {"source": "libs/libtirpc", "target": "feeds/packages/libs/libtirpc"},
-                {"source": "libs/libwebsockets", "target": "feeds/packages/libs/libwebsockets"},
-                {"source": "net/nlbwmon", "target": "feeds/packages/net/nlbwmon"},
-                {"source": "utils/unzip", "target": "feeds/packages/utils/unzip"},
+                {"source": "package/libs/gmp", "target": "package/libs/gmp"},
+                {"source": "package/libs/pcre2", "target": "package/libs/pcre2"},
             ],
         },
     },

@@ -11,6 +11,8 @@ config:CONFIG_OPENSSL_OPTIMIZE_SPEED
 config:CONFIG_OPENSSL_WITH_ASM
 config:CONFIG_ZLIB_OPTIMIZE_SPEED
 config:CONFIG_LUCI_LANG_zh_Hans
+config:CONFIG_COREMARK_OPTIMIZE_O3
+config:CONFIG_COREMARK_ENABLE_MULTITHREADING
 
 package:luci
 package:luci-app-firewall
@@ -19,6 +21,9 @@ package:luci-proto-ipv6
 package:luci-proto-ppp
 
 package:dnsmasq-full
+config:CONFIG_PACKAGE_dnsmasq_full_dhcp
+config:CONFIG_PACKAGE_dnsmasq_full_dhcpv6
+config:CONFIG_PACKAGE_dnsmasq_full_ipset
 package:firewall
 package:ip-full
 package:ipset
@@ -42,6 +47,12 @@ package:miniupnpd-iptables
 package:ethtool
 
 package:luci-app-passwall
+config:CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy
+config:CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy
+config:CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Hysteria
+config:CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geodata
+config:CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Geoview
+config:CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray
 package:haproxy
 package:hysteria
 package:xray-core
@@ -55,6 +66,7 @@ package:mosdns
 package:luci-app-smartdns
 package:smartdns
 package:luci-app-adguardhome
+config:CONFIG_PACKAGE_luci-app-adguardhome_INCLUDE_binary
 package:adguardhome
 
 package:luci-app-ddns-go
@@ -67,6 +79,8 @@ package:luci-app-ramfree
 package:luci-app-ttyd
 package:ttyd
 package:luci-app-turboacc
+config:CONFIG_PACKAGE_TURBOACC_INCLUDE_FLOW_OFFLOADING
+config:CONFIG_PACKAGE_TURBOACC_INCLUDE_BBR_CCA
 package:luci-app-upnp
 package:luci-app-wol
 package:wol

@@ -5,54 +5,27 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
-packages_origin="$tmpdir/openwrt-packages"
 core_origin="$tmpdir/openwrt-core"
 openwrt="$tmpdir/openwrt"
 mkdir -p \
-  "$packages_origin/lang/golang" \
-  "$packages_origin/libs/libtirpc" \
-  "$packages_origin/libs/libwebsockets" \
-  "$packages_origin/net/nlbwmon" \
-  "$packages_origin/net/unrelated" \
-  "$packages_origin/utils/unzip/patches" \
   "$core_origin/package/libs/gmp/patches" \
+  "$core_origin/package/libs/pcre2/patches" \
   "$core_origin/package/libs/unrelated" \
-  "$openwrt/feeds/packages/lang/golang" \
-  "$openwrt/feeds/packages/libs/libtirpc" \
-  "$openwrt/feeds/packages/libs/libwebsockets" \
-  "$openwrt/feeds/packages/net/nlbwmon" \
-  "$openwrt/feeds/packages/utils/unzip" \
-  "$openwrt/package/libs/gmp"
+  "$openwrt/package/libs/gmp" \
+  "$openwrt/package/libs/pcre2"
 
-printf 'GO_DEFAULT_VERSION:=9.9.9\n' \
-  > "$packages_origin/lang/golang/golang-values.mk"
-printf 'official-libtirpc\n' \
-  > "$packages_origin/libs/libtirpc/Makefile"
-printf 'official-libwebsockets\n' \
-  > "$packages_origin/libs/libwebsockets/Makefile"
-cat > "$packages_origin/net/nlbwmon/Makefile" <<'EOF'
-PKG_NAME:=nlbwmon
-PKG_SOURCE_VERSION:=ffffffffffffffffffffffffffffffffffffffff
-PKG_MIRROR_HASH:=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-EOF
-printf 'official-unzip\n' \
-  > "$packages_origin/utils/unzip/Makefile"
-printf 'canonical-gcc15-fix\n' \
-  > "$packages_origin/utils/unzip/patches/012-fix-gcc15-build.patch"
-printf 'must-not-be-copied\n' > "$packages_origin/net/unrelated/Makefile"
 printf 'official-gmp\n' > "$core_origin/package/libs/gmp/Makefile"
 printf 'canonical-c23-fix\n' \
   > "$core_origin/package/libs/gmp/patches/001-c23.patch"
+printf 'official-pcre2\n' > "$core_origin/package/libs/pcre2/Makefile"
+printf 'canonical-pcre2-fix\n' \
+  > "$core_origin/package/libs/pcre2/patches/001-portability.patch"
 printf 'must-not-be-copied\n' > "$core_origin/package/libs/unrelated/Makefile"
 
-printf 'old-go\n' > "$openwrt/feeds/packages/lang/golang/old"
-printf 'old-libtirpc\n' > "$openwrt/feeds/packages/libs/libtirpc/old"
-printf 'old-libwebsockets\n' > "$openwrt/feeds/packages/libs/libwebsockets/old"
-printf 'old-nlbwmon\n' > "$openwrt/feeds/packages/net/nlbwmon/old"
-printf 'old-unzip\n' > "$openwrt/feeds/packages/utils/unzip/old"
 printf 'old-gmp\n' > "$openwrt/package/libs/gmp/old"
+printf 'old-pcre2\n' > "$openwrt/package/libs/pcre2/old"
 
-for origin in "$packages_origin" "$core_origin"; do
+for origin in "$core_origin"; do
   git -C "$origin" init -q
   git -C "$origin" config user.name fixture
   git -C "$origin" config user.email fixture@example.invalid
@@ -61,7 +34,6 @@ for origin in "$packages_origin" "$core_origin"; do
 done
 git -C "$openwrt" init -q
 
-packages_commit="$(git -C "$packages_origin" rev-parse HEAD)"
 core_commit="$(git -C "$core_origin" rev-parse HEAD)"
 lock="$tmpdir/source-lock.json"
 cat > "$lock" <<EOF
@@ -74,20 +46,8 @@ cat > "$lock" <<EOF
       "resolved_ref": "refs/heads/master",
       "commit": "$core_commit",
       "mappings": [
-        {"source": "package/libs/gmp", "target": "package/libs/gmp"}
-      ]
-    },
-    "openwrt-packages": {
-      "url": "https://github.com/openwrt/packages.git",
-      "requested_ref": "master",
-      "resolved_ref": "refs/heads/master",
-      "commit": "$packages_commit",
-      "mappings": [
-        {"source": "lang/golang", "target": "feeds/packages/lang/golang"},
-        {"source": "libs/libtirpc", "target": "feeds/packages/libs/libtirpc"},
-        {"source": "libs/libwebsockets", "target": "feeds/packages/libs/libwebsockets"},
-        {"source": "net/nlbwmon", "target": "feeds/packages/net/nlbwmon"},
-        {"source": "utils/unzip", "target": "feeds/packages/utils/unzip"}
+        {"source": "package/libs/gmp", "target": "package/libs/gmp"},
+        {"source": "package/libs/pcre2", "target": "package/libs/pcre2"}
       ]
     }
   }
@@ -96,38 +56,20 @@ EOF
 
 git_config="$tmpdir/gitconfig"
 git config --file "$git_config" \
-  url."$packages_origin".insteadOf https://github.com/openwrt/packages.git
-git config --file "$git_config" \
   url."$core_origin".insteadOf https://github.com/openwrt/openwrt.git
 
 GIT_CONFIG_GLOBAL="$git_config" GIT_CONFIG_NOSYSTEM=1 \
   bash "$repo_root/scripts/sync-source-overlays.sh" \
   apply-lock "$lock" "$openwrt"
 
-grep -Fxq 'GO_DEFAULT_VERSION:=9.9.9' \
-  "$openwrt/feeds/packages/lang/golang/golang-values.mk"
-grep -Fxq 'official-libtirpc' \
-  "$openwrt/feeds/packages/libs/libtirpc/Makefile"
-grep -Fxq 'official-libwebsockets' \
-  "$openwrt/feeds/packages/libs/libwebsockets/Makefile"
-grep -Fxq 'PKG_SOURCE_VERSION:=ffffffffffffffffffffffffffffffffffffffff' \
-  "$openwrt/feeds/packages/net/nlbwmon/Makefile"
-grep -Eq '^PKG_MIRROR_HASH:=[0-9a-f]{64}$' \
-  "$openwrt/feeds/packages/net/nlbwmon/Makefile"
-grep -Fxq 'official-unzip' \
-  "$openwrt/feeds/packages/utils/unzip/Makefile"
-grep -Fxq 'canonical-gcc15-fix' \
-  "$openwrt/feeds/packages/utils/unzip/patches/012-fix-gcc15-build.patch"
 grep -Fxq 'official-gmp' "$openwrt/package/libs/gmp/Makefile"
 grep -Fxq 'canonical-c23-fix' \
   "$openwrt/package/libs/gmp/patches/001-c23.patch"
-[ ! -e "$openwrt/feeds/packages/lang/golang/old" ]
-[ ! -e "$openwrt/feeds/packages/libs/libtirpc/old" ]
-[ ! -e "$openwrt/feeds/packages/libs/libwebsockets/old" ]
-[ ! -e "$openwrt/feeds/packages/net/nlbwmon/old" ]
-[ ! -e "$openwrt/feeds/packages/utils/unzip/old" ]
+grep -Fxq 'official-pcre2' "$openwrt/package/libs/pcre2/Makefile"
+grep -Fxq 'canonical-pcre2-fix' \
+  "$openwrt/package/libs/pcre2/patches/001-portability.patch"
 [ ! -e "$openwrt/package/libs/gmp/old" ]
-[ ! -e "$openwrt/feeds/packages/net/unrelated" ]
+[ ! -e "$openwrt/package/libs/pcre2/old" ]
 [ ! -e "$openwrt/package/libs/unrelated" ]
 
 python3 - "$lock" "$tmpdir/unsafe-lock.json" <<'PY'
