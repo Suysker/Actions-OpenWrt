@@ -66,6 +66,7 @@ assert overlay_contracts[0]["mappings"] == [
 ]
 assert [mapping["target"] for mapping in overlay_contracts[1]["mappings"]] == [
     "feeds/packages/lang/golang",
+    "feeds/packages/libs/libtirpc",
     "feeds/packages/libs/libwebsockets",
     "feeds/packages/net/nlbwmon",
 ]
@@ -186,6 +187,10 @@ base = {
                 {
                     "source": "lang/golang",
                     "target": "feeds/packages/lang/golang",
+                },
+                {
+                    "source": "libs/libtirpc",
+                    "target": "feeds/packages/libs/libtirpc",
                 },
                 {
                     "source": "libs/libwebsockets",

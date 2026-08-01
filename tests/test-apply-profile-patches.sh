@@ -54,6 +54,7 @@ lock = {
             "commit": "8" * 40,
             "mappings": [
                 {"source": "lang/golang", "target": "feeds/packages/lang/golang"},
+                {"source": "libs/libtirpc", "target": "feeds/packages/libs/libtirpc"},
                 {"source": "libs/libwebsockets", "target": "feeds/packages/libs/libwebsockets"},
                 {"source": "net/nlbwmon", "target": "feeds/packages/net/nlbwmon"},
             ],

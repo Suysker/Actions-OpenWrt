@@ -10,18 +10,22 @@ core_origin="$tmpdir/openwrt-core"
 openwrt="$tmpdir/openwrt"
 mkdir -p \
   "$packages_origin/lang/golang" \
+  "$packages_origin/libs/libtirpc" \
   "$packages_origin/libs/libwebsockets" \
   "$packages_origin/net/nlbwmon" \
   "$packages_origin/net/unrelated" \
   "$core_origin/package/libs/gmp/patches" \
   "$core_origin/package/libs/unrelated" \
   "$openwrt/feeds/packages/lang/golang" \
+  "$openwrt/feeds/packages/libs/libtirpc" \
   "$openwrt/feeds/packages/libs/libwebsockets" \
   "$openwrt/feeds/packages/net/nlbwmon" \
   "$openwrt/package/libs/gmp"
 
 printf 'GO_DEFAULT_VERSION:=9.9.9\n' \
   > "$packages_origin/lang/golang/golang-values.mk"
+printf 'official-libtirpc\n' \
+  > "$packages_origin/libs/libtirpc/Makefile"
 printf 'official-libwebsockets\n' \
   > "$packages_origin/libs/libwebsockets/Makefile"
 cat > "$packages_origin/net/nlbwmon/Makefile" <<'EOF'
@@ -36,6 +40,7 @@ printf 'canonical-c23-fix\n' \
 printf 'must-not-be-copied\n' > "$core_origin/package/libs/unrelated/Makefile"
 
 printf 'old-go\n' > "$openwrt/feeds/packages/lang/golang/old"
+printf 'old-libtirpc\n' > "$openwrt/feeds/packages/libs/libtirpc/old"
 printf 'old-libwebsockets\n' > "$openwrt/feeds/packages/libs/libwebsockets/old"
 printf 'old-nlbwmon\n' > "$openwrt/feeds/packages/net/nlbwmon/old"
 printf 'old-gmp\n' > "$openwrt/package/libs/gmp/old"
@@ -72,6 +77,7 @@ cat > "$lock" <<EOF
       "commit": "$packages_commit",
       "mappings": [
         {"source": "lang/golang", "target": "feeds/packages/lang/golang"},
+        {"source": "libs/libtirpc", "target": "feeds/packages/libs/libtirpc"},
         {"source": "libs/libwebsockets", "target": "feeds/packages/libs/libwebsockets"},
         {"source": "net/nlbwmon", "target": "feeds/packages/net/nlbwmon"}
       ]
@@ -92,6 +98,8 @@ GIT_CONFIG_GLOBAL="$git_config" GIT_CONFIG_NOSYSTEM=1 \
 
 grep -Fxq 'GO_DEFAULT_VERSION:=9.9.9' \
   "$openwrt/feeds/packages/lang/golang/golang-values.mk"
+grep -Fxq 'official-libtirpc' \
+  "$openwrt/feeds/packages/libs/libtirpc/Makefile"
 grep -Fxq 'official-libwebsockets' \
   "$openwrt/feeds/packages/libs/libwebsockets/Makefile"
 grep -Fxq 'PKG_SOURCE_VERSION:=ffffffffffffffffffffffffffffffffffffffff' \
@@ -102,6 +110,7 @@ grep -Fxq 'official-gmp' "$openwrt/package/libs/gmp/Makefile"
 grep -Fxq 'canonical-c23-fix' \
   "$openwrt/package/libs/gmp/patches/001-c23.patch"
 [ ! -e "$openwrt/feeds/packages/lang/golang/old" ]
+[ ! -e "$openwrt/feeds/packages/libs/libtirpc/old" ]
 [ ! -e "$openwrt/feeds/packages/libs/libwebsockets/old" ]
 [ ! -e "$openwrt/feeds/packages/net/nlbwmon/old" ]
 [ ! -e "$openwrt/package/libs/gmp/old" ]
