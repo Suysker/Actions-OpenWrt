@@ -4,14 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: Firmware profile (all is required for a production Release)
+        description: Profile directory name, or all for a production Release
         required: true
         default: all
-        type: choice
-        options:
-          - all
-          - r4s
-          - x86-n5105-pve
+        type: string
       haproxy_version:
         description: Optional exact HAProxy LTS rollback version
         required: false
@@ -63,22 +59,29 @@ jobs:
         run: |
           set -euo pipefail
           requested="${MANUAL_PROFILE:-${DISPATCH_PROFILE:-all}}"
-          case "$requested" in
-            all)
-              echo 'matrix={"profile":["r4s","x86-n5105-pve"]}' >> "$GITHUB_OUTPUT"
-              echo 'profiles=r4s,x86-n5105-pve' >> "$GITHUB_OUTPUT"
-              echo 'publish=true' >> "$GITHUB_OUTPUT"
-              ;;
-            r4s|x86-n5105-pve)
-              printf 'matrix={"profile":["%s"]}\n' "$requested" >> "$GITHUB_OUTPUT"
-              printf 'profiles=%s\n' "$requested" >> "$GITHUB_OUTPUT"
-              echo 'publish=false' >> "$GITHUB_OUTPUT"
-              ;;
-            *)
+          mapfile -t available < <(bash scripts/render-profile.sh list)
+          [ "${#available[@]}" -gt 0 ] || {
+            echo '::error::No device profiles were discovered'
+            exit 2
+          }
+          if [ "$requested" = all ]; then
+            selected=("${available[@]}")
+            publish=true
+          else
+            selected=()
+            for profile in "${available[@]}"; do
+              [ "$requested" != "$profile" ] || selected+=("$profile")
+            done
+            [ "${#selected[@]}" -eq 1 ] || {
               echo "::error::Unknown profile: $requested"
               exit 2
-              ;;
-          esac
+            }
+            publish=false
+          fi
+          matrix="$(printf '%s\n' "${selected[@]}" | jq -R . | jq -sc '{profile: .}')"
+          profiles="$(IFS=,; echo "${selected[*]}")"
+          printf 'matrix=%s\nprofiles=%s\npublish=%s\n' \
+            "$matrix" "$profiles" "$publish" >> "$GITHUB_OUTPUT"
 
       - name: Validate repository contracts
         shell: bash
@@ -86,11 +89,19 @@ jobs:
           set -euo pipefail
           bash scripts/resolve-source-lock.sh validate-actions \
             .github/workflows/*.yml
-          bash -n diy-part1.sh diy-part2.sh scripts/*.sh \
-            profiles/common/files/etc/uci-defaults/* \
-            profiles/r4s/files/etc/uci-defaults/* \
-            profiles/x86-n5105-pve/files/etc/uci-defaults/* \
-            profiles/x86-n5105-pve/files/etc/hotplug.d/net/*
+          mapfile -t profiles < <(bash scripts/render-profile.sh list)
+          rootfs_scripts=()
+          for scope in common "${profiles[@]}"; do
+            root="profiles/$scope/files"
+            [ ! -d "$root" ] || while IFS= read -r path; do
+              rootfs_scripts+=("$path")
+            done < <(
+              find "$root" -type f \
+                \( -path '*/etc/uci-defaults/*' -o -path '*/etc/hotplug.d/*' \) \
+                -print | sort
+            )
+          done
+          bash -n diy-part1.sh diy-part2.sh scripts/*.sh "${rootfs_scripts[@]}"
           python3 -m py_compile scripts/*.py
           bash tests/test-profile-renderer.sh
           python3 tests/test-profile-semantics.py
@@ -103,8 +114,9 @@ jobs:
           bash tests/test-install-profile-feeds.sh
           bash tests/test-sync-source-overlays.sh
           python3 tests/test-normalize-forbidden-suboptions.py
-          bash scripts/check-profile-contract.sh r4s
-          bash scripts/check-profile-contract.sh x86-n5105-pve
+          for profile in "${profiles[@]}"; do
+            bash scripts/check-profile-contract.sh "$profile"
+          done
 
       - name: Resolve or accept one source lock
         id: lock
@@ -288,10 +300,7 @@ jobs:
         run: |
           set -euo pipefail
           profile_dir="$GITHUB_WORKSPACE/profile-input"
-          mkdir -p "$profile_dir"
-          bash scripts/render-profile.sh config "$PROFILE" "$profile_dir/config.seed"
-          bash scripts/render-profile.sh required "$PROFILE" "$profile_dir/required.txt"
-          bash scripts/render-profile.sh forbidden "$PROFILE" "$profile_dir/forbidden.txt"
+          bash scripts/render-profile.sh bundle "$PROFILE" "$profile_dir"
 
       - name: Checkout locked feeds and select providers
         shell: bash
@@ -325,7 +334,11 @@ jobs:
         run: |
           set -euo pipefail
           profile_dir="$GITHUB_WORKSPACE/profile-input"
-          bash scripts/render-profile.sh files "$PROFILE" "$OPENWRT_ROOT/files"
+          [ ! -e "$OPENWRT_ROOT/files" ] || {
+            echo "::error::Locked OpenWrt source unexpectedly owns $OPENWRT_ROOT/files"
+            exit 1
+          }
+          cp -a "$profile_dir/files" "$OPENWRT_ROOT/files"
           cp "$profile_dir/config.seed" "$OPENWRT_ROOT/.config"
 
       - name: Resolve and enforce Kconfig contracts
@@ -345,12 +358,9 @@ jobs:
           ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/config.effective"
           bash "$GITHUB_WORKSPACE/scripts/check-seed-config.sh" \
             "$GITHUB_WORKSPACE/profile-input/config.seed" .config "$GITHUB_WORKSPACE"
-          bash "$GITHUB_WORKSPACE/scripts/check-forbidden-packages.sh" \
-            .config "$GITHUB_WORKSPACE/profile-input/forbidden.txt" "$GITHUB_WORKSPACE"
-          bash "$GITHUB_WORKSPACE/scripts/check-required-packages.sh" \
-            .config "$GITHUB_WORKSPACE/profile-input/required.txt" "$GITHUB_WORKSPACE/package-list.txt"
           bash "$GITHUB_WORKSPACE/scripts/check-profile-contract.sh" \
-            "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" "$GITHUB_WORKSPACE/profile-contract-report.txt"
+            "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" \
+            "$GITHUB_WORKSPACE/profile-contract-report.txt" "$GITHUB_WORKSPACE"
 
       - name: Download all sources with exact hashes
         shell: bash
@@ -405,6 +415,7 @@ jobs:
           diagnostics="$GITHUB_WORKSPACE/diagnostics/$PROFILE"
           mkdir -p "$diagnostics"
           for file in runner-report.txt provider-selection-report.txt \
+            provider-contract.txt \
             profile-feed-install-report.txt \
             artifact-override-report.json patch-report.txt profile-contract-report.txt \
             config.effective package-list.txt forbidden-packages.detected.txt \
@@ -455,28 +466,26 @@ jobs:
           name: source-lock
           path: source-input
 
-      - name: Download R4S firmware
+      - name: Download every profile firmware
         uses: actions/download-artifact@main
         with:
-          name: firmware-r4s
-          path: aggregate/r4s
-
-      - name: Download N5105 firmware
-        uses: actions/download-artifact@main
-        with:
-          name: firmware-x86-n5105-pve
-          path: aggregate/x86-n5105-pve
+          pattern: firmware-*
+          path: aggregate
 
       - name: Re-verify and assemble collision-free assets
         shell: bash
         run: |
           set -euo pipefail
           lock="$GITHUB_WORKSPACE/source-input/source-lock.json"
-          bash scripts/verify-firmware-artifacts.sh r4s aggregate/r4s "$lock"
-          bash scripts/verify-firmware-artifacts.sh x86-n5105-pve aggregate/x86-n5105-pve "$lock"
-          bash scripts/assemble-release.sh "$lock" release-assets \
-            "r4s=$GITHUB_WORKSPACE/aggregate/r4s" \
-            "x86-n5105-pve=$GITHUB_WORKSPACE/aggregate/x86-n5105-pve"
+          mapfile -t profiles < <(jq -r '.profiles | keys[]' "$lock")
+          inputs=()
+          for profile in "${profiles[@]}"; do
+            directory="$GITHUB_WORKSPACE/aggregate/firmware-$profile"
+            bash scripts/verify-firmware-artifacts.sh \
+              "$profile" "$directory" "$lock"
+            inputs+=("$profile=$directory")
+          done
+          bash scripts/assemble-release.sh "$lock" release-assets "${inputs[@]}"
 
       - name: Create draft Release
         id: release
@@ -488,12 +497,13 @@ jobs:
           set -euo pipefail
           stamp="$(date -u +%Y.%m.%d-%H%M%S)"
           tag="openwrt-${stamp}-${SOURCE_DIGEST:0:12}-r${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          profiles="$(jq -r '.profiles | keys | join(", ")' source-input/source-lock.json)"
           cat > release-notes.md <<EOF
           OpenWrt R4S + N5105 PVE transactional build
 
           - Source-lock digest: sha256:${SOURCE_DIGEST}
           - Repository commit: ${GITHUB_SHA}
-          - Profiles: r4s, x86-n5105-pve
+          - Profiles: ${profiles}
           - Firewall: firewall3 / iptables
           - Kernel policy: target stable kernel with BBRv3 module version 3
 

@@ -18,6 +18,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Iterable
 
+from profile_model import ProfileModelError, ProfileRepository
+
 
 SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -230,19 +232,6 @@ def merge_feed_specs(
     ]
 
 
-def parse_env(path: pathlib.Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        key, separator, value = line.partition("=")
-        if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-            raise ResolutionError(f"invalid env syntax in {path}:{line_no}: {raw}")
-        values[key] = value
-    return values
-
-
 def require_overlay_path(value: Any, label: str, *, target: bool = False) -> str:
     if not isinstance(value, str):
         raise ResolutionError(f"{label} must be a string")
@@ -448,14 +437,10 @@ def load_geodata_contracts(repo_root: pathlib.Path) -> tuple[dict[str, str], ...
 
 
 def merged_profile_env(repo_root: pathlib.Path, profile: str) -> dict[str, str]:
-    common = parse_env(repo_root / "profiles/common/profile.env")
-    device_path = repo_root / f"profiles/{profile}/profile.env"
-    if not device_path.is_file():
-        raise ResolutionError(f"unknown profile: {profile}")
-    common.update(parse_env(device_path))
-    if common.get("PROFILE_NAME") != profile:
-        raise ResolutionError(f"profile.env PROFILE_NAME mismatch for {profile}")
-    return common
+    try:
+        return ProfileRepository(repo_root / "profiles").environment(profile)
+    except ProfileModelError as exc:
+        raise ResolutionError(str(exc)) from exc
 
 
 def version_tuple(value: str) -> tuple[int, int, int]:
@@ -658,13 +643,14 @@ def tree_digest(paths: Iterable[pathlib.Path], root: pathlib.Path) -> str:
 
 
 def profile_digest(repo_root: pathlib.Path, profile: str) -> str:
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", profile):
-        raise ResolutionError(f"invalid profile name for digest: {profile!r}")
+    try:
+        device = ProfileRepository(repo_root / "profiles").device(profile)
+    except ProfileModelError as exc:
+        raise ResolutionError(str(exc)) from exc
     return tree_digest(
         [
             repo_root / "profiles/common",
-            repo_root / f"profiles/{profile}",
-            repo_root / "profiles/profile-semantics.json",
+            device,
             repo_root / "feeds.custom.conf",
         ],
         repo_root,

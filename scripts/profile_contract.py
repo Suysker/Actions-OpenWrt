@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate one rendered profile without embedding device-specific policy."""
+"""Validate one profile through the shared profile model and semantic rules."""
 
 from __future__ import annotations
 
@@ -7,15 +7,18 @@ import argparse
 import json
 import pathlib
 import re
+import subprocess
 import sys
+import tempfile
 from typing import Iterable
 
 from profile_model import (
     ProfileModelError,
-    load_forbidden,
-    load_required,
+    ProfileRepository,
+    evaluate_package_contract,
     parse_config,
-    validate_relationships,
+    rendered_config_problems,
+    write_package_contract_reports,
 )
 from profile_semantics import ProfileSemanticError, check_contract, load_contract
 
@@ -28,27 +31,6 @@ ENVIRONMENT_FIELDS = {
     "TARGET_CHECK_REGEX",
     "IMAGE_PATTERN",
 }
-
-
-def parse_environment(path: pathlib.Path) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for line_no, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        key, separator, value = line.partition("=")
-        if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-            raise ProfileModelError(f"invalid profile env line in {path}:{line_no}")
-        if key in values:
-            raise ProfileModelError(f"duplicate rendered profile env key: {key}")
-        values[key] = value
-    missing = sorted(ENVIRONMENT_FIELDS - set(values))
-    if missing:
-        raise ProfileModelError(
-            "rendered profile env misses required interface fields: "
-            + ", ".join(missing)
-        )
-    return values
 
 
 def target_matches(expression: str, values: dict[str, str]) -> bool:
@@ -111,111 +93,148 @@ def source_lock_problems(
     return problems
 
 
+def _check_provider_contract(
+    repo_root: pathlib.Path,
+    openwrt: pathlib.Path,
+    report: pathlib.Path,
+) -> None:
+    command = [
+        "bash",
+        str(repo_root / "scripts/select-package-providers.sh"),
+        "--check",
+        str(openwrt),
+        str(report),
+    ]
+    try:
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as exc:
+        raise ProfileModelError(
+            f"package provider contract failed with exit code {exc.returncode}"
+        ) from exc
+
+
 def run(args: argparse.Namespace) -> tuple[list[str], list[str]]:
     checks: list[str] = []
     problems: list[str] = []
+    repository = ProfileRepository(args.profiles_root)
 
-    required = load_required(args.required)
-    forbidden = load_forbidden(args.forbidden)
-    validate_relationships(required, forbidden)
-    config = parse_config(args.config)
-    environment = parse_environment(args.environment)
-
-    if environment["PROFILE_NAME"] != args.profile:
-        problems.append(
-            f"PROFILE_NAME {environment['PROFILE_NAME']!r} does not equal {args.profile!r}"
+    with tempfile.TemporaryDirectory(prefix="profile-contract-") as temporary:
+        rendered = repository.render_bundle(
+            args.profile, pathlib.Path(temporary) / "rendered"
         )
-    if not environment["REPO_URL"].startswith("https://"):
-        problems.append("REPO_URL must use HTTPS")
-    if not environment["REPO_REF"]:
-        problems.append("REPO_REF must not be empty")
-    if not environment["IMAGE_PATTERN"]:
-        problems.append("IMAGE_PATTERN must not be empty")
+        config = parse_config(rendered.config)
+        environment = rendered.environment
 
-    for package in sorted(required.packages):
-        symbol = f"CONFIG_PACKAGE_{package}"
-        if config.get(symbol) != "y":
-            problems.append(f"rendered config lost required package symbol {symbol}")
-    for symbol in sorted(required.configs):
-        if config.get(symbol) != "y":
-            problems.append(f"rendered config lost required symbol {symbol}")
-    for package in sorted(forbidden.exact):
-        symbol = f"CONFIG_PACKAGE_{package}"
-        if config.get(symbol) != "n":
-            problems.append(f"rendered config did not disable exact-forbidden {symbol}")
+        missing_fields = sorted(ENVIRONMENT_FIELDS - set(environment))
+        if missing_fields:
+            problems.append(
+                "rendered profile env misses required interface fields: "
+                + ", ".join(missing_fields)
+            )
+            return checks, problems
+        if not environment["REPO_URL"].startswith("https://"):
+            problems.append("REPO_URL must use HTTPS")
+        if not environment["REPO_REF"]:
+            problems.append("REPO_REF must not be empty")
+        if not environment["IMAGE_PATTERN"]:
+            problems.append("IMAGE_PATTERN must not be empty")
 
-    if not target_matches(environment["TARGET_CHECK_REGEX"], config):
-        problems.append("rendered target does not match TARGET_CHECK_REGEX")
-    else:
-        checks.append("rendered target matches profile env")
-
-    semantic_contract = load_contract(args.semantics)
-    if args.openwrt is None:
-        rootfs_checks, rootfs_problems = check_contract(
-            semantic_contract, args.profile, args.files
+        problems.extend(
+            rendered_config_problems(config, rendered.required, rendered.forbidden)
         )
-        checks.extend(rootfs_checks)
-        problems.extend(rootfs_problems)
-        return checks, problems
+        if not target_matches(environment["TARGET_CHECK_REGEX"], config):
+            problems.append("rendered target does not match TARGET_CHECK_REGEX")
+        else:
+            checks.append("rendered target matches profile env")
 
-    if not args.openwrt.is_dir():
-        problems.append(f"OpenWrt root does not exist: {args.openwrt}")
-        return checks, problems
-    final_config_path = args.openwrt / ".config"
-    if not final_config_path.is_file():
-        problems.append(f"final OpenWrt config is missing: {final_config_path}")
-        return checks, problems
-    final_config = parse_config(final_config_path)
-    if not target_matches(environment["TARGET_CHECK_REGEX"], final_config):
-        problems.append("final OpenWrt target does not match TARGET_CHECK_REGEX")
-    else:
-        checks.append("final target matches profile env")
+        semantic_contract = load_contract(args.profiles_root, args.profile)
+        if args.openwrt is None:
+            rootfs_checks, rootfs_problems = check_contract(
+                semantic_contract, args.profile, rendered.files
+            )
+            checks.extend(rootfs_checks)
+            problems.extend(rootfs_problems)
+            return checks, problems
 
-    kernel_series = resolve_kernel_series(
-        args.openwrt, environment["KERNEL_TARGET"]
-    )
-    checks.append(f"stable kernel series {kernel_series}")
-    if args.source_lock is None:
-        problems.append("source lock is required with an OpenWrt tree")
-    else:
-        lock = load_source_lock(args.source_lock)
-        lock_problems = source_lock_problems(lock, args.profile, kernel_series)
-        problems.extend(lock_problems)
-        if not lock_problems:
-            checks.append("source-lock profile/kernel/BBRv3 mapping")
+        openwrt = args.openwrt.resolve()
+        if not openwrt.is_dir():
+            problems.append(f"OpenWrt root does not exist: {openwrt}")
+            return checks, problems
+        final_config_path = openwrt / ".config"
+        if not final_config_path.is_file():
+            problems.append(f"final OpenWrt config is missing: {final_config_path}")
+            return checks, problems
 
-    source_checks, source_problems = check_contract(
-        semantic_contract,
-        args.profile,
-        args.files,
-        openwrt_root=args.openwrt,
-        kernel_series=kernel_series,
-    )
-    checks.extend(source_checks)
-    problems.extend(source_problems)
-    if args.provider_report is not None:
-        checks.append(f"provider contract {args.provider_report}")
-    return checks, problems
+        diagnostics = args.diagnostics_dir or pathlib.Path(temporary) / "diagnostics"
+        package_contract = evaluate_package_contract(
+            final_config_path,
+            rendered.required,
+            rendered.forbidden,
+        )
+        write_package_contract_reports(package_contract, diagnostics)
+        problems.extend(package_contract.problems)
+        if package_contract.package_metadata_found:
+            checks.append(
+                f"final package contract ({len(package_contract.selected_packages)} packages)"
+            )
+        else:
+            problems.append("OpenWrt package metadata is missing for final package checks")
+
+        final_config = parse_config(final_config_path)
+        if not target_matches(environment["TARGET_CHECK_REGEX"], final_config):
+            problems.append("final OpenWrt target does not match TARGET_CHECK_REGEX")
+        else:
+            checks.append("final target matches profile env")
+
+        provider_report = diagnostics / "provider-contract.txt"
+        _check_provider_contract(args.repo_root, openwrt, provider_report)
+        checks.append(f"provider contract {provider_report}")
+
+        kernel_series = resolve_kernel_series(openwrt, environment["KERNEL_TARGET"])
+        checks.append(f"stable kernel series {kernel_series}")
+        if args.source_lock is None:
+            problems.append("source lock is required with an OpenWrt tree")
+        else:
+            lock = load_source_lock(args.source_lock)
+            lock_problems = source_lock_problems(
+                lock, args.profile, kernel_series
+            )
+            problems.extend(lock_problems)
+            if not lock_problems:
+                checks.append("source-lock profile/kernel/BBRv3 mapping")
+
+        source_checks, source_problems = check_contract(
+            semantic_contract,
+            args.profile,
+            rendered.files,
+            openwrt_root=openwrt,
+            kernel_series=kernel_series,
+        )
+        checks.extend(source_checks)
+        problems.extend(source_problems)
+        return checks, problems
 
 
 def build_parser() -> argparse.ArgumentParser:
+    default_root = pathlib.Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo-root", type=pathlib.Path, default=default_root)
+    parser.add_argument(
+        "--profiles-root", type=pathlib.Path, default=default_root / "profiles"
+    )
     parser.add_argument("--profile", required=True)
-    parser.add_argument("--config", required=True, type=pathlib.Path)
-    parser.add_argument("--required", required=True, type=pathlib.Path)
-    parser.add_argument("--forbidden", required=True, type=pathlib.Path)
-    parser.add_argument("--environment", required=True, type=pathlib.Path)
-    parser.add_argument("--files", required=True, type=pathlib.Path)
-    parser.add_argument("--semantics", required=True, type=pathlib.Path)
     parser.add_argument("--openwrt", type=pathlib.Path)
     parser.add_argument("--source-lock", type=pathlib.Path)
-    parser.add_argument("--provider-report", type=pathlib.Path)
+    parser.add_argument("--diagnostics-dir", type=pathlib.Path)
     parser.add_argument("--report", type=pathlib.Path)
     return parser
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.source_lock is not None and args.openwrt is None:
+        print("::error::source-lock cannot be supplied without an OpenWrt tree", file=sys.stderr)
+        return 2
     try:
         checks, problems = run(args)
     except (OSError, ProfileModelError, ProfileSemanticError) as exc:
@@ -223,7 +242,7 @@ def main(argv: Iterable[str] | None = None) -> int:
 
     status = "passed" if not problems else "failed"
     lines = [
-        "profile-contract-v2",
+        "profile-contract-v3",
         f"profile={args.profile}",
         f"status={status}",
         *[f"check={item}" for item in checks],

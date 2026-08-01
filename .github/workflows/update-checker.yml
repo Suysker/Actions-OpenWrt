@@ -36,8 +36,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .source-state
+          profiles="$(bash scripts/render-profile.sh list | paste -sd, -)"
+          [ -n "$profiles" ] || {
+            echo '::error::No device profiles were discovered'
+            exit 2
+          }
           bash scripts/resolve-source-lock.sh resolve \
-            'r4s,x86-n5105-pve' .source-state/source-lock.json
+            "$profiles" .source-state/source-lock.json
           digest="$(bash scripts/resolve-source-lock.sh digest .source-state/source-lock.json)"
           echo "source_digest=${digest#sha256:}" >> "$GITHUB_OUTPUT"
           echo "Resolved complete fingerprint: $digest"

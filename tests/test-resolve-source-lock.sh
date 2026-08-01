@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts"))
 spec = importlib.util.spec_from_file_location("source_lock", root / "scripts/source_lock.py")
 module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -95,8 +96,8 @@ with tempfile.TemporaryDirectory() as directory:
         profile_root = digest_root / "profiles" / profile
         profile_root.mkdir(parents=True)
         (profile_root / "config.seed").write_text(profile, encoding="utf-8")
-    profile_semantics = digest_root / "profiles/profile-semantics.json"
-    profile_semantics.write_text('{"schema":1}\n', encoding="utf-8")
+    common_semantics = digest_root / "profiles/common/semantics.json"
+    common_semantics.write_text('{"schema":1}\n', encoding="utf-8")
     custom_feeds = digest_root / "feeds.custom.conf"
     custom_feeds.write_text(
         "src-git packages https://github.com/openwrt/packages.git;master\n",
@@ -105,7 +106,7 @@ with tempfile.TemporaryDirectory() as directory:
 
     r4s_before = module.profile_digest(digest_root, "r4s")
     x86_before = module.profile_digest(digest_root, "x86-n5105-pve")
-    profile_semantics.write_text('{"schema":2}\n', encoding="utf-8")
+    common_semantics.write_text('{"schema":2}\n', encoding="utf-8")
     r4s_after_contract = module.profile_digest(digest_root, "r4s")
     assert r4s_after_contract != r4s_before
     assert module.profile_digest(digest_root, "x86-n5105-pve") != x86_before

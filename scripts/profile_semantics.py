@@ -43,64 +43,72 @@ def _validate_relative_template(value: Any, label: str) -> str:
     return value
 
 
-def load_contract(path: pathlib.Path) -> dict[str, Any]:
+def _load_scope(path: pathlib.Path, scope: str) -> dict[str, list[dict[str, Any]]]:
     try:
-        contract = json.loads(path.read_text(encoding="utf-8"))
+        document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ProfileSemanticError(f"cannot read profile semantics: {exc}") from exc
+        raise ProfileSemanticError(f"cannot read {scope} semantics: {exc}") from exc
 
-    if not isinstance(contract, dict) or contract.get("schema") != 1:
-        raise ProfileSemanticError("profile semantics schema must be 1")
-    if set(contract) != {"schema", "scopes"}:
-        raise ProfileSemanticError("profile semantics have unknown top-level fields")
+    if not isinstance(document, dict) or document.get("schema") != 1:
+        raise ProfileSemanticError(f"{scope} semantics schema must be 1")
+    if set(document) != {"schema", "rootfs", "source"}:
+        raise ProfileSemanticError(
+            f"{scope} semantics must define only schema, rootfs and source"
+        )
 
-    scopes = contract.get("scopes")
-    if not isinstance(scopes, dict) or "common" not in scopes:
-        raise ProfileSemanticError("profile semantics must define common scope")
-
+    sections = {field: document[field] for field in ("rootfs", "source")}
     names: set[str] = set()
-    for scope, sections in scopes.items():
-        if not isinstance(scope, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", scope):
-            raise ProfileSemanticError(f"invalid profile semantic scope: {scope!r}")
-        if not isinstance(sections, dict) or set(sections) != {"rootfs", "source"}:
-            raise ProfileSemanticError(
-                f"profile semantic scope {scope} must define only rootfs and source"
-            )
-        for section in ("rootfs", "source"):
-            rules = sections[section]
-            if not isinstance(rules, list):
-                raise ProfileSemanticError(f"{scope}.{section} must be a list")
-            for index, rule in enumerate(rules):
-                label = f"{scope}.{section}[{index}]"
-                if not isinstance(rule, dict) or not set(rule).issubset(RULE_FIELDS):
-                    raise ProfileSemanticError(f"{label} has unknown fields")
-                name = rule.get("name")
-                if not isinstance(name, str) or not name.startswith(f"{scope}."):
-                    raise ProfileSemanticError(
-                        f"{label} name must start with {scope}."
-                    )
-                if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", name):
-                    raise ProfileSemanticError(f"{label} has invalid name {name!r}")
-                if name in names:
-                    raise ProfileSemanticError(f"duplicate profile semantic rule: {name}")
-                names.add(name)
+    for section, rules in sections.items():
+        if not isinstance(rules, list):
+            raise ProfileSemanticError(f"{scope}.{section} must be a list")
+        for index, rule in enumerate(rules):
+            label = f"{scope}.{section}[{index}]"
+            if not isinstance(rule, dict) or not set(rule).issubset(RULE_FIELDS):
+                raise ProfileSemanticError(f"{label} has unknown fields")
+            name = rule.get("name")
+            if not isinstance(name, str) or not name.startswith(f"{scope}."):
+                raise ProfileSemanticError(f"{label} name must start with {scope}.")
+            if not re.fullmatch(r"[a-z0-9][a-z0-9.-]*", name):
+                raise ProfileSemanticError(f"{label} has invalid name {name!r}")
+            if name in names:
+                raise ProfileSemanticError(f"duplicate profile semantic rule: {name}")
+            names.add(name)
 
-                selectors = [field for field in ("path", "glob") if field in rule]
-                if len(selectors) != 1:
-                    raise ProfileSemanticError(
-                        f"{name} must define exactly one of path or glob"
-                    )
-                if section == "rootfs" and selectors[0] != "path":
-                    raise ProfileSemanticError(f"{name} rootfs rule must use path")
-                _validate_relative_template(rule[selectors[0]], f"{name}.{selectors[0]}")
+            selectors = [field for field in ("path", "glob") if field in rule]
+            if len(selectors) != 1:
+                raise ProfileSemanticError(
+                    f"{name} must define exactly one of path or glob"
+                )
+            if section == "rootfs" and selectors[0] != "path":
+                raise ProfileSemanticError(f"{name} rootfs rule must use path")
+            _validate_relative_template(rule[selectors[0]], f"{name}.{selectors[0]}")
 
-                assertions = [field for field in ASSERTION_FIELDS if field in rule]
-                if not assertions:
-                    raise ProfileSemanticError(f"{name} has no content assertions")
-                for field in assertions:
-                    _require_string_list(rule[field], f"{name}.{field}")
+            assertions = [field for field in ASSERTION_FIELDS if field in rule]
+            if not assertions:
+                raise ProfileSemanticError(f"{name} has no content assertions")
+            for field in assertions:
+                _require_string_list(rule[field], f"{name}.{field}")
+    return sections
 
-    return contract
+
+def load_contract(profiles_root: pathlib.Path, profile: str) -> dict[str, Any]:
+    """Load common and device semantics from their owning profile directories."""
+
+    if profile == "common" or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", profile):
+        raise ProfileSemanticError(f"invalid device profile for semantics: {profile!r}")
+    scopes = {
+        "common": _load_scope(profiles_root / "common/semantics.json", "common"),
+        profile: _load_scope(profiles_root / profile / "semantics.json", profile),
+    }
+    names = [
+        rule["name"]
+        for sections in scopes.values()
+        for section in ("rootfs", "source")
+        for rule in sections[section]
+    ]
+    if len(names) != len(set(names)):
+        raise ProfileSemanticError("common/device semantics contain duplicate rule names")
+    return {"schema": 1, "scopes": scopes}
 
 
 def _format_template(template: str, kernel_series: str | None, name: str) -> str:

@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "rootfs": [
+    {
+      "name": "r4s.zram-and-packet-steering",
+      "path": "etc/uci-defaults/91-r4s-performance",
+      "contains": [
+        "set system.@system[0].zram_size_mb='512'",
+        "set system.@system[0].zram_comp_algo='lz4'",
+        "set network.globals.packet_steering='1'"
+      ]
+    },
+    {
+      "name": "r4s.low-zram-swappiness",
+      "path": "etc/sysctl.d/91-r4s-memory.conf",
+      "line_set": [
+        "vm.swappiness=5"
+      ]
+    }
+  ],
+  "source": [
+    {
+      "name": "r4s.irq-affinity",
+      "path": "target/linux/rockchip/armv8/base-files/etc/hotplug.d/net/40-net-smp-affinity",
+      "contains": [
+        "friendlyarm,nanopi-r4s",
+        "set_interface_core 10 \"eth0\"",
+        "set_interface_core 20 \"eth1\""
+      ]
+    },
+    {
+      "name": "r4s.native-interface-map",
+      "path": "target/linux/rockchip/armv8/base-files/etc/board.d/02_network",
+      "contains": [
+        "friendlyarm,nanopi-r4s",
+        "ucidef_set_interfaces_lan_wan 'eth1' 'eth0'"
+      ]
+    },
+    {
+      "name": "r4s.schedutil-governor",
+      "path": "target/linux/rockchip/armv8/config-{kernel_series}",
+      "exact_lines": [
+        "CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y",
+        "CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y"
+      ]
+    },
+    {
+      "name": "r4s.arm64-crypto-crc",
+      "path": "target/linux/rockchip/armv8/config-{kernel_series}",
+      "exact_lines": [
+        "CONFIG_CRYPTO_AES_ARM64_CE=y",
+        "CONFIG_CRYPTO_GHASH_ARM64_CE=y",
+        "CONFIG_CRYPTO_CRC32=y",
+        "CONFIG_CRYPTO_CRC32C=y"
+      ]
+    },
+    {
+      "name": "r4s.rk3399-opp",
+      "glob": "target/linux/rockchip/patches-{kernel_series}/*.patch",
+      "contains": [
+        "rk3399-opp.dtsi",
+        "opp-hz = /bits/ 64 <1800000000>;",
+        "opp-hz = /bits/ 64 <2208000000>;",
+        "#include \"rk3399-opp.dtsi\""
+      ]
+    }
+  ]
+}

@@ -254,9 +254,9 @@ JSON 写入时键排序、UTC 时间格式固定，digest 对规范化内容计�
   update-checker.yml
 
 profiles/
-  profile-semantics.json
   common/
     profile.env
+    semantics.json
     geodata-sources.json
     providers.tsv
     source-overlays.json
@@ -272,6 +272,7 @@ profiles/
 
   r4s/
     profile.env
+    semantics.json
     config.seed
     required-packages.txt
     forbidden-packages.txt
@@ -281,6 +282,7 @@ profiles/
 
   x86-n5105-pve/
     profile.env
+    semantics.json
     config.seed
     required-packages.txt
     forbidden-packages.txt
@@ -312,8 +314,6 @@ scripts/
   install-profile-feeds.sh
   normalize-forbidden-suboptions.py
   check-seed-config.sh
-  check-required-packages.sh
-  check-forbidden-packages.sh
   check-profile-contract.sh
   verify-firmware-artifacts.sh
   collect-build-provenance.sh
@@ -349,15 +349,19 @@ Geo 数据只保留一份声明式静态合同 `profiles/common/geodata-sources.
 
 ### 7.1 Profile renderer
 
-继续复用现有 `scripts/render-profile.sh`，不创建第二套配置框架。统一接口：
+`scripts/profile_model.py` 是唯一实现，`scripts/render-profile.sh` 仅转发 CLI，不创建第二套配置框架。主要接口：
 
 ```text
+render-profile.sh list
+render-profile.sh bundle    <profile> <output-directory>
 render-profile.sh env       <profile> [output]
 render-profile.sh config    <profile> <output>
 render-profile.sh required  <profile> <output>
 render-profile.sh forbidden <profile> <output>
 render-profile.sh files     <profile> <output-directory>
 ```
+
+CI、checker 与 artifact verifier 使用 `bundle` 一次得到同一快照；其余细分接口只用于定向工具和 fixture，内部仍调用同一个 `ProfileRepository`，不是平行渲染路径。
 
 合并规则：
 
@@ -489,20 +493,35 @@ profile 输入按职责只有四个事实源：
 - `required-packages.txt`：必选成品包与值为 `y` 的公开 Kconfig；renderer 据此生成正选择，manifest checker 读取同一清单验证成品。
 - `forbidden-packages.txt`：成品包黑名单；renderer 只把 `exact:` 规则生成 Kconfig 负选择，regex 继续约束最终集合。
 - `config.seed`：target、镜像布局、CPU flags、数值/字符串以及 package 子功能等不能由前两类表达的 Kconfig；不得重复拥有由 required/exact-forbidden 派生的 symbol。
-- `profile.env` 与 `profiles/profile-semantics.json`：前者提供 source/target/image 接口参数，后者声明 rootfs 和锁定源码必须具备的稳定行为语义。
+- `profile.env` 与各所有者目录中的 `semantics.json`：前者提供 source/target/image 接口参数，后者声明 rootfs 和锁定源码必须具备的稳定行为语义；common 与设备语义不再集中到第二份 profile 映射表。
 
-`render-profile.sh` 是唯一合并器。它在生成 `.config` 输入时统一检查 common/device 冲突、规则语法、required/forbidden 冲突和派生 symbol 所有权；同一个 symbol 出现在 seed 与派生规则时直接失败。因此增删必选包或 exact 禁用包只改一份清单，不在 checker 或设备 seed 复制。
+`scripts/profile_model.py` 是唯一 profile 领域模型与合并器；`render-profile.sh` 只是它的 shell CLI。模型从目录自动发现 `profiles/<device>`，一次生成不可变的 rendered bundle（`config.seed`、`required.txt`、`forbidden.txt`、`profile.env`、`files/`），并统一检查 common/device 冲突、规则语法、required/forbidden 冲突和派生 symbol 所有权。同一个 symbol 出现在 seed 与派生规则时直接失败。因此增删必选包或 exact 禁用包只改一份清单，不在 checker、workflow、测试或设备 seed 复制。
+
+模块边界与复用接口固定为：
+
+```text
+profiles/common + profiles/<device>
+  -> ProfileRepository / RenderedProfile（profile_model.py）
+      -> render-profile.sh（仅 CLI 适配）
+      -> profile_contract.py（静态与最终 OpenWrt config 合约）
+      -> source_lock.py（同一 env/profile 发现接口）
+      -> verify-firmware-artifacts.sh（同一 rendered bundle）
+  -> workflow（只编排 bundle 与 checker，不解释 package 规则）
+```
+
+`RenderedProfile` 是模块间唯一 profile 输入接口；required/forbidden 的语法解析、派生 Kconfig 和最终 package 集合判定都由 `profile_model.py` 提供。不得再创建第二个 required checker、forbidden checker、env 合并器或 profile 名单。命名统一为 `ProfileRepository`（声明仓库）、`RenderedProfile`（合并结果）和 `PackageContractResult`（最终 Kconfig/package 判定）；shell 文件只保留动作式 CLI 名称。
 
 检查器分工如下：
 
 - `check-seed-config.sh`：renderer 生成的全部 Kconfig 在 `make defconfig` 后保持精确值。
-- `check-required-packages.sh`：同一 required 清单中的成品包必须进入最终 manifest。
-- `check-forbidden-packages.sh`：同一 forbidden 清单不得命中最终配置/manifest。
-- `check-profile-contract.sh`：只做通用关系校验和编排，不包含 profile 名、包名、CPU flags、网络值或 provider 路径枚举；它验证 env 接口、required/forbidden 集合关系、动态 target regex、稳定 kernel/source-lock 映射，并以 check-only 模式复用 provider selector，最后调用 profile semantic interpreter。
+- `profile_model.py` 的 package contract 接口：使用同一份 required/forbidden 同时判定必选缺失、禁用命中，并一次生成 `package-list.txt` 与命中报告；不存在两个各自解释规则的检查路径。
+- `check-profile-contract.sh`：只把 CLI 参数交给通用 Python checker，不包含 profile 名、包名、CPU flags、网络值或 provider 路径枚举；checker 从同一个 rendered bundle 验证 env 接口、required/forbidden 集合关系、动态 target regex、稳定 kernel/source-lock 映射，并以 check-only 模式复用 provider selector，最后调用 profile semantic interpreter。
 
-`profiles/profile-semantics.json` 是网络默认、运行时调优及 Lean 继承优化的唯一语义声明层。它只保存稳定行为、相对路径模板和内容断言，不保存 kernel 版本、Lean commit、patch 文件名或逐轮 hash。通用解释器在 prepare 阶段验证 rootfs，在 build checkout 本轮 source-lock 后展开 `{kernel_series}` 并验证 upstream source；patch 能力按目录 glob 与同一文件的内容语义匹配，不依赖上游文件名。任一声明必须命中且不得靠另一个 profile 的文件满足。
+workflow 与仓库预检必须调用 `render-profile.sh list` 自动得到 profile 集合；`all` 表示这个集合，不在 matrix、测试命令或 update checker 再写 `r4s,x86-n5105-pve`。正式产品仍要求 source-lock 中包含仓库当前声明的全部 profile，新增或移除 profile 只修改 `profiles/` 声明目录及其真实设备语义，不修改 checker 代码。
 
-每个平台的 `profile_digest` 统一覆盖 `profiles/common/`、对应设备目录和这份共享语义合同。修改任何 common 行为都会同时改变 R4S/N5105 的两个 profile digest；修改某一设备目录只改变对应设备的 profile digest。完整 source-lock digest 还独立包含仓库 commit，继续作为整轮 update fingerprint 和 exact cache key 的组成部分。路径集合只在 resolver 的 `profile_digest()` 中定义，workflow 不复制。
+`profiles/common/semantics.json` 与 `profiles/<device>/semantics.json` 是网络默认、运行时调优及 Lean 继承优化的唯一语义声明层。每个文件只保存本目录所有者的稳定行为、相对路径模板和内容断言，不保存 kernel 版本、Lean commit、patch 文件名或逐轮 hash。通用解释器在 prepare 阶段验证 rootfs，在 build checkout 本轮 source-lock 后展开 `{kernel_series}` 并验证 upstream source；patch 能力按目录 glob 与同一文件的内容语义匹配，不依赖上游文件名。任一声明必须命中且不得靠另一个 profile 的文件满足。
+
+每个平台的 `profile_digest` 统一覆盖 `profiles/common/` 与对应设备目录，所以 common 语义变化会同时改变两个 digest，设备语义变化只改变自己的 digest。完整 source-lock digest 还独立包含仓库 commit，继续作为整轮 update fingerprint 和 exact cache key 的组成部分。路径集合只在 resolver 的 `profile_digest()` 中定义，workflow 不复制。
 
 规则命名统一使用 `<scope>.<capability>`，例如 `r4s.irq-affinity`、`x86-n5105-pve.igc-vlan-offload`；检查结果使用相同名称写入 `profile-contract-report.txt`。新优化必须先在这个声明层定义可验证行为，再进入配置或文档；不建立第二套设备专用 checker。
 
@@ -540,7 +559,7 @@ flowchart LR
     FC["feeds.custom.conf<br/>同名 packages 覆盖"] --> S
     GC["geodata-sources contract"] --> S
     GC --> O
-    OC["profile-semantics"] --> PC["profile contract checker"]
+    OC["common/device semantics"] --> PC["profile contract checker"]
     S --> L["source-lock.json"]
     L --> Z["materialize + kernel clean-apply"]
     L --> LF["apply locked feeds"]
@@ -575,14 +594,14 @@ flowchart LR
 
 - source ref、受控 release 与 BBRv3 provider 解析/物化只属于 `resolve-source-lock.sh`。
 - Geo 数据角色、可信仓库、asset 与 package 字段映射只属于 `profiles/common/geodata-sources.json`；resolver、validator、applicator 共用一个解析结果，执行代码不得重复枚举。
-- profile 合并只属于 `render-profile.sh`。
+- profile 发现、合并与 package contract 只属于 `profile_model.py`；`render-profile.sh` 仅为 shell CLI。
 - 浮动 feed 与同名 default 覆盖只属于 `feeds.custom.conf`；resolver 负责合并和锁定，`manage-custom-feeds.sh` 负责渲染与按 lock 全量重建索引。
 - 当前产品的同名 package 选择只属于 `profiles/common/providers.tsv`；selector、artifact applicator 和 profile checker 共用该合同，workflow 不复制 provider 路径。
 - 官方 core 覆盖仓库与 source→target 映射只在 common `source-overlays.json` 声明，由 resolver 校验并写入 source-lock；`sync-source-overlays.sh` 只通用、安全地同步 lock 中的相对路径。
 - 锁定 package 版本/URL/hash 的机械写入只属于 `apply-source-lock-artifacts.sh`。
 - 行为性源码变更只属于 `apply-profile-patches.sh`、仓库内 common/device `series` 和 source-lock 物化的 BBRv3 port；不依赖版本/hash 行的窄语义兼容变换也由该接口执行并写入 patch report。BBRv3 的 provider/kernel-series 选择只由 resolver 驱动。
 - exact-forbidden 父包的残留子选项只由 `normalize-forbidden-suboptions.py` 收敛；Kconfig/package/target 的结果边界只属于 contract checkers。
-- 网络默认、运行时调优与 Lean 继承优化的稳定语义只在 `profiles/profile-semantics.json` 声明；`check-profile-contract.sh` 通用解释 rootfs/source 规则，kernel series 由本轮 source-lock/target 动态提供，不在声明或代码中复制版本与 patch 文件名。
+- 网络默认、运行时调优与 Lean 继承优化的稳定语义只在其所有者目录的 `semantics.json` 声明；`check-profile-contract.sh` 通用解释 rootfs/source 规则，kernel series 由本轮 source-lock/target 动态提供，不在声明或代码中复制版本与 patch 文件名。
 - 成品身份收集只属于 `collect-build-provenance.sh`，校验只属于 artifact verifier。
 - workflow 只编排这些接口，不内联第二份业务判断。
 
@@ -1499,10 +1518,10 @@ release-verify job 从 draft Release 重新下载所有资产，执行 `sha256su
 | 4 | 最新 package metadata 与 BBRv3 内核输入可审计 | `profiles/common/geodata-sources.json`, `apply-source-lock-artifacts.sh`, `apply-profile-patches.sh`, `diy-part2.sh`, `patchsets/common/kernel/bbr3-sources.json` | Geo 静态来源/字段只声明一次，resolver/validator/applicator 共用；由 source-lock 写入并验证动态 package metadata；按 profile 稳定内核系列动态解析、物化并 clean-apply 最新兼容 BBRv3 port | 执行代码无重复 Geo tuple，无 `PKG_HASH:=skip`/`latest/download`；BBRv3 每文件 immutable URL/hash/顺序完整；定向 download、override report、patch report 完整 |
 | 5 | common 工具链和实际 package 闭包统一 | `feeds.custom.conf`, `profiles/common/providers.tsv`, `source-overlays.json`, `package-compatibility.json`, `manage-custom-feeds.sh`, `select-package-providers.sh`, `sync-source-overlays.sh` | 固定 GCC15；同名 `packages` feed 每轮锁定 OpenWrt 官方 master；GMP/PCRE2 来自同一官方 core lock；只为 `libsepol`/`wol`/current `small/tcping` 保留已证明必要的语义规则；按 canonical feed 选择 PassWall/MosDNS/SmartDNS 等当前 provider；显式关闭 LTO/GC/Mold | source-lock 中 `packages` URL/ref/origin 精确，全部锁定 feed 已重建索引；无仓库内普通 package 版本/hash；当前闭包全部下载并用 GCC 15.x 完整编译通过 |
 | 6 | 不再继承危险默认设置 | `profiles/*/forbidden-packages.txt`, `profiles/*/files` | 禁用 `default-settings`，以窄 UCI overlay 实现时区/NTP、DHCP `.32/232`、IPv6 relay 与设备设置 | manifest 无 default-settings，网络默认 fixture 精确，防火墙 input 未被改成 ACCEPT，无固定 root 密码 |
-| 7 | BBRv3 成为可回退的 common 默认 | `patchsets/common/kernel/**`, `profiles/common/required-packages.txt`, `profile-semantics.json` | 两个平台应用同一内核系列的 BBRv3 port，显式编译 `kmod-tcp-bbr` 和 `kmod-sched`；上游 TurboACC 探测完成后、确认 module version `3` 与 `sch_fq` provider 再一次性选择 `bbr`，并保护后续用户设置；software flow on、hardware flow off | 双平台 build module version 为 `3` 且含 `sch_fq.ko`；三次冷启动 UCI/sysctl/firewall 一致，完成 BBRv3/cubic A/B 与 PassWall/nlbwmon 真机测试 |
+| 7 | BBRv3 成为可回退的 common 默认 | `patchsets/common/kernel/**`, `profiles/common/required-packages.txt`, `profiles/common/semantics.json` | 两个平台应用同一内核系列的 BBRv3 port，显式编译 `kmod-tcp-bbr` 和 `kmod-sched`；上游 TurboACC 探测完成后、确认 module version `3` 与 `sch_fq` provider 再一次性选择 `bbr`，并保护后续用户设置；software flow on、hardware flow off | 双平台 build module version 为 `3` 且含 `sch_fq.ko`；三次冷启动 UCI/sysctl/firewall 一致，完成 BBRv3/cubic A/B 与 PassWall/nlbwmon 真机测试 |
 | 8 | DNS 组件齐全且不覆盖用户运行时配置 | `profiles/common/required-packages.txt`, package contracts, `README.md` | 编译所需包，端口、上游、规则和凭据由设备 UCI/YAML 管理；确认上游 factory defaults 不争抢 53 | manifest 检查；新装默认服务检查；应用用户常用配置后按实际 UCI/YAML 做 `ss`、iptables redirect、逐跳查询和断环测试 |
-| 9 | R4S 为 RK3399 专用且不重复调优 | `profiles/r4s/**`, `profiles/profile-semantics.json` | O2、ARMv8 crypto/CRC、A72/A53 tune、native boot/IRQ/r8168、512MiB LZ4 zram、无 irqbalance/RTL8152 | flags/manifest、锁定源码的 CPU4/5 affinity/schedutil/OPP 语义、zram/温控检查 |
-| 10 | x86 为 N5105 PVE 专用 | `profiles/x86` → `profiles/x86-n5105-pve`, `profiles/profile-semantics.json` | x86-64-v2 + Tremont tune、稳定内核、driver-based LAN/WAN、VirtIO/I225、4 queues、无 autocore/RPS/zram | target/flags/interface roles/queues/IRQ/manifest，以及锁定源码的 EEE/VLAN/VirtIO 语义检查 |
+| 9 | R4S 为 RK3399 专用且不重复调优 | `profiles/r4s/**` | O2、ARMv8 crypto/CRC、A72/A53 tune、native boot/IRQ/r8168、512MiB LZ4 zram、无 irqbalance/RTL8152 | flags/manifest、锁定源码的 CPU4/5 affinity/schedutil/OPP 语义、zram/温控检查 |
+| 10 | x86 为 N5105 PVE 专用 | `profiles/x86` → `profiles/x86-n5105-pve/**` | x86-64-v2 + Tremont tune、稳定内核、driver-based LAN/WAN、VirtIO/I225、4 queues、无 autocore/RPS/zram | target/flags/interface roles/queues/IRQ/manifest，以及锁定源码的 EEE/VLAN/VirtIO 语义检查 |
 | 11 | Runner 能稳定容纳双构建 | `scripts/prepare-runner.sh`, `openwrt-builder.yml` | `ubuntu-latest`、实际镜像资源报告、白名单清理、磁盘门槛、受控并发 | 清理路径边界测试；每 job 构建前 ≥45GiB |
 | 12 | 缓存不会污染构建 | builder workflow | ccache/dl 分层、严格 key、只信任维护分支、不用第三方 toolchain | 两次相同 lock 命中；换 profile/compiler 不交叉恢复 |
 | 13 | 失败留下根因且不误发布 | builder workflow | 并行日志 + 定向单线程 `V=sc <package>/compile` 诊断，去掉 `IGNORE_ERRORS/continue-on-error` | 注入失败后 job 红、诊断 artifact 存在、无公开 Release/cleanup |
@@ -1516,7 +1535,10 @@ release-verify job 从 draft Release 重新下载所有资产，执行 `sha256su
 ### 15.1 脚本与配置静态验证
 
 ```sh
-bash -n diy-part1.sh diy-part2.sh scripts/*.sh profiles/*/files/etc/uci-defaults/*
+bash -n diy-part1.sh diy-part2.sh scripts/*.sh
+find profiles -type f \( -path '*/etc/uci-defaults/*' -o -path '*/etc/hotplug.d/*' \) \
+  -print0 | xargs -0 bash -n
+bash tests/test-profile-renderer.sh
 python3 tests/test-profile-semantics.py
 bash tests/test-resolve-source-lock.sh
 bash tests/test-apply-source-lock-artifacts.sh
@@ -1524,8 +1546,9 @@ bash tests/test-locked-feeds.sh
 bash tests/test-select-package-providers.sh
 bash tests/test-sync-source-overlays.sh
 python3 tests/test-normalize-forbidden-suboptions.py
-bash scripts/check-profile-contract.sh r4s
-bash scripts/check-profile-contract.sh x86-n5105-pve
+while IFS= read -r profile; do
+  bash scripts/check-profile-contract.sh "$profile"
+done < <(bash scripts/render-profile.sh list)
 ```
 
 期望：
@@ -1533,6 +1556,8 @@ bash scripts/check-profile-contract.sh x86-n5105-pve
 - 所有 shell 语法通过
 - 无 common/device symbol 重复
 - 无 required/forbidden 冲突
+- 临时增加第三个 profile 时，目录发现、bundle 渲染和静态 checker 无需改代码即可通过
+- required/forbidden 由同一次 `PackageContractResult` 评估并生成 package/命中报告，不存在两个解释器
 - firewall4/nftables 不在有效契约中
 - `default-settings` 对两个 profile 都是 forbidden
 - R4S 的 irqbalance/RTL8152 是 forbidden
@@ -1562,10 +1587,9 @@ python3 "$GITHUB_WORKSPACE/scripts/normalize-forbidden-suboptions.py" check \
   .config "$PROFILE_FORBIDDEN" "$GITHUB_WORKSPACE/forbidden-suboptions-check.txt"
 bash "$GITHUB_WORKSPACE/scripts/check-seed-config.sh" \
   "$PROFILE_CONFIG" .config "$GITHUB_WORKSPACE"
-bash "$GITHUB_WORKSPACE/scripts/check-required-packages.sh" \
-  .config "$PROFILE_REQUIRED" "$GITHUB_WORKSPACE/package-list.txt"
-bash "$GITHUB_WORKSPACE/scripts/check-forbidden-packages.sh" \
-  .config "$PROFILE_FORBIDDEN" "$GITHUB_WORKSPACE"
+bash "$GITHUB_WORKSPACE/scripts/check-profile-contract.sh" \
+  "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" \
+  "$GITHUB_WORKSPACE/profile-contract-report.txt" "$GITHUB_WORKSPACE"
 ./scripts/diffconfig.sh > "$GITHUB_WORKSPACE/config.effective"
 ```
 
@@ -1812,6 +1836,7 @@ openwrt-<YYYY.MM.DD-HHMMSS>-<lede-short-sha>
 - LTO/GC/Mold 为关闭状态
 - package manifest 摘要
 - breaking change：`x86` profile 更名为 `x86-n5105-pve`
+- workflow `profile` 改为 `all` 或自动发现的设备目录名，不维护静态 options/matrix 名单
 - PVE 契约：q35/OVMF、x86-64-v2、CPU host、4 vCPU/4 queues、balloon off
 
 ### 16.2 回滚

@@ -51,8 +51,8 @@ profiles/x86-n5105-pve/      N5105 PVE target、CPU flags、硬件包和运行�
 - 不允许进入 manifest 的包只写入 `forbidden-packages.txt`；其中 `exact:` 规则自动成为 Kconfig 负选择。首次 `make defconfig` 后还会统一清理已禁父包遗留的 `CONFIG_PACKAGE_<parent>_*` 正选择，再次 defconfig 并复验；普通精简不删除源码。
 - rootfs 文件放在对应 `files/`。common 与设备层同路径会直接失败，不允许静默覆盖。
 - 同一 Kconfig symbol 或 required/forbidden 规则不能同时归 common 与设备层所有。
-- `profiles/profile-semantics.json` 是网络默认、运行时调优及 Lean 继承优化的唯一语义合同。它使用动态 `{kernel_series}` 和 patch 目录 glob，不保存某轮 kernel 版本、commit、hash 或 patch 文件名；静态检查验证 rootfs，构建检查再验证本轮锁定 Lean tree/feeds。它进入两套 profile digest，修改 common 行为会同时改变两个 profile digest；完整 source-lock 仍独立包含仓库 commit。
-- `scripts/check-profile-contract.sh` 只编排通用关系验证，没有 R4S/N5105、包名、CPU flags 或网络值分支；新增组件或 profile 不需要修改 checker 代码。
+- 稳定行为语义与其所有者放在同一目录的 `semantics.json`：common 只影响共享意图，设备文件只影响对应 profile。规则使用动态 `{kernel_series}` 和 patch 目录 glob，不保存某轮 kernel 版本、commit、hash 或 patch 文件名；静态检查验证 rootfs，构建检查再验证本轮锁定 Lean tree/feeds。
+- `scripts/profile_model.py` 是 profile 发现、common/device 合并、env、正负 Kconfig 派生和最终 package 集合判定的唯一实现；`render-profile.sh` 与 `check-profile-contract.sh` 只是薄 CLI。workflow、update checker 与测试都从 profile 目录自动发现集合，没有 R4S/N5105、包名、CPU flags 或网络值分支。
 
 `profiles/common/providers.tsv` 是当前产品重复 package provider 的唯一合同。HAProxy 来自官方 packages；PassWall app 来自 canonical `passwall` feed；MosDNS app/core 来自 `sbwml`；SmartDNS 与 AdGuardHome 来自 `kenzo`；PassWall 依赖按合同在 `xiaorouji` 与 `small` 中唯一选择。真实冲突目录会被精确移除，随后从 source-lock 枚举并重建全部 feed 索引。Geo 数据角色与来源映射只定义在 `profiles/common/geodata-sources.json`：`v2ray-geodata` 同时产出 `v2ray-geoip` 与 `v2ray-geosite`，resolver、validator 和 applicator 共用该合同，把两个 download block 改写成 Loyalsoldier 载荷的当轮精确 tag、URL 与 SHA256。
 
@@ -104,7 +104,9 @@ serial0: socket
 仓库静态与 fixture 测试：
 
 ```sh
-bash -n diy-part1.sh diy-part2.sh scripts/*.sh profiles/*/files/etc/uci-defaults/*
+bash -n diy-part1.sh diy-part2.sh scripts/*.sh
+find profiles -type f \( -path '*/etc/uci-defaults/*' -o -path '*/etc/hotplug.d/*' \) \
+  -print0 | xargs -0 bash -n
 python3 -m py_compile scripts/*.py
 bash tests/test-profile-renderer.sh
 python3 tests/test-profile-semantics.py
@@ -117,15 +119,17 @@ bash tests/test-select-package-providers.sh
 bash tests/test-install-profile-feeds.sh
 bash tests/test-sync-source-overlays.sh
 python3 tests/test-normalize-forbidden-suboptions.py
-bash scripts/check-profile-contract.sh r4s
-bash scripts/check-profile-contract.sh x86-n5105-pve
+while IFS= read -r profile; do
+  bash scripts/check-profile-contract.sh "$profile"
+done < <(bash scripts/render-profile.sh list)
 ```
 
 真实 resolver（会访问上游并下载受控 release 做 hash 验证）：
 
 ```sh
+profiles="$(bash scripts/render-profile.sh list | paste -sd, -)"
 bash scripts/resolve-source-lock.sh resolve \
-  'r4s,x86-n5105-pve' /tmp/source-input/source-lock.json
+  "$profiles" /tmp/source-input/source-lock.json
 bash scripts/resolve-source-lock.sh materialize \
   /tmp/source-input/source-lock.json /tmp/source-input
 bash scripts/resolve-source-lock.sh digest /tmp/source-input/source-lock.json
@@ -140,6 +144,7 @@ GitHub build 还会执行两次 `make defconfig` 及 forbidden 子选项收敛�
 Breaking changes：
 
 - `profiles/x86` 和 workflow 输入 `x86` 已改名为 `x86-n5105-pve`，没有兼容别名。
+- workflow 的 `profile` 输入由静态下拉框改为字符串：填 `all` 或任一 `profiles/<device>` 目录名；matrix、update checker、静态检查和 Release 聚合均自动发现目录，不再维护第二份 profile 名单。
 - source lock 已升级为 schema 3，并以 `source_overlays` 取代单仓库 `official_packages`；旧 lock 需重新运行 resolver，设备配置与 sysupgrade 行为不受影响。
 - 生产 profile 跟随 Lean target 稳定内核；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析最新兼容 BBRv3 port、物化并锁定 commit/hash。
 - GitHub 官方复用 Actions 直接使用 `actions/*@main`，按用户选择追踪最新默认分支；任何上游 runtime/行为不兼容会使门禁直接失败。

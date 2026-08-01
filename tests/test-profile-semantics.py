@@ -14,6 +14,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from profile_semantics import check_contract, load_contract  # noqa: E402
+from profile_model import ProfileRepository  # noqa: E402
 
 
 def render_rootfs(profile: str, destination: pathlib.Path) -> None:
@@ -61,24 +62,34 @@ def assert_no_problems(label: str, problems: list[str]) -> None:
 
 
 def main() -> int:
-    contract_path = REPO_ROOT / "profiles/profile-semantics.json"
-    contract = load_contract(contract_path)
-    text = contract_path.read_text(encoding="utf-8")
-    if "6.12" in text or '"commit"' in text or '"sha256"' in text:
-        raise AssertionError("profile semantics contain per-run version/hash state")
-
-    profiles = sorted(scope for scope in contract["scopes"] if scope != "common")
-    if profiles != ["r4s", "x86-n5105-pve"]:
-        raise AssertionError(f"unexpected maintained profile scopes: {profiles}")
-
-    for scope in profiles:
-        for rule in contract["scopes"][scope]["source"]:
-            if "glob" in rule and not str(rule["glob"]).endswith("/*.patch"):
-                raise AssertionError(f"patch rule pins a filename: {rule['name']}")
-
+    profiles = list(ProfileRepository(REPO_ROOT / "profiles").profiles())
     with tempfile.TemporaryDirectory() as temporary:
         root = pathlib.Path(temporary)
         for profile in profiles:
+            contract = load_contract(REPO_ROOT / "profiles", profile)
+            semantics_text = "\n".join(
+                (REPO_ROOT / "profiles" / scope / "semantics.json").read_text(
+                    encoding="utf-8"
+                )
+                for scope in ("common", profile)
+            )
+            if (
+                "6.12" in semantics_text
+                or '"commit"' in semantics_text
+                or '"sha256"' in semantics_text
+            ):
+                raise AssertionError(
+                    f"{profile} semantics contain per-run version/hash state"
+                )
+            for scope in ("common", profile):
+                for rule in contract["scopes"][scope]["source"]:
+                    if "glob" in rule and not str(rule["glob"]).endswith(
+                        "/*.patch"
+                    ):
+                        raise AssertionError(
+                            f"patch rule pins a filename: {rule['name']}"
+                        )
+
             rootfs = root / f"{profile}-rootfs"
             render_rootfs(profile, rootfs)
 

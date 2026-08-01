@@ -16,12 +16,8 @@ source_lock="${3:-}"
 artifact_dir="$(cd "$artifact_dir" && pwd -P)"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
-bash "$repo_root/scripts/render-profile.sh" config "$profile" \
-  "$tmpdir/profile.config"
-bash "$repo_root/scripts/render-profile.sh" required "$profile" \
-  "$tmpdir/required.txt"
-bash "$repo_root/scripts/render-profile.sh" forbidden "$profile" \
-  "$tmpdir/forbidden.txt"
+rendered="$tmpdir/rendered"
+bash "$repo_root/scripts/render-profile.sh" bundle "$profile" "$rendered"
 image_pattern="$(python3 - "$source_lock" "$profile" <<'PY'
 import json, sys
 lock = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -90,8 +86,8 @@ embedded_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$art
 }
 
 python3 - "$repo_root" "$profile" "$manifest" "$config_buildinfo" \
-  "$artifact_dir" "$expected_digest" "$tmpdir/profile.config" \
-  "$tmpdir/required.txt" "$tmpdir/forbidden.txt" <<'PY'
+  "$artifact_dir" "$expected_digest" "$rendered/config.seed" \
+  "$rendered/required.txt" "$rendered/forbidden.txt" <<'PY'
 import json
 import hashlib
 import pathlib
