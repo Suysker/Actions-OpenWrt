@@ -1417,7 +1417,7 @@ package 的 `make -j1 V=sc package/.../compile`；这既给出真正的编译器
 ```sh
 set -o pipefail
 if ! make -j"$BUILD_JOBS" 2>&1 | tee build.parallel.log; then
-  scripts/collect-build-failure-diagnostics.sh \
+  bash scripts/collect-build-failure-diagnostics.sh \
     "$OPENWRT_ROOT" build.parallel.log build.serial.log
   exit 1
 fi
