@@ -19,6 +19,19 @@ grep -Fxq 'FRONTEND_HASH:=cccccccccccccccccccccccccccccccccccccccccccccccccccccc
   "$tmpdir/openwrt/feeds/kenzo/adguardhome/Makefile"
 grep -Fxq 'GEOIP_VER:=202601010001' "$tmpdir/openwrt/feeds/xiaorouji/v2ray-geodata/Makefile"
 grep -Fxq 'GEOSITE_VER:=202601010002' "$tmpdir/openwrt/feeds/xiaorouji/v2ray-geodata/Makefile"
+grep -Fxq '  URL:=https://github.com/Loyalsoldier/geoip/releases/download/202601010001/' \
+  "$tmpdir/openwrt/feeds/xiaorouji/v2ray-geodata/Makefile"
+grep -Fxq '  HASH:=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' \
+  "$tmpdir/openwrt/feeds/xiaorouji/v2ray-geodata/Makefile"
+grep -Fxq '  URL:=https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/' \
+  "$tmpdir/openwrt/feeds/xiaorouji/v2ray-geodata/Makefile"
+grep -Fxq '  HASH:=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' \
+  "$tmpdir/openwrt/feeds/xiaorouji/v2ray-geodata/Makefile"
+if grep -Eq 'HASH:=skip|releases/latest/download' \
+  "$tmpdir/openwrt/feeds/xiaorouji/v2ray-geodata/Makefile"; then
+  echo "geodata applicator left mutable or unchecked metadata" >&2
+  exit 1
+fi
 python3 - "$tmpdir/report.json" <<'PY'
 import json
 import sys
@@ -55,7 +68,7 @@ if bash "$repo_root/scripts/apply-source-lock-artifacts.sh" \
   echo "artifact applicator accepted PKG_HASH:=skip semantics" >&2
   exit 1
 fi
-grep -q 'not an exact SHA256' "$tmpdir/invalid.out"
+grep -Eq 'not a SHA256 digest|not an exact SHA256' "$tmpdir/invalid.out"
 
 # A known competing provider must be removed before metadata application.
 cp -a "$fixture/openwrt" "$tmpdir/conflict"

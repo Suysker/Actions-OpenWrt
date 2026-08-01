@@ -5,7 +5,7 @@
 - NanoPi R4S：RK3399、原生 Lean 启动链与网口 IRQ 策略、ARMv8 CRC/crypto、R8168、PWM fan、512 MiB LZ4 zram。
 - N5105 PVE：`x86-64-v2 + mtune=tremont`、squashfs combined EFI、VirtIO NET/SCSI、I225/igc 直通、4 队列与 irqbalance。
 
-两者共用 firewall3/iptables、GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列动态解析的 BBRv3。Lean master 的旧 `libsepol 3.3` 仅在该包内保持 GNU17 兼容语义，不降低全局编译器。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
+两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列动态解析的 BBRv3。Lean master 的 `libsepol` 仅在该包内保持 GNU17 兼容语义，不降低全局编译器；`nlbwmon` 与 Go 从同一份当轮锁定的官方 `openwrt/packages` commit 同步，子树名单只在 common `profile.env` 声明一次。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
 
 ## 构建模型
 
@@ -31,7 +31,7 @@
 4. 通常把四个版本输入留空，resolver 会选择：
    - 仍受支持的最高 HAProxy LTS 分支最新 patch release；
    - 最新 AdGuardHome stable；
-   - 最新 Loyalsoldier GeoIP 和 Geosite release。
+   - `Loyalsoldier/geoip` 的最新 `geoip.dat` 和 `Loyalsoldier/v2ray-rules-dat` 的最新 `geosite.dat`。
 5. 需要故障回滚时才填写精确 `haproxy_version`、`adguardhome_version`、`geoip_tag` 或 `geosite_tag`；resolver 仍会获取并验证真实 hash。
 
 定时 `Update Checker` 使用同一个 resolver。Lean、任一 feed、四类上游产物、profile 或 patch digest 变化时，它会把已经解析好的完整 source lock 交给一次双平台构建，避免 update checker 与 builder 各自维护一套版本查询逻辑。
@@ -53,7 +53,9 @@ profiles/x86-n5105-pve/      N5105 PVE target、CPU flags、硬件包和运行�
 - rootfs 文件放在对应 `files/`。common 与设备层同路径会直接失败，不允许静默覆盖。
 - 同一 Kconfig symbol 或 required/forbidden 规则不能同时归 common 与设备层所有。
 
-`profiles/common/providers.tsv` 是关键 provider 的唯一合同。当前明确选择默认 packages feed 的 HAProxy、kenzo 的 AdGuardHome、xiaorouji 的 v2ray-geodata 和 Lean LuCI 的 TurboACC；真实冲突 provider 会在 feed checkout 后被精确移除并重新索引。
+`profiles/common/providers.tsv` 是关键 package provider 的唯一合同。当前明确选择默认 packages feed 的 HAProxy、kenzo 的 AdGuardHome、xiaorouji 的 `v2ray-geodata` 和 Lean LuCI 的 TurboACC；真实冲突 provider 会在 feed checkout 后被精确移除并重新索引。Geo 数据角色与来源映射则只定义在 `profiles/common/geodata-sources.json`：`v2ray-geodata` 是同时产出 `v2ray-geoip` 与 `v2ray-geosite` 的 package recipe，不是第三份规则数据；resolver、validator 和 applicator 共用该合同，把两个 download block 改写成对应 Loyalsoldier 载荷的当轮精确 tag、URL 与 SHA256，执行代码不再各自枚举仓库和字段。
+
+自定义 Feed 统一从 `feeds.custom.conf` 解析并在每轮冻结 commit。`small`、`kenzo`、`sbwml` 使用用户指定的上游；PassWall 使用旧 `xiaorouji` 地址当前指向的 canonical `Openwrt-Passwall` 组织，避免依赖重定向或已不存在的旧仓库。配置中的 `main`/默认分支是浮动跟踪策略，不是永久版本锁。
 
 ## 固件内容与边界
 
@@ -70,6 +72,8 @@ profiles/x86-n5105-pve/      N5105 PVE target、CPU flags、硬件包和运行�
 - 不内置固定 root 密码、不关闭签名校验、不添加私有软件源、不开放 WAN 管理入口。
 
 AdGuardHome、MosDNS、SmartDNS、dnsmasq-full 和 PassWall 都会被编译，但 DNS 端口、上游、缓存、规则、节点、订阅和凭据是用户常用的设备运行时配置，不烘焙进两台设备共用的镜像。它们应按设备实际 UCI/YAML、socket、iptables redirect 和完整查询链验收。
+
+BBRv3 同时适用于本机 IPv4 TCP 与 IPv6 TCP。Linux 的 IPv6 TCP socket 同样进入通用 `tcp_init_sock()` 和 `tcp_congestion_ops`，所以源码位于 `net/ipv4/tcp_bbr.c` 不代表“只支持 IPv4”。它不接管 UDP/QUIC，也不会改变普通 NAT 转发连接在 LAN 客户端/远端服务器上的端到端拥塞控制；PassWall/Xray 在路由器本机建立的 TCP outbound 才会直接使用它。
 
 ## N5105 PVE 前置条件
 
@@ -104,6 +108,7 @@ bash tests/test-resolve-source-lock.sh
 bash tests/test-apply-source-lock-artifacts.sh
 bash tests/test-apply-profile-patches.sh
 bash tests/test-locked-feeds.sh
+bash tests/test-sync-official-packages.sh
 bash scripts/check-profile-contract.sh r4s
 bash scripts/check-profile-contract.sh x86-n5105-pve
 ```

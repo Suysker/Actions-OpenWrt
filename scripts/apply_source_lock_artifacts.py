@@ -201,22 +201,28 @@ def apply_adguardhome(
 
 
 def apply_geodata(
-    path: pathlib.Path, geoip: dict[str, Any], geosite: dict[str, Any]
+    path: pathlib.Path,
+    artifacts: dict[str, Any],
+    contracts: tuple[dict[str, str], ...],
 ) -> list[dict[str, str]]:
     text = path.read_text(encoding="utf-8")
     changes: list[dict[str, str]] = []
-    for component, entry, version_field, block, asset in (
-        ("GeoIP", geoip, "GEOIP_VER", "geoip", "geoip.dat"),
-        ("Geosite", geosite, "GEOSITE_VER", "geosite", "geosite.dat"),
-    ):
+    for contract in contracts:
+        component_id = contract["id"]
+        component = contract["display_name"]
+        entry = artifacts[component_id]
+        version_field = contract["package_version_field"]
+        block = contract["package_download_block"]
+        repo = contract["repository"]
+        asset = contract["release_asset"]
         tag = entry.get("tag", "")
         if not re.fullmatch(r"[A-Za-z0-9._-]+", tag):
             raise ApplyError(f"{component} tag is invalid")
         url = require_url(entry.get("url"), f"{component} URL")
         sha = require_sha(entry.get("sha256"), f"{component} hash")
-        expected_suffix = f"/releases/download/{tag}/{asset}"
-        if not url.endswith(expected_suffix):
-            raise ApplyError(f"{component} URL does not contain exact tag/asset")
+        expected_url = f"https://github.com/{repo}/releases/download/{tag}/{asset}"
+        if url != expected_url:
+            raise ApplyError(f"{component} URL is not the exact {repo} release asset")
         base_url = url.rsplit("/", 1)[0] + "/"
 
         text, old, new = replace_unique(
@@ -262,17 +268,24 @@ def main(argv: list[str]) -> int:
     repo_root = script_dir.parent
     source_lock = load_source_lock_module(script_dir)
     lock = source_lock.load_lock(lock_path)
+    geodata_contracts = source_lock.load_geodata_contracts(repo_root)
     artifacts = lock.get("upstream_artifacts", {})
-    if set(artifacts) != {"haproxy", "adguardhome", "geoip", "geosite"}:
-        raise ApplyError("source lock must contain exactly four controlled upstream artifacts")
+    expected_artifacts = {"haproxy", "adguardhome"} | {
+        item["id"] for item in geodata_contracts
+    }
+    if set(artifacts) != expected_artifacts:
+        raise ApplyError("source lock artifacts differ from the declared source contract")
 
-    contract = provider_contract(repo_root)
-    haproxy_path = assert_provider(openwrt, "haproxy", contract)
-    adguard_path = assert_provider(openwrt, "adguardhome", contract)
-    geoip_path = assert_provider(openwrt, "geoip", contract)
-    geosite_path = assert_provider(openwrt, "geosite", contract)
-    if geoip_path != geosite_path:
-        raise ApplyError("GeoIP and Geosite must share the selected v2ray-geodata provider")
+    provider_selection = provider_contract(repo_root)
+    haproxy_path = assert_provider(openwrt, "haproxy", provider_selection)
+    adguard_path = assert_provider(openwrt, "adguardhome", provider_selection)
+    geodata_paths = {
+        item["id"]: assert_provider(openwrt, item["id"], provider_selection)
+        for item in geodata_contracts
+    }
+    if len(set(geodata_paths.values())) != 1:
+        raise ApplyError("all Geo data roles must share one selected package provider")
+    geodata_path = next(iter(geodata_paths.values()))
 
     report = {
         "schema": 1,
@@ -288,12 +301,10 @@ def main(argv: list[str]) -> int:
         "changes": apply_adguardhome(adguard_path, artifacts["adguardhome"]),
     }
     report["components"]["v2ray-geodata"] = {
-        "provider": str(geoip_path.relative_to(openwrt)),
-        "changes": apply_geodata(
-            geoip_path, artifacts["geoip"], artifacts["geosite"]
-        ),
+        "provider": str(geodata_path.relative_to(openwrt)),
+        "changes": apply_geodata(geodata_path, artifacts, geodata_contracts),
     }
-    assert_no_mutable_metadata([haproxy_path, adguard_path, geoip_path])
+    assert_no_mutable_metadata([haproxy_path, adguard_path, geodata_path])
 
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(

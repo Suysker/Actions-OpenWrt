@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "components": [
+    {
+      "id": "geoip",
+      "display_name": "GeoIP",
+      "repository": "Loyalsoldier/geoip",
+      "release_asset": "geoip.dat",
+      "override_env": "GEOIP_TAG",
+      "package_version_field": "GEOIP_VER",
+      "package_download_block": "geoip"
+    },
+    {
+      "id": "geosite",
+      "display_name": "Geosite",
+      "repository": "Loyalsoldier/v2ray-rules-dat",
+      "release_asset": "geosite.dat",
+      "override_env": "GEOSITE_TAG",
+      "package_version_field": "GEOSITE_VER",
+      "package_download_block": "geosite"
+    }
+  ]
+}

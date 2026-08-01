@@ -18,6 +18,44 @@ assert spec.loader is not None
 spec.loader.exec_module(module)
 fixtures = root / "tests/fixtures/source-lock"
 
+geodata_contracts = module.load_geodata_contracts(root)
+assert [item["id"] for item in geodata_contracts] == ["geoip", "geosite"]
+assert [item["repository"] for item in geodata_contracts] == [
+    "Loyalsoldier/geoip",
+    "Loyalsoldier/v2ray-rules-dat",
+]
+for implementation in (
+    root / "scripts/source_lock.py",
+    root / "scripts/apply_source_lock_artifacts.py",
+):
+    source = implementation.read_text(encoding="utf-8")
+    for duplicated_contract_value in (
+        "Loyalsoldier/",
+        "GEOIP_VER",
+        "GEOSITE_VER",
+        "GEOIP_TAG",
+        "GEOSITE_TAG",
+    ):
+        assert duplicated_contract_value not in source, (
+            f"{implementation.name} duplicates geodata contract value "
+            f"{duplicated_contract_value}"
+        )
+with tempfile.TemporaryDirectory() as directory:
+    temporary_root = pathlib.Path(directory)
+    contract_path = temporary_root / "profiles/common/geodata-sources.json"
+    contract_path.parent.mkdir(parents=True)
+    invalid_contract = {
+        "schema": 1,
+        "components": [dict(geodata_contracts[0]), dict(geodata_contracts[0])],
+    }
+    contract_path.write_text(json.dumps(invalid_contract), encoding="utf-8")
+    try:
+        module.load_geodata_contracts(temporary_root)
+    except module.ResolutionError as exc:
+        assert "duplicate geodata" in str(exc)
+    else:
+        raise AssertionError("duplicate geodata contract entry was accepted")
+
 index = (fixtures / "haproxy-index.html").read_text(encoding="utf-8")
 assert module.select_haproxy_branch(index) == "3.4"
 releases = json.loads((fixtures / "haproxy-releases.json").read_text(encoding="utf-8"))
@@ -64,7 +102,51 @@ base = {
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
     "feeds": {"packages": {"commit": "3" * 40}},
-    "official_golang": {"commit": "4" * 40},
+    "official_packages": {
+        "url": "https://github.com/openwrt/packages.git",
+        "requested_ref": "master",
+        "commit": "4" * 40,
+        "subtrees": ["lang/golang", "net/nlbwmon"],
+    },
+    "upstream_artifacts": {
+        "haproxy": {
+            "policy": "latest-lts",
+            "branch": "3.4",
+            "version": "3.4.2",
+            "url": "https://www.haproxy.org/download/3.4/src/haproxy-3.4.2.tar.gz",
+            "sha256": "d" * 64,
+        },
+        "adguardhome": {
+            "policy": "latest-stable",
+            "version": "0.107.78",
+            "tag": "v0.107.78",
+            "tag_commit": "e" * 40,
+            "source": {
+                "url": "https://codeload.github.com/AdguardTeam/AdGuardHome/tar.gz/refs/tags/v0.107.78?",
+                "sha256": "e" * 64,
+            },
+            "frontend": {
+                "url": "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.78/AdGuardHome_frontend.tar.gz",
+                "sha256": "f" * 64,
+            },
+        },
+        "geoip": {
+            "policy": "latest-stable",
+            "tag": "202601010001",
+            "url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat",
+            "sha256": "1" * 64,
+            "checksum_url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat.sha256sum",
+            "checksum_sha256": "2" * 64,
+        },
+        "geosite": {
+            "policy": "latest-stable",
+            "tag": "202601010002",
+            "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat",
+            "sha256": "3" * 64,
+            "checksum_url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat.sha256sum",
+            "checksum_sha256": "4" * 64,
+        },
+    },
     "profiles": {"r4s": {"kernel_series": "6.12"}},
     "actions": {
         "actions/checkout": {
@@ -107,6 +189,20 @@ base = {
     "patch_digest": "sha256:" + "7" * 64,
 }
 module.validate_lock(base)
+rollback = json.loads(json.dumps(base))
+for artifact in rollback["upstream_artifacts"].values():
+    artifact["policy"] = "exact-override"
+module.validate_lock(rollback)
+wrong_geo_owner = json.loads(json.dumps(base))
+wrong_geo_owner["upstream_artifacts"]["geoip"]["url"] = (
+    "https://github.com/example/geoip/releases/download/202601010001/geoip.dat"
+)
+try:
+    module.validate_lock(wrong_geo_owner)
+except module.ResolutionError as exc:
+    assert "Loyalsoldier" in str(exc)
+else:
+    raise AssertionError("a non-Loyalsoldier GeoIP source was accepted")
 changed_time = dict(base, resolved_at="2026-01-02T00:00:00Z")
 assert module.lock_digest(base) == module.lock_digest(changed_time)
 changed_source = json.loads(json.dumps(base))

@@ -44,7 +44,7 @@ env:
 jobs:
   prepare:
     name: Resolve immutable inputs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
@@ -97,6 +97,7 @@ jobs:
           bash tests/test-apply-source-lock-artifacts.sh
           bash tests/test-apply-profile-patches.sh
           bash tests/test-locked-feeds.sh
+          bash tests/test-sync-official-packages.sh
           bash scripts/check-profile-contract.sh r4s
           bash scripts/check-profile-contract.sh x86-n5105-pve
 
@@ -177,7 +178,7 @@ jobs:
   build:
     name: Build ${{ matrix.profile }}
     needs: prepare
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 360
     permissions:
       contents: read
@@ -286,7 +287,7 @@ jobs:
           ./scripts/feeds update -a
           bash "$GITHUB_WORKSPACE/scripts/select-package-providers.sh" \
             "$OPENWRT_ROOT" "$GITHUB_WORKSPACE/provider-selection-report.txt"
-          bash "$GITHUB_WORKSPACE/scripts/sync-official-golang.sh" \
+          bash "$GITHUB_WORKSPACE/scripts/sync-official-packages.sh" \
             apply-lock "$SOURCE_LOCK" "$OPENWRT_ROOT"
           for feed in packages small kenzo xiaorouji; do
             ./scripts/feeds update -i "$feed"
@@ -414,7 +415,7 @@ jobs:
     name: Assemble draft Release
     needs: [prepare, build]
     if: needs.prepare.outputs.publish == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -492,7 +493,7 @@ jobs:
   release-verify:
     name: Re-download and verify draft
     needs: aggregate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read
@@ -514,7 +515,7 @@ jobs:
   publish-final:
     name: Publish verified Release
     needs: [aggregate, release-verify]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
@@ -529,7 +530,7 @@ jobs:
   cleanup:
     name: Retain six verified production Releases
     needs: [aggregate, publish-final]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write

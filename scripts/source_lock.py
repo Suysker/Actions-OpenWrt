@@ -229,6 +229,102 @@ def parse_env(path: pathlib.Path) -> dict[str, str]:
     return values
 
 
+def parse_package_subtrees(value: str) -> tuple[str, ...]:
+    subtrees = tuple(item.strip() for item in value.split(","))
+    if not subtrees or any(not item for item in subtrees):
+        raise ResolutionError("official package subtree list is empty or malformed")
+    if len(subtrees) != len(set(subtrees)):
+        raise ResolutionError("official package subtree list contains duplicates")
+    for subtree in subtrees:
+        path = pathlib.PurePosixPath(subtree)
+        if (
+            path.is_absolute()
+            or len(path.parts) != 2
+            or ".." in path.parts
+            or any(not re.fullmatch(r"[A-Za-z0-9_.+-]+", part) for part in path.parts)
+        ):
+            raise ResolutionError(f"unsafe official package subtree: {subtree!r}")
+    return subtrees
+
+
+def load_geodata_contracts(repo_root: pathlib.Path) -> tuple[dict[str, str], ...]:
+    path = repo_root / "profiles/common/geodata-sources.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ResolutionError(f"cannot read geodata source contract {path}: {exc}") from exc
+
+    if not isinstance(document, dict) or set(document) != {"schema", "components"}:
+        raise ResolutionError("geodata source contract must contain schema and components")
+    if document["schema"] != 1 or not isinstance(document["components"], list):
+        raise ResolutionError("unsupported geodata source contract schema")
+    if not document["components"]:
+        raise ResolutionError("geodata source contract must declare at least one component")
+
+    fields = {
+        "id",
+        "display_name",
+        "repository",
+        "release_asset",
+        "override_env",
+        "package_version_field",
+        "package_download_block",
+    }
+    unique_fields = (
+        "id",
+        "override_env",
+        "package_version_field",
+        "package_download_block",
+    )
+    seen = {field: set() for field in unique_fields}
+    contracts: list[dict[str, str]] = []
+
+    for index, raw in enumerate(document["components"], start=1):
+        if not isinstance(raw, dict) or set(raw) != fields:
+            raise ResolutionError(
+                f"geodata component {index} must contain exactly: {', '.join(sorted(fields))}"
+            )
+        if not all(isinstance(raw[field], str) and raw[field] for field in fields):
+            raise ResolutionError(f"geodata component {index} contains an empty field")
+        contract = {field: raw[field] for field in fields}
+
+        if not re.fullmatch(r"[a-z][a-z0-9_-]*", contract["id"]):
+            raise ResolutionError(f"invalid geodata component id: {contract['id']!r}")
+        if not re.fullmatch(
+            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", contract["repository"]
+        ):
+            raise ResolutionError(
+                f"invalid geodata GitHub repository: {contract['repository']!r}"
+            )
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+", contract["release_asset"]):
+            raise ResolutionError(
+                f"invalid geodata release asset: {contract['release_asset']!r}"
+            )
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", contract["override_env"]):
+            raise ResolutionError(
+                f"invalid geodata override environment name: {contract['override_env']!r}"
+            )
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", contract["package_version_field"]):
+            raise ResolutionError(
+                f"invalid geodata package version field: {contract['package_version_field']!r}"
+            )
+        if not re.fullmatch(
+            r"[A-Za-z0-9_.-]+", contract["package_download_block"]
+        ):
+            raise ResolutionError(
+                f"invalid geodata package download block: {contract['package_download_block']!r}"
+            )
+
+        for field in unique_fields:
+            value = contract[field]
+            if value in seen[field]:
+                raise ResolutionError(f"duplicate geodata {field}: {value!r}")
+            seen[field].add(value)
+        contracts.append(contract)
+
+    return tuple(contracts)
+
+
 def merged_profile_env(repo_root: pathlib.Path, profile: str) -> dict[str, str]:
     common = parse_env(repo_root / "profiles/common/profile.env")
     device_path = repo_root / f"profiles/{profile}/profile.env"
@@ -671,17 +767,108 @@ def lock_digest(lock: dict[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(canonical_payload(lock)).hexdigest()}"
 
 
-def validate_lock(lock: dict[str, Any]) -> None:
+def validate_upstream_artifacts(
+    artifacts: Any, geodata_contracts: tuple[dict[str, str], ...]
+) -> None:
+    expected_components = {"haproxy", "adguardhome"} | {
+        contract["id"] for contract in geodata_contracts
+    }
+    if not isinstance(artifacts, dict) or set(artifacts) != expected_components:
+        raise ResolutionError(
+            "source-lock controlled artifact set differs from the source contract"
+        )
+
+    haproxy = artifacts["haproxy"]
+    version = haproxy.get("version", "")
+    branch = haproxy.get("branch", "")
+    if (
+        haproxy.get("policy") not in {"latest-lts", "exact-override"}
+        or not SEMVER_RE.fullmatch(version)
+        or not re.fullmatch(r"\d+\.\d+", branch)
+        or not version.startswith(branch + ".")
+    ):
+        raise ResolutionError("HAProxy source-lock policy/version is invalid")
+    expected_haproxy_url = (
+        f"https://www.haproxy.org/download/{branch}/src/haproxy-{version}.tar.gz"
+    )
+    if haproxy.get("url") != expected_haproxy_url:
+        raise ResolutionError("HAProxy source-lock URL is not the exact official release")
+    require_sha256(haproxy.get("sha256", ""), "HAProxy source")
+
+    adguard = artifacts["adguardhome"]
+    version = adguard.get("version", "")
+    tag = adguard.get("tag", f"v{version}")
+    if (
+        adguard.get("policy") not in {"latest-stable", "exact-override"}
+        or not SEMVER_RE.fullmatch(version)
+        or tag != f"v{version}"
+    ):
+        raise ResolutionError("AdGuardHome source-lock policy/version is invalid")
+    require_sha1(adguard.get("tag_commit", ""), "AdGuardHome tag commit")
+    source = adguard.get("source", {})
+    frontend = adguard.get("frontend", {})
+    if source.get("url") != (
+        f"https://codeload.github.com/AdguardTeam/AdGuardHome/tar.gz/refs/tags/{tag}?"
+    ):
+        raise ResolutionError("AdGuardHome source URL is not the exact official tag")
+    if frontend.get("url") != (
+        f"https://github.com/AdguardTeam/AdGuardHome/releases/download/{tag}/"
+        "AdGuardHome_frontend.tar.gz"
+    ):
+        raise ResolutionError("AdGuardHome frontend URL is not the exact official asset")
+    require_sha256(source.get("sha256", ""), "AdGuardHome source")
+    require_sha256(frontend.get("sha256", ""), "AdGuardHome frontend")
+
+    for contract in geodata_contracts:
+        name = contract["id"]
+        repo = contract["repository"]
+        asset = contract["release_asset"]
+        entry = artifacts[name]
+        tag = entry.get("tag", "")
+        policy_is_valid = entry.get("policy") in {
+            "latest-stable",
+            "exact-override",
+        }
+        if not policy_is_valid or not re.fullmatch(r"[A-Za-z0-9._-]+", tag):
+            raise ResolutionError(f"{name} source-lock policy/tag is invalid")
+        release_root = f"https://github.com/{repo}/releases/download/{tag}"
+        if entry.get("url") != f"{release_root}/{asset}":
+            raise ResolutionError(f"{name} URL is not the exact {repo} release asset")
+        if entry.get("checksum_url") != f"{release_root}/{asset}.sha256sum":
+            raise ResolutionError(
+                f"{name} checksum URL is not the exact {repo} release asset"
+            )
+        require_sha256(entry.get("sha256", ""), f"{name} payload")
+        require_sha256(entry.get("checksum_sha256", ""), f"{name} checksum asset")
+
+
+def validate_lock(
+    lock: dict[str, Any], repo_root: pathlib.Path | None = None
+) -> None:
+    if repo_root is None:
+        repo_root = pathlib.Path(__file__).resolve().parent.parent
+    geodata_contracts = load_geodata_contracts(repo_root)
+    common_env = parse_env(repo_root / "profiles/common/profile.env")
+    official_subtrees = parse_package_subtrees(
+        common_env["OFFICIAL_PACKAGES_SUBTREES"]
+    )
     if lock.get("schema") != 2:
         raise ResolutionError("source-lock schema must be 2")
     require_sha1(lock.get("repository_commit", ""), "repository commit")
     require_sha1(lock.get("openwrt", {}).get("commit", ""), "OpenWrt commit")
     for name, feed in lock.get("feeds", {}).items():
         require_sha1(feed.get("commit", ""), f"feed {name} commit")
-    require_sha1(
-        lock.get("official_golang", {}).get("commit", ""),
-        "official Go feed commit",
-    )
+    official_packages = lock.get("official_packages", {})
+    if not isinstance(official_packages, dict):
+        raise ResolutionError("source-lock official_packages entry must be an object")
+    if official_packages.get("url") != common_env["OFFICIAL_PACKAGES_REPO"]:
+        raise ResolutionError("official_packages repository differs from the common profile")
+    if official_packages.get("requested_ref") != common_env["OFFICIAL_PACKAGES_REF"]:
+        raise ResolutionError("official_packages ref differs from the common profile")
+    require_sha1(official_packages.get("commit", ""), "official packages commit")
+    if official_packages.get("subtrees") != list(official_subtrees):
+        raise ResolutionError("official_packages subtree allowlist differs from the contract")
+    validate_upstream_artifacts(lock.get("upstream_artifacts"), geodata_contracts)
     for name, value in lock.get("actions", {}).items():
         if not re.fullmatch(r"actions/[A-Za-z0-9_.-]+", name):
             raise ResolutionError(f"source-lock contains a non-official action: {name}")
@@ -830,6 +1017,7 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
     if len(profiles) != len(set(profiles)):
         raise ResolutionError("profile list contains duplicates")
 
+    geodata_contracts = load_geodata_contracts(repo_root)
     environments = {profile: merged_profile_env(repo_root, profile) for profile in profiles}
     repo_urls = {env["REPO_URL"] for env in environments.values()}
     repo_refs = {env["REPO_REF"] for env in environments.values()}
@@ -865,10 +1053,26 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
             feeds[name] = resolved
 
     common_env = parse_env(repo_root / "profiles/common/profile.env")
-    golang = resolve_git_ref(
-        common_env["OFFICIAL_GOLANG_REPO"], common_env["OFFICIAL_GOLANG_REF"]
+    official_subtrees = parse_package_subtrees(
+        common_env["OFFICIAL_PACKAGES_SUBTREES"]
     )
-    golang["subtree"] = "lang/golang"
+    official_packages = resolve_git_ref(
+        common_env["OFFICIAL_PACKAGES_REPO"], common_env["OFFICIAL_PACKAGES_REF"]
+    )
+    official_files = github_tree_files(
+        official_packages["url"], official_packages["commit"]
+    )
+    missing_official_subtrees = [
+        subtree
+        for subtree in official_subtrees
+        if not any(path.startswith(subtree + "/") for path in official_files)
+    ]
+    if missing_official_subtrees:
+        raise ResolutionError(
+            "official packages commit misses declared subtrees: "
+            + ", ".join(missing_official_subtrees)
+        )
+    official_packages["subtrees"] = list(official_subtrees)
 
     profile_entries: dict[str, Any] = {}
     profile_kernel_series: dict[str, str] = {}
@@ -946,6 +1150,14 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
     }
     patch_digest = tree_digest([repo_root / "patchsets"], repo_root)
     actions = resolve_actions(sorted((repo_root / ".github/workflows").glob("*.yml")))
+    geodata_artifacts = {
+        contract["id"]: resolve_geodata(
+            repo=contract["repository"],
+            asset_name=contract["release_asset"],
+            override_env=contract["override_env"],
+        )
+        for contract in geodata_contracts
+    }
 
     repository_commit = require_sha1(
         run("git", "rev-parse", "HEAD", cwd=repo_root).strip(), "repository commit"
@@ -959,20 +1171,11 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         "repository_commit": repository_commit,
         "openwrt": openwrt,
         "feeds": dict(sorted(feeds.items())),
-        "official_golang": golang,
+        "official_packages": official_packages,
         "upstream_artifacts": {
             "haproxy": resolve_haproxy(),
             "adguardhome": resolve_adguardhome(),
-            "geoip": resolve_geodata(
-                repo="Loyalsoldier/geoip",
-                asset_name="geoip.dat",
-                override_env="GEOIP_TAG",
-            ),
-            "geosite": resolve_geodata(
-                repo="Loyalsoldier/v2ray-rules-dat",
-                asset_name="geosite.dat",
-                override_env="GEOSITE_TAG",
-            ),
+            **geodata_artifacts,
         },
         "profiles": profile_entries,
         "kernel_features": {
@@ -986,7 +1189,7 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         "patch_digest": patch_digest,
         "actions": actions,
     }
-    validate_lock(lock)
+    validate_lock(lock, repo_root)
     return lock
 
 

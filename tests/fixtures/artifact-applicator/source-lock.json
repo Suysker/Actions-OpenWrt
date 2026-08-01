@@ -23,7 +23,12 @@
       "order": 0
     }
   },
-  "official_golang": {"commit": "3333333333333333333333333333333333333333"},
+  "official_packages": {
+    "url": "https://github.com/openwrt/packages.git",
+    "requested_ref": "master",
+    "commit": "3333333333333333333333333333333333333333",
+    "subtrees": ["lang/golang", "net/nlbwmon"]
+  },
   "profiles": {
     "r4s": {
       "kernel_series": "6.12"
@@ -85,13 +90,17 @@
       "policy": "latest-stable",
       "tag": "202601010001",
       "url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat",
-      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "checksum_url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat.sha256sum",
+      "checksum_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
     },
     "geosite": {
       "policy": "latest-stable",
       "tag": "202601010002",
       "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat",
-      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "checksum_url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat.sha256sum",
+      "checksum_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
     }
   },
   "actions": {

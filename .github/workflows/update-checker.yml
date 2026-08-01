@@ -22,7 +22,7 @@ concurrency:
 jobs:
   check:
     name: Resolve the complete upstream fingerprint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - name: Checkout current default-branch implementation
@@ -57,6 +57,7 @@ jobs:
           import json, sys
           lock = json.load(open(sys.argv[1], encoding="utf-8"))
           print("OpenWrt:", lock["openwrt"]["commit"])
+          print("Official package overrides:", lock["official_packages"]["commit"])
           for name, feed in lock["feeds"].items():
               print(f"Feed {name}: {feed['commit']}")
           for name, artifact in lock["upstream_artifacts"].items():
@@ -88,4 +89,4 @@ jobs:
 
       - name: Report unchanged fingerprint
         if: steps.fingerprint.outputs.cache-hit == 'true' && inputs.force_build != true
-        run: echo 'Lean, feeds, controlled releases, BBRv3 ports, profiles, patches and observed Actions HEADs are unchanged.'
+        run: echo 'Lean, feeds, official package overrides, controlled releases, BBRv3 ports, profiles, patches and observed Actions HEADs are unchanged.'
