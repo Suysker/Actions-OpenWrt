@@ -56,6 +56,48 @@ with tempfile.TemporaryDirectory() as directory:
     else:
         raise AssertionError("duplicate geodata contract entry was accepted")
 
+overlay_contracts = module.load_source_overlay_contracts(root)
+assert [item["id"] for item in overlay_contracts] == [
+    "openwrt-core",
+    "openwrt-packages",
+]
+assert overlay_contracts[0]["mappings"] == [
+    {"source": "package/libs/gmp", "target": "package/libs/gmp"}
+]
+assert [mapping["target"] for mapping in overlay_contracts[1]["mappings"]] == [
+    "feeds/packages/lang/golang",
+    "feeds/packages/libs/libwebsockets",
+    "feeds/packages/net/nlbwmon",
+]
+for unsafe_path in (
+    "package/libs/./gmp",
+    "package//libs/gmp",
+    "package/libs/gmp/",
+):
+    try:
+        module.require_overlay_path(unsafe_path, "fixture target", target=True)
+    except module.ResolutionError as exc:
+        assert "unsafe fixture target" in str(exc)
+    else:
+        raise AssertionError(f"non-canonical overlay path was accepted: {unsafe_path}")
+with tempfile.TemporaryDirectory() as directory:
+    temporary_root = pathlib.Path(directory)
+    contract_path = temporary_root / "profiles/common/source-overlays.json"
+    contract_path.parent.mkdir(parents=True)
+    invalid_contract = json.loads(
+        (root / "profiles/common/source-overlays.json").read_text(encoding="utf-8")
+    )
+    invalid_contract["repositories"][1]["mappings"][0]["target"] = (
+        "package/libs/gmp"
+    )
+    contract_path.write_text(json.dumps(invalid_contract), encoding="utf-8")
+    try:
+        module.load_source_overlay_contracts(temporary_root)
+    except module.ResolutionError as exc:
+        assert "declared more than once" in str(exc)
+    else:
+        raise AssertionError("duplicate source overlay target was accepted")
+
 with tempfile.TemporaryDirectory() as directory:
     digest_root = pathlib.Path(directory)
     for profile in ("common", "r4s", "x86-n5105-pve"):
@@ -120,16 +162,41 @@ raw_url = module.github_raw_url(
     "https://github.com/CachyOS/kernel-patches.git", port_commit, origin_path
 )
 base = {
-    "schema": 2,
+    "schema": 3,
     "resolved_at": "2026-01-01T00:00:00Z",
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
     "feeds": {"packages": {"commit": "3" * 40}},
-    "official_packages": {
-        "url": "https://github.com/openwrt/packages.git",
-        "requested_ref": "master",
-        "commit": "4" * 40,
-        "subtrees": ["lang/golang", "net/nlbwmon", "libs/libwebsockets"],
+    "source_overlays": {
+        "openwrt-core": {
+            "url": "https://github.com/openwrt/openwrt.git",
+            "requested_ref": "master",
+            "resolved_ref": "refs/heads/master",
+            "commit": "4" * 40,
+            "mappings": [
+                {"source": "package/libs/gmp", "target": "package/libs/gmp"}
+            ],
+        },
+        "openwrt-packages": {
+            "url": "https://github.com/openwrt/packages.git",
+            "requested_ref": "master",
+            "resolved_ref": "refs/heads/master",
+            "commit": "9" * 40,
+            "mappings": [
+                {
+                    "source": "lang/golang",
+                    "target": "feeds/packages/lang/golang",
+                },
+                {
+                    "source": "libs/libwebsockets",
+                    "target": "feeds/packages/libs/libwebsockets",
+                },
+                {
+                    "source": "net/nlbwmon",
+                    "target": "feeds/packages/net/nlbwmon",
+                },
+            ],
+        },
     },
     "upstream_artifacts": {
         "haproxy": {

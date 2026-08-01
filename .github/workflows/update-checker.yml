@@ -47,7 +47,7 @@ jobs:
         uses: actions/cache@main
         with:
           path: .source-state
-          key: source-lock-v2-${{ steps.lock.outputs.source_digest }}
+          key: source-lock-v3-${{ steps.lock.outputs.source_digest }}
 
       - name: Show changed immutable inputs
         if: steps.fingerprint.outputs.cache-hit != 'true' || inputs.force_build == true
@@ -57,7 +57,13 @@ jobs:
           import json, sys
           lock = json.load(open(sys.argv[1], encoding="utf-8"))
           print("OpenWrt:", lock["openwrt"]["commit"])
-          print("Official package overrides:", lock["official_packages"]["commit"])
+          print(
+              "Source overlays:",
+              ", ".join(
+                  f"{name}@{entry['commit']}"
+                  for name, entry in sorted(lock["source_overlays"].items())
+              ),
+          )
           for name, feed in lock["feeds"].items():
               print(f"Feed {name}: {feed['commit']}")
           for name, artifact in lock["upstream_artifacts"].items():

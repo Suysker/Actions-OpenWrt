@@ -98,7 +98,7 @@ jobs:
           bash tests/test-apply-source-lock-artifacts.sh
           bash tests/test-apply-profile-patches.sh
           bash tests/test-locked-feeds.sh
-          bash tests/test-sync-official-packages.sh
+          bash tests/test-sync-source-overlays.sh
           bash scripts/check-profile-contract.sh r4s
           bash scripts/check-profile-contract.sh x86-n5105-pve
 
@@ -288,7 +288,7 @@ jobs:
           ./scripts/feeds update -a
           bash "$GITHUB_WORKSPACE/scripts/select-package-providers.sh" \
             "$OPENWRT_ROOT" "$GITHUB_WORKSPACE/provider-selection-report.txt"
-          bash "$GITHUB_WORKSPACE/scripts/sync-official-packages.sh" \
+          bash "$GITHUB_WORKSPACE/scripts/sync-source-overlays.sh" \
             apply-lock "$SOURCE_LOCK" "$OPENWRT_ROOT"
           for feed in packages small kenzo xiaorouji; do
             ./scripts/feeds update -i "$feed"

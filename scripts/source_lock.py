@@ -229,22 +229,130 @@ def parse_env(path: pathlib.Path) -> dict[str, str]:
     return values
 
 
-def parse_package_subtrees(value: str) -> tuple[str, ...]:
-    subtrees = tuple(item.strip() for item in value.split(","))
-    if not subtrees or any(not item for item in subtrees):
-        raise ResolutionError("official package subtree list is empty or malformed")
-    if len(subtrees) != len(set(subtrees)):
-        raise ResolutionError("official package subtree list contains duplicates")
-    for subtree in subtrees:
-        path = pathlib.PurePosixPath(subtree)
-        if (
-            path.is_absolute()
-            or len(path.parts) != 2
-            or ".." in path.parts
-            or any(not re.fullmatch(r"[A-Za-z0-9_.+-]+", part) for part in path.parts)
+def require_overlay_path(value: Any, label: str, *, target: bool = False) -> str:
+    if not isinstance(value, str):
+        raise ResolutionError(f"{label} must be a string")
+    path = pathlib.PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or path.as_posix() != value
+        or len(path.parts) < 2
+        or ".." in path.parts
+        or any(not re.fullmatch(r"[A-Za-z0-9_.+-]+", part) for part in path.parts)
+    ):
+        raise ResolutionError(f"unsafe {label}: {value!r}")
+    if target:
+        is_feed_package = len(path.parts) == 4 and path.parts[:2] == (
+            "feeds",
+            "packages",
+        )
+        is_core_library = len(path.parts) == 3 and path.parts[:2] == (
+            "package",
+            "libs",
+        )
+        if not (is_feed_package or is_core_library):
+            raise ResolutionError(f"unsupported source overlay target: {value!r}")
+    return value
+
+
+def load_source_overlay_contracts(
+    repo_root: pathlib.Path,
+) -> tuple[dict[str, Any], ...]:
+    path = repo_root / "profiles/common/source-overlays.json"
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ResolutionError(f"cannot read source overlay contract {path}: {exc}") from exc
+    if not isinstance(document, dict) or set(document) != {"schema", "repositories"}:
+        raise ResolutionError(
+            "source overlay contract must contain schema and repositories"
+        )
+    repositories = document["repositories"]
+    if document["schema"] != 1 or not isinstance(repositories, list):
+        raise ResolutionError("unsupported source overlay contract schema")
+    if not repositories:
+        raise ResolutionError("source overlay contract declares no repositories")
+
+    result: list[dict[str, Any]] = []
+    identifiers: set[str] = set()
+    targets: set[str] = set()
+    for index, repository in enumerate(repositories, start=1):
+        label = f"source overlay repository {index}"
+        if not isinstance(repository, dict) or set(repository) != {
+            "id",
+            "url",
+            "ref",
+            "mappings",
+        }:
+            raise ResolutionError(f"{label} has invalid fields")
+        identifier = repository["id"]
+        if not isinstance(identifier, str) or not re.fullmatch(
+            r"[a-z0-9]+(?:-[a-z0-9]+)*", identifier
         ):
-            raise ResolutionError(f"unsafe official package subtree: {subtree!r}")
-    return subtrees
+            raise ResolutionError(f"{label} has an invalid id")
+        if identifier in identifiers:
+            raise ResolutionError(f"duplicate source overlay id: {identifier}")
+        identifiers.add(identifier)
+
+        url = repository["url"]
+        if not isinstance(url, str):
+            raise ResolutionError(f"{label} URL must be a string")
+        parsed = urllib.parse.urlparse(url)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != "github.com"
+            or parsed.username
+            or parsed.password
+            or parsed.port
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+            or not re.fullmatch(
+                r"/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git", parsed.path
+            )
+        ):
+            raise ResolutionError(f"{label} is not an exact GitHub repository URL")
+
+        requested_ref = repository["ref"]
+        if (
+            not isinstance(requested_ref, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", requested_ref)
+            or ".." in requested_ref
+            or "//" in requested_ref
+        ):
+            raise ResolutionError(f"{label} has an unsafe ref")
+
+        raw_mappings = repository["mappings"]
+        if not isinstance(raw_mappings, list) or not raw_mappings:
+            raise ResolutionError(f"{label} has no mappings")
+        sources: set[str] = set()
+        mappings: list[dict[str, str]] = []
+        for mapping_index, mapping in enumerate(raw_mappings, start=1):
+            mapping_label = f"{label} mapping {mapping_index}"
+            if not isinstance(mapping, dict) or set(mapping) != {"source", "target"}:
+                raise ResolutionError(f"{mapping_label} has invalid fields")
+            source = require_overlay_path(mapping["source"], f"{mapping_label} source")
+            target_path = require_overlay_path(
+                mapping["target"], f"{mapping_label} target", target=True
+            )
+            if source in sources:
+                raise ResolutionError(f"{label} repeats source subtree {source!r}")
+            if target_path in targets:
+                raise ResolutionError(
+                    f"source overlay target is declared more than once: {target_path}"
+                )
+            sources.add(source)
+            targets.add(target_path)
+            mappings.append({"source": source, "target": target_path})
+        result.append(
+            {
+                "id": identifier,
+                "url": url,
+                "requested_ref": requested_ref,
+                "mappings": mappings,
+            }
+        )
+    return tuple(result)
 
 
 def load_geodata_contracts(repo_root: pathlib.Path) -> tuple[dict[str, str], ...]:
@@ -855,32 +963,50 @@ def validate_upstream_artifacts(
         require_sha256(entry.get("checksum_sha256", ""), f"{name} checksum asset")
 
 
+def validate_source_overlays(value: Any, repo_root: pathlib.Path) -> None:
+    overlay_contracts = load_source_overlay_contracts(repo_root)
+    if not isinstance(value, dict):
+        raise ResolutionError("source-lock source_overlays entry must be an object")
+    expected_overlay_ids = {contract["id"] for contract in overlay_contracts}
+    if set(value) != expected_overlay_ids:
+        raise ResolutionError("source-lock overlay repository set differs from the contract")
+    for contract in overlay_contracts:
+        identifier = contract["id"]
+        entry = value[identifier]
+        if not isinstance(entry, dict) or set(entry) != {
+            "url",
+            "requested_ref",
+            "resolved_ref",
+            "commit",
+            "mappings",
+        }:
+            raise ResolutionError(f"source overlay {identifier} has invalid lock fields")
+        if entry["url"] != contract["url"]:
+            raise ResolutionError(f"source overlay {identifier} repository differs")
+        if entry["requested_ref"] != contract["requested_ref"]:
+            raise ResolutionError(f"source overlay {identifier} ref differs")
+        if not isinstance(entry["resolved_ref"], str) or not entry[
+            "resolved_ref"
+        ].startswith("refs/"):
+            raise ResolutionError(f"source overlay {identifier} resolved ref is invalid")
+        require_sha1(entry["commit"], f"source overlay {identifier} commit")
+        if entry["mappings"] != contract["mappings"]:
+            raise ResolutionError(f"source overlay {identifier} mappings differ")
+
+
 def validate_lock(
     lock: dict[str, Any], repo_root: pathlib.Path | None = None
 ) -> None:
     if repo_root is None:
         repo_root = pathlib.Path(__file__).resolve().parent.parent
     geodata_contracts = load_geodata_contracts(repo_root)
-    common_env = parse_env(repo_root / "profiles/common/profile.env")
-    official_subtrees = parse_package_subtrees(
-        common_env["OFFICIAL_PACKAGES_SUBTREES"]
-    )
-    if lock.get("schema") != 2:
-        raise ResolutionError("source-lock schema must be 2")
+    if lock.get("schema") != 3:
+        raise ResolutionError("source-lock schema must be 3")
     require_sha1(lock.get("repository_commit", ""), "repository commit")
     require_sha1(lock.get("openwrt", {}).get("commit", ""), "OpenWrt commit")
     for name, feed in lock.get("feeds", {}).items():
         require_sha1(feed.get("commit", ""), f"feed {name} commit")
-    official_packages = lock.get("official_packages", {})
-    if not isinstance(official_packages, dict):
-        raise ResolutionError("source-lock official_packages entry must be an object")
-    if official_packages.get("url") != common_env["OFFICIAL_PACKAGES_REPO"]:
-        raise ResolutionError("official_packages repository differs from the common profile")
-    if official_packages.get("requested_ref") != common_env["OFFICIAL_PACKAGES_REF"]:
-        raise ResolutionError("official_packages ref differs from the common profile")
-    require_sha1(official_packages.get("commit", ""), "official packages commit")
-    if official_packages.get("subtrees") != list(official_subtrees):
-        raise ResolutionError("official_packages subtree allowlist differs from the contract")
+    validate_source_overlays(lock.get("source_overlays"), repo_root)
     validate_upstream_artifacts(lock.get("upstream_artifacts"), geodata_contracts)
     for name, value in lock.get("actions", {}).items():
         if not re.fullmatch(r"actions/[A-Za-z0-9_.-]+", name):
@@ -1065,27 +1191,27 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
             resolved["order"] = order
             feeds[name] = resolved
 
-    common_env = parse_env(repo_root / "profiles/common/profile.env")
-    official_subtrees = parse_package_subtrees(
-        common_env["OFFICIAL_PACKAGES_SUBTREES"]
-    )
-    official_packages = resolve_git_ref(
-        common_env["OFFICIAL_PACKAGES_REPO"], common_env["OFFICIAL_PACKAGES_REF"]
-    )
-    official_files = github_tree_files(
-        official_packages["url"], official_packages["commit"]
-    )
-    missing_official_subtrees = [
-        subtree
-        for subtree in official_subtrees
-        if not any(path.startswith(subtree + "/") for path in official_files)
-    ]
-    if missing_official_subtrees:
-        raise ResolutionError(
-            "official packages commit misses declared subtrees: "
-            + ", ".join(missing_official_subtrees)
-        )
-    official_packages["subtrees"] = list(official_subtrees)
+    source_overlays: dict[str, Any] = {}
+    for contract in load_source_overlay_contracts(repo_root):
+        identifier = contract["id"]
+        resolved = resolve_git_ref(contract["url"], contract["requested_ref"])
+        overlay_files = github_tree_files(resolved["url"], resolved["commit"])
+        missing_sources = [
+            mapping["source"]
+            for mapping in contract["mappings"]
+            if not any(
+                path == mapping["source"]
+                or path.startswith(mapping["source"] + "/")
+                for path in overlay_files
+            )
+        ]
+        if missing_sources:
+            raise ResolutionError(
+                f"source overlay {identifier} misses declared subtrees: "
+                + ", ".join(missing_sources)
+            )
+        resolved["mappings"] = contract["mappings"]
+        source_overlays[identifier] = resolved
 
     profile_entries: dict[str, Any] = {}
     profile_kernel_series: dict[str, str] = {}
@@ -1172,7 +1298,7 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         run("git", "rev-parse", "HEAD", cwd=repo_root).strip(), "repository commit"
     )
     lock: dict[str, Any] = {
-        "schema": 2,
+        "schema": 3,
         "resolved_at": dt.datetime.now(dt.timezone.utc)
         .replace(microsecond=0)
         .isoformat()
@@ -1180,7 +1306,7 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         "repository_commit": repository_commit,
         "openwrt": openwrt,
         "feeds": dict(sorted(feeds.items())),
-        "official_packages": official_packages,
+        "source_overlays": dict(sorted(source_overlays.items())),
         "upstream_artifacts": {
             "haproxy": resolve_haproxy(),
             "adguardhome": resolve_adguardhome(),

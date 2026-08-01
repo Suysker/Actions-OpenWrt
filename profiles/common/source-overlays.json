@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "repositories": [
+    {
+      "id": "openwrt-core",
+      "url": "https://github.com/openwrt/openwrt.git",
+      "ref": "master",
+      "mappings": [
+        {
+          "source": "package/libs/gmp",
+          "target": "package/libs/gmp"
+        }
+      ]
+    },
+    {
+      "id": "openwrt-packages",
+      "url": "https://github.com/openwrt/packages.git",
+      "ref": "master",
+      "mappings": [
+        {
+          "source": "lang/golang",
+          "target": "feeds/packages/lang/golang"
+        },
+        {
+          "source": "libs/libwebsockets",
+          "target": "feeds/packages/libs/libwebsockets"
+        },
+        {
+          "source": "net/nlbwmon",
+          "target": "feeds/packages/net/nlbwmon"
+        }
+      ]
+    }
+  ]
+}

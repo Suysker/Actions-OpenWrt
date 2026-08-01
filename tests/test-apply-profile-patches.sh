@@ -32,16 +32,32 @@ output, patch_sha = sys.argv[1:]
 origin_commit = "9" * 40
 origin_path = "6.12/bbr3.patch"
 lock = {
-    "schema": 2,
+    "schema": 3,
     "resolved_at": "2026-01-01T00:00:00Z",
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
     "feeds": {"packages": {"commit": "3" * 40}},
-    "official_packages": {
-        "url": "https://github.com/openwrt/packages.git",
-        "requested_ref": "master",
-        "commit": "4" * 40,
-        "subtrees": ["lang/golang", "net/nlbwmon", "libs/libwebsockets"],
+    "source_overlays": {
+        "openwrt-core": {
+            "url": "https://github.com/openwrt/openwrt.git",
+            "requested_ref": "master",
+            "resolved_ref": "refs/heads/master",
+            "commit": "4" * 40,
+            "mappings": [
+                {"source": "package/libs/gmp", "target": "package/libs/gmp"}
+            ],
+        },
+        "openwrt-packages": {
+            "url": "https://github.com/openwrt/packages.git",
+            "requested_ref": "master",
+            "resolved_ref": "refs/heads/master",
+            "commit": "8" * 40,
+            "mappings": [
+                {"source": "lang/golang", "target": "feeds/packages/lang/golang"},
+                {"source": "libs/libwebsockets", "target": "feeds/packages/libs/libwebsockets"},
+                {"source": "net/nlbwmon", "target": "feeds/packages/net/nlbwmon"},
+            ],
+        },
     },
     "upstream_artifacts": {
         "haproxy": {

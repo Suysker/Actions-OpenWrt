@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "resolved_at": "2026-01-01T00:00:00Z",
   "repository_commit": "1111111111111111111111111111111111111111",
   "openwrt": {"commit": "2222222222222222222222222222222222222222"},
@@ -23,11 +23,27 @@
       "order": 0
     }
   },
-  "official_packages": {
-    "url": "https://github.com/openwrt/packages.git",
-    "requested_ref": "master",
-    "commit": "3333333333333333333333333333333333333333",
-    "subtrees": ["lang/golang", "net/nlbwmon", "libs/libwebsockets"]
+  "source_overlays": {
+    "openwrt-core": {
+      "url": "https://github.com/openwrt/openwrt.git",
+      "requested_ref": "master",
+      "resolved_ref": "refs/heads/master",
+      "commit": "5555555555555555555555555555555555555555",
+      "mappings": [
+        {"source": "package/libs/gmp", "target": "package/libs/gmp"}
+      ]
+    },
+    "openwrt-packages": {
+      "url": "https://github.com/openwrt/packages.git",
+      "requested_ref": "master",
+      "resolved_ref": "refs/heads/master",
+      "commit": "6666666666666666666666666666666666666666",
+      "mappings": [
+        {"source": "lang/golang", "target": "feeds/packages/lang/golang"},
+        {"source": "libs/libwebsockets", "target": "feeds/packages/libs/libwebsockets"},
+        {"source": "net/nlbwmon", "target": "feeds/packages/net/nlbwmon"}
+      ]
+    }
   },
   "profiles": {
     "r4s": {
