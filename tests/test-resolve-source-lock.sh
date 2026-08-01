@@ -129,7 +129,7 @@ base = {
         "url": "https://github.com/openwrt/packages.git",
         "requested_ref": "master",
         "commit": "4" * 40,
-        "subtrees": ["lang/golang", "net/nlbwmon"],
+        "subtrees": ["lang/golang", "net/nlbwmon", "libs/libwebsockets"],
     },
     "upstream_artifacts": {
         "haproxy": {

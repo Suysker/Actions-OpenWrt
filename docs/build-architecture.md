@@ -139,7 +139,7 @@ source-lock.json + cache key + Release provenance
 4. HAProxy 选择官方仍受支持的最高 LTS 分支及该分支最新 patch release；AdGuardHome 选择 GitHub 最新非 prerelease；GeoIP/Geosite 分别选择 Loyalsoldier 对应仓库的最新非 prerelease。
 5. 每个 release 立即展开成精确版本、不可变 tag/URL 和 SHA256。HAProxy 使用官方 `releases.json` 的 SHA256；AdGuardHome 使用精确 tag/commit、GitHub asset digest 和计算后锁定的源码归档 hash；GeoIP/Geosite 同时核对 release asset digest 与发布的 `.sha256sum`。
 6. 从锁定 Lean commit 解析每个 profile 的稳定 kernel series；再按 `patchsets/common/kernel/bbr3-sources.json` 的 provider 顺序查找当前 series 的最新兼容 BBRv3 port。resolver 解析 Google `v3` HEAD 与选中 provider HEAD，下载全部 patch、计算 SHA256，并给每个文件分配 source-lock artifact 内的安全相对路径。
-7. 将 OpenWrt、所有 feeds、官方 `openwrt/packages` 覆盖源、上游产物、每个 profile 的稳定内核系列、BBRv3 当前算法 HEAD/适配 commit/patch hash、补丁摘要、workflow 中 `actions/*@main` 的观测 HEAD 和仓库实现 SHA 写入 `source-lock.json`。官方覆盖子树只在 common `profile.env` 的 `OFFICIAL_PACKAGES_SUBTREES` 声明一次，当前为 `lang/golang` 与 `net/nlbwmon`：前者继续提供当前 Go 工具链 recipe，后者消费已经合入 GCC 15 buffer 修复的上游 package recipe；resolver 将名单冻结进 lock，sync 脚本通用消费，两者共用一次 commit 解析与一次稀疏 checkout。
+7. 将 OpenWrt、所有 feeds、官方 `openwrt/packages` 覆盖源、上游产物、每个 profile 的稳定内核系列、BBRv3 当前算法 HEAD/适配 commit/patch hash、补丁摘要、workflow 中 `actions/*@main` 的观测 HEAD 和仓库实现 SHA 写入 `source-lock.json`。官方覆盖子树只在 common `profile.env` 的 `OFFICIAL_PACKAGES_SUBTREES` 声明一次，当前为 `lang/golang`、`net/nlbwmon` 与 `libs/libwebsockets`：三者分别提供当前 Go 工具链 recipe、已经合入 GCC 15 buffer 修复的 nlbwmon recipe，以及已经吸收上游 SSH/ChaCha 数组长度修复的 libwebsockets recipe；resolver 将名单冻结进 lock，sync 脚本通用消费，所有子树共用一次 commit 解析与一次稀疏 checkout。
 8. prepare 随即执行 `materialize`：只从 lock 中的 commit-addressed immutable raw URL 下载 BBRv3 patch，逐文件复验 SHA256，并与 JSON 一起上传为同一个 `source-lock` artifact；精确 Linux 源码上的顺序 clean-apply 在 matrix 前完成。
 9. build job 只 checkout 和下载 source-lock 中的精确输入，不读取远程 branch HEAD、release `latest` 或 API。
 10. `source-lock.json` 及其物化 patch 作为每次构建的产物和 Release 附件，不提交为永久版本锁；仓库只保存 provider/ref/path 规则和算法身份断言。
@@ -169,7 +169,7 @@ source-lock.json + cache key + Release provenance
     "url": "https://github.com/openwrt/packages.git",
     "requested_ref": "master",
     "commit": "full SHA",
-    "subtrees": ["lang/golang", "net/nlbwmon"]
+    "subtrees": ["lang/golang", "net/nlbwmon", "libs/libwebsockets"]
   },
   "upstream_artifacts": {
     "haproxy": {
@@ -324,7 +324,7 @@ lessons.md
 
 补丁目录不放置“优化合集”。设备 `series` 和通用非内核 `series` 初始为空；`bbr3-sources.json` 只定义受信任 provider、浮动 ref、按 kernel series 展开的路径规则、安装栈和算法身份断言，不保存某一轮的 commit、hash 或 patch 内容。prepare 将选中的 patch 物化进 source-lock artifact，每个文件都必须有 SHA256、前置/后置断言和定向 clean-apply。R4S 和 x86 均继续使用 Lean 已有 target/device 定义，不维护私有 target 分叉；master 切换稳定内核系列时 resolver 自动尝试受信任 provider，若没有可 clean-apply 的 port 则在 matrix 前明确失败。
 
-普通 package 兼容变换也不得把上游 `PKG_VERSION`、`PKG_HASH` 或 release URL 当作 patch 上下文。当前 `libsepol` 的 GNU17 兼容只允许由 `apply-profile-patches.sh` 在唯一的 `include $(INCLUDE_DIR)/package.mk` 语义锚点后幂等插入，并验证最终只有一个语言标准选项；若上游已经声明语言标准则尊重上游。`nlbwmon` 不维护本地源码补丁，而是复用 source-lock 中同一官方 packages commit 的 `net/nlbwmon` 子树及其真实 `PKG_MIRROR_HASH`。这样上游 recipe 更新后不需要修改本仓库中的版本/hash 文本。
+普通 package 兼容变换也不得把上游 `PKG_VERSION`、`PKG_HASH` 或 release URL 当作 patch 上下文。当前 `libsepol` 的 GNU17 兼容只允许由 `apply-profile-patches.sh` 在唯一的 `include $(INCLUDE_DIR)/package.mk` 语义锚点后幂等插入，并验证最终只有一个语言标准选项；若上游已经声明语言标准则尊重上游。`nlbwmon` 与 `libwebsockets` 不维护本地源码补丁，而是复用 source-lock 中同一官方 packages commit 的 `net/nlbwmon` 与 `libs/libwebsockets` 子树：前者保留真实 `PKG_MIRROR_HASH`，后者直接消费官方已吸收的 canonical 上游修复。这样既不降低 GCC 代际或在本仓库全局关闭 `-Werror`，也不永久复制 package 版本/hash 或会在未来反向应用失败的补丁上下文。
 
 Geo 数据只保留一份声明式静态合同 `profiles/common/geodata-sources.json`。每个条目声明数据角色、可信 GitHub 仓库、release asset、手工回退环境变量，以及 `v2ray-geodata` recipe 的版本字段/download block；它不保存 release tag、版本或 hash。resolver、source-lock validator 与 artifact applicator 必须通过同一个 loader 消费该合同，不得各自复制 `GeoIP`/`Geosite` tuple。release/tag/URL/SHA256 每轮动态解析后进入 source-lock；可信 owner、asset 身份和 package schema 属于供应链/接口合同，变更时只修改这一处并触发 profile digest 变化。
 
@@ -366,7 +366,30 @@ resolve-source-lock.sh compare <old-json> <new-json>
 
 `resolve` 只生成 schema 2 JSON；`materialize` 只下载 lock 内 commit-addressed URL，并把逐文件 hash 验证后的 BBRv3 patch 写到 lock 约定的相对路径。单文件 provider 和按序多文件 provider 由同一规范化数据结构表示。resolver 按策略顺序选择第一个确实包含当前 kernel series 的 provider，随后必须在精确 Linux tarball 上按安装顺序 clean-apply；不存在适配或任一 hunk 不兼容时在 matrix 前失败，不启用 `CONFIG_TESTING_KERNEL`、不改用另一代 BBR，也不静默跳过。
 
-### 7.3 Locked artifact applicator
+### 7.3 Official package subtree synchronizer
+
+继续复用 `scripts/sync-official-packages.sh`，不为 Go、nlbwmon 或 libwebsockets 创建包名分支。模块划分为：
+
+1. `profiles/common/profile.env` 只声明 `<category>/<package>` 形式的子树 allowlist；命名保持上游目录语义，不使用本地别名。
+2. `resolve-source-lock.sh` 只解析一次官方仓库浮动 ref，验证每个声明子树存在，并把完整 commit 与有序 allowlist 冻结进 source-lock。
+3. `sync-official-packages.sh` 只接受 lock，执行一次稀疏 checkout，并按 lock 中的相对路径安全替换 Lean packages feed 的对应子树；它不知道具体包名或 GCC 错误类型。
+4. `test-sync-official-packages.sh` 使用三个不同 category/package fixture 证明通用复制、旧目录完整替换、未声明目录不复制和越界路径拒绝。
+5. profile digest 覆盖 common `profile.env`，所以 allowlist 变化同时失效两个平台缓存；official commit 进入 source-lock digest，所同步 recipe 的每轮变化也会触发双平台重建。
+
+依赖接口固定为：
+
+```text
+profiles/common/profile.env
+  -> resolve-source-lock.sh
+  -> source-lock.json:official_packages
+  -> sync-official-packages.sh
+  -> feeds/packages/<category>/<package>
+  -> defconfig/download/build/provenance
+```
+
+这个边界用于“Lean feed 落后且官方 master 已有可复用修复”的 package recipe。若官方也没有修复，才进入窄语义兼容或 repository patch 评审；不得先在 workflow 中添加包名特判、降级 GCC 或全局关闭 `-Werror`。被同步的官方 recipe 仍作为 source-lock 输入原样审计；其中若存在上游维护者的单警告 `-Wno-error=<name>` 兼容选择，诊断仍保留为 warning，不能在本仓库扩大成全局规则。
+
+### 7.4 Locked artifact applicator
 
 新增统一入口：
 
@@ -386,7 +409,7 @@ apply-source-lock-artifacts.sh <openwrt-root> <source-lock.json> <report-json>
 
 如果锁定版本与当前 feed recipe 不兼容，构建严格失败；允许使用 workflow_dispatch 指定一个精确旧版本重新解析和回滚，不自动退回 feed 版本。
 
-### 7.4 Patch applicator
+### 7.5 Patch applicator
 
 保留 `scripts/apply-profile-patches.sh` 这个统一入口，但改变其职责：
 
@@ -401,7 +424,7 @@ apply-source-lock-artifacts.sh <openwrt-root> <source-lock.json> <report-json>
 
 生产补丁路径只有这个小型、可审计的 applicator 与仓库内 series。
 
-### 7.5 Contract checks
+### 7.6 Contract checks
 
 复用现有三个 checker，并新增 `check-profile-contract.sh`：
 
@@ -426,7 +449,7 @@ apply-source-lock-artifacts.sh <openwrt-root> <source-lock.json> <report-json>
 
 规则命名统一使用 `<scope>.<capability>`，例如 `r4s.irq-affinity`、`x86-n5105-pve.igc-vlan-offload`；检查结果使用相同名称写入 `profile-contract-report.txt`。新优化必须先在这个声明层定义可验证行为，再进入配置或文档；不建立第二套设备专用 checker。
 
-### 7.6 Artifact verifier
+### 7.7 Artifact verifier
 
 新增 `scripts/verify-firmware-artifacts.sh`，由 build job 和 publish job 共同使用：
 
@@ -452,7 +475,7 @@ verify-firmware-artifacts.sh <profile> <target-directory> <source-lock.json>
 - BBRv3 algorithm commit、kernel port hash 与实际 `tcp_bbr.ko` 的 module version `3` 一致
 - manifest 包含 `kmod-sched`，构建树包含 `sch_fq.ko`
 
-### 7.7 依赖图、复用边界与配置所有权
+### 7.8 依赖图、复用边界与配置所有权
 
 ```mermaid
 flowchart LR
@@ -462,7 +485,7 @@ flowchart LR
     OC["optimization-contracts"] --> PC["profile contract checker"]
     S --> L["source-lock.json"]
     L --> Z["materialize + kernel clean-apply"]
-    L --> OP["sync-official-packages<br/>Go + nlbwmon allowlist"]
+    L --> OP["sync-official-packages<br/>Go + nlbwmon + libwebsockets allowlist"]
     C["common profile"] --> R["render-profile"]
     D["device profile"] --> R
     L --> B["locked source checkout"]
@@ -490,7 +513,7 @@ flowchart LR
 - source ref、受控 release 与 BBRv3 provider 解析/物化只属于 `resolve-source-lock.sh`。
 - Geo 数据角色、可信仓库、asset 与 package 字段映射只属于 `profiles/common/geodata-sources.json`；resolver、validator、applicator 共用一个解析结果，执行代码不得重复枚举。
 - profile 合并只属于 `render-profile.sh`。
-- 官方 `openwrt/packages` 子树名单只在 common `profile.env` 声明，由 resolver 校验并写入 source-lock；`sync-official-packages.sh` 只通用、安全地同步 lock 中的相对路径，不复制 Go/nlbwmon 枚举，workflow 也不内联同步逻辑。
+- 官方 `openwrt/packages` 子树名单只在 common `profile.env` 声明，由 resolver 校验并写入 source-lock；`sync-official-packages.sh` 只通用、安全地同步 lock 中的相对路径，不复制 Go/nlbwmon/libwebsockets 枚举，workflow 也不内联同步逻辑。
 - 锁定 package 版本/URL/hash 的机械写入只属于 `apply-source-lock-artifacts.sh`。
 - 行为性源码变更只属于 `apply-profile-patches.sh`、仓库内 common/device `series` 和 source-lock 物化的 BBRv3 port；不依赖版本/hash 行的窄语义兼容变换也由该接口执行并写入 patch report。BBRv3 的 provider/kernel-series 选择只由 resolver 驱动。
 - Kconfig/package/target 边界只属于 contract checkers。
@@ -739,6 +762,11 @@ Lean packages feed 的旧 `nlbwmon` recipe 仍指向 GCC 15 修复之前的源�
 
 - <https://github.com/jow-/nlbwmon/commit/ba6ceda10a37e7ce4c820e530216d7c33f5bad34>
 - <https://github.com/openwrt/packages/tree/master/net/nlbwmon>
+
+Lean packages feed 的旧 `libwebsockets-full` 源码还把 16 字节 ChaCha 常量连同字符串结尾 NUL 初始化进 16 字节数组；GCC 15 将其报告为 `unterminated-string-initialization`，该包的 `-Werror` 因而使两个平台在同一位置失败。canonical 上游已经把两个数组改为 17 字节，官方 `openwrt/packages` master 的当前 `libs/libwebsockets` recipe 也已消费包含该修复的源码。本项目把这一子树加入同一 source-locked 官方 allowlist；不永久指定 libwebsockets 版本/hash、不复制短期 backport，也不屏蔽本次诊断：
+
+- <https://github.com/warmcat/libwebsockets/commit/19bd6a5bf8e06e5bfa3b331e0aa8c6f9fa7e3459>
+- <https://github.com/openwrt/packages/tree/master/libs/libwebsockets>
 
 - <https://github.com/coolsnowwolf/lede/blob/6c92c15df3dce19c73eb7d986f48cf6b2304306f/toolchain/gcc/Config.in>
 - <https://github.com/coolsnowwolf/lede/blob/6c92c15df3dce19c73eb7d986f48cf6b2304306f/toolchain/gcc/Config.version>
@@ -1389,7 +1417,7 @@ release-verify job 从 draft Release 重新下载所有资产，执行 `sha256su
 | 2 | 配置模型无隐式冲突 | `scripts/render-profile.sh`, `check-profile-contract.sh` | 增加 symbol、provider、required/forbidden 冲突检查 | 人工制造冲突时检查必须失败 |
 | 3 | 最新源码与产物可追溯 | `resolve-source-lock.sh`, `update-checker.yml`, builder workflow | 解析所有 master/main SHA，以及 HAProxy LTS、AdGuardHome stable、GeoIP/Geosite 最新 release、Google BBRv3 HEAD 与兼容 port provider 的精确 commit/URL/hash | 同一 lock 重读结果不变；任一 ref/release/action-observed-head/BBRv3 patch 变化产生新 digest 并触发双平台 |
 | 4 | 最新 package metadata 与 BBRv3 内核输入可审计 | `profiles/common/geodata-sources.json`, `apply-source-lock-artifacts.sh`, `apply-profile-patches.sh`, `diy-part2.sh`, `patchsets/common/kernel/bbr3-sources.json` | Geo 静态来源/字段只声明一次，resolver/validator/applicator 共用；由 source-lock 写入并验证动态 package metadata；按 profile 稳定内核系列动态解析、物化并 clean-apply 最新兼容 BBRv3 port | 执行代码无重复 Geo tuple，无 `PKG_HASH:=skip`/`latest/download`；BBRv3 每文件 immutable URL/hash/顺序完整；定向 download、override report、patch report 完整 |
-| 5 | common 工具链和库优化统一 | `profiles/common/config.seed`, `apply-profile-patches.sh`, `sync-official-packages.sh` | 按用户明确契约固定 Lean 原生 GCC15；仅让有冲突的 `libsepol` 保持 GNU17；从同一锁定官方 packages commit 同步 Go 与已修复 `nlbwmon`；显式关闭 LTO/GC/Mold | 无仓库内 package 版本/hash 上下文；`libsepol`/`nlbwmon` 编译通过，toolchain 报告为 GCC 15.x |
+| 5 | common 工具链和库优化统一 | `profiles/common/config.seed`, `profiles/common/profile.env`, `apply-profile-patches.sh`, `sync-official-packages.sh` | 按用户明确契约固定 Lean 原生 GCC15；仅让有冲突的 `libsepol` 保持 GNU17；从同一锁定官方 packages commit 同步 Go、已修复的 `nlbwmon` 与已吸收 canonical ChaCha 数组修复的 `libwebsockets`；显式关闭 LTO/GC/Mold | 无仓库内 package 版本/hash/脆弱源码补丁上下文；`libsepol`/`nlbwmon`/`libwebsockets-full` 编译通过，toolchain 报告为 GCC 15.x |
 | 6 | 不再继承危险默认设置 | `profiles/*/forbidden-packages.txt`, `profiles/*/files` | 禁用 `default-settings`，以窄 UCI overlay 实现时区/NTP、DHCP `.32/232`、IPv6 relay 与设备设置 | manifest 无 default-settings，网络默认 fixture 精确，防火墙 input 未被改成 ACCEPT，无固定 root 密码 |
 | 7 | BBRv3 成为可回退的 common 默认 | `patchsets/common/kernel/**`, `profiles/common/config.seed`, `required-packages.txt`, `files/etc/uci-defaults/zz-common-turboacc` | 两个平台应用同一内核系列的 BBRv3 port，显式编译 `kmod-tcp-bbr` 和 `kmod-sched`；上游 TurboACC 探测完成后、确认 module version `3` 与 `sch_fq` provider 再一次性选择 `bbr`，并保护后续用户设置；software flow on、hardware flow off | 双平台 build module version 为 `3` 且含 `sch_fq.ko`；三次冷启动 UCI/sysctl/firewall 一致，完成 BBRv3/cubic A/B 与 PassWall/nlbwmon 真机测试 |
 | 8 | DNS 组件齐全且不覆盖用户运行时配置 | `profiles/common/config.seed`, package contracts, `README.md` | 编译所需包，端口、上游、规则和凭据由设备 UCI/YAML 管理；确认上游 factory defaults 不争抢 53 | manifest 检查；新装默认服务检查；应用用户常用配置后按实际 UCI/YAML 做 `ss`、iptables redirect、逐跳查询和断环测试 |

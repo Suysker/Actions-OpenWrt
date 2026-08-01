@@ -7,8 +7,11 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 origin="$tmpdir/official-packages"
 openwrt="$tmpdir/openwrt"
-mkdir -p "$origin/lang/golang" "$origin/net/nlbwmon" "$origin/net/unrelated" \
-  "$openwrt/feeds/packages/lang/golang" "$openwrt/feeds/packages/net/nlbwmon"
+mkdir -p "$origin/lang/golang" "$origin/net/nlbwmon" \
+  "$origin/libs/libwebsockets" "$origin/net/unrelated" \
+  "$openwrt/feeds/packages/lang/golang" \
+  "$openwrt/feeds/packages/net/nlbwmon" \
+  "$openwrt/feeds/packages/libs/libwebsockets"
 
 printf 'GO_DEFAULT_VERSION:=9.9.9\n' > "$origin/lang/golang/golang-values.mk"
 cat > "$origin/net/nlbwmon/Makefile" <<'EOF'
@@ -17,8 +20,10 @@ PKG_SOURCE_VERSION:=ffffffffffffffffffffffffffffffffffffffff
 PKG_MIRROR_HASH:=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 EOF
 printf 'must-not-be-copied\n' > "$origin/net/unrelated/Makefile"
+printf 'official-libwebsockets\n' > "$origin/libs/libwebsockets/Makefile"
 printf 'old-go\n' > "$openwrt/feeds/packages/lang/golang/old"
 printf 'old-nlbwmon\n' > "$openwrt/feeds/packages/net/nlbwmon/old"
+printf 'old-libwebsockets\n' > "$openwrt/feeds/packages/libs/libwebsockets/old"
 
 git -C "$origin" init -q
 git -C "$origin" config user.name fixture
@@ -33,7 +38,7 @@ cat > "$lock" <<EOF
   "official_packages": {
     "url": "https://github.com/openwrt/packages.git",
     "commit": "$commit",
-    "subtrees": ["lang/golang", "net/nlbwmon"]
+    "subtrees": ["lang/golang", "net/nlbwmon", "libs/libwebsockets"]
   }
 }
 EOF
@@ -50,8 +55,11 @@ grep -Fxq 'PKG_SOURCE_VERSION:=ffffffffffffffffffffffffffffffffffffffff' \
   "$openwrt/feeds/packages/net/nlbwmon/Makefile"
 grep -Eq '^PKG_MIRROR_HASH:=[0-9a-f]{64}$' \
   "$openwrt/feeds/packages/net/nlbwmon/Makefile"
+grep -Fxq 'official-libwebsockets' \
+  "$openwrt/feeds/packages/libs/libwebsockets/Makefile"
 [ ! -e "$openwrt/feeds/packages/lang/golang/old" ]
 [ ! -e "$openwrt/feeds/packages/net/nlbwmon/old" ]
+[ ! -e "$openwrt/feeds/packages/libs/libwebsockets/old" ]
 [ ! -e "$openwrt/feeds/packages/net/unrelated" ]
 
 python3 - "$lock" "$tmpdir/unsafe-lock.json" <<'PY'

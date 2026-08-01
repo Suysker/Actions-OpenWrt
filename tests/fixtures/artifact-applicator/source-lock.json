@@ -27,7 +27,7 @@
     "url": "https://github.com/openwrt/packages.git",
     "requested_ref": "master",
     "commit": "3333333333333333333333333333333333333333",
-    "subtrees": ["lang/golang", "net/nlbwmon"]
+    "subtrees": ["lang/golang", "net/nlbwmon", "libs/libwebsockets"]
   },
   "profiles": {
     "r4s": {
