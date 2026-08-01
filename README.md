@@ -52,7 +52,7 @@ profiles/x86-n5105-pve/      N5105 PVE target、CPU flags、硬件包和运行�
 - 不允许进入 manifest 的包写入 `forbidden-packages.txt`；其中 `exact:` 规则会自动成为 Kconfig 负选择，并在 `make defconfig` 后及最终 manifest 再次校验，普通精简不删除源码。
 - rootfs 文件放在对应 `files/`。common 与设备层同路径会直接失败，不允许静默覆盖。
 - 同一 Kconfig symbol 或 required/forbidden 规则不能同时归 common 与设备层所有。
-- `profiles/optimization-contracts.json` 是运行时调优及 Lean 继承优化的唯一语义合同。它使用动态 `{kernel_series}` 和 patch 目录 glob，不保存某轮 kernel 版本、commit、hash 或 patch 文件名；静态检查验证 rootfs，构建检查再验证本轮锁定 Lean tree/feeds。它进入两套 profile digest，修改共同性能意图会让双平台缓存与更新身份同时变化。
+- `profiles/optimization-contracts.json` 是运行时调优及 Lean 继承优化的唯一语义合同。它使用动态 `{kernel_series}` 和 patch 目录 glob，不保存某轮 kernel 版本、commit、hash 或 patch 文件名；静态检查验证 rootfs，构建检查再验证本轮锁定 Lean tree/feeds。它进入两套 profile digest，修改共同性能意图会同时改变两个 profile digest；完整 source-lock 仍独立包含仓库 commit。
 
 `profiles/common/providers.tsv` 是关键 package provider 的唯一合同。当前明确选择默认 packages feed 的 HAProxy、kenzo 的 AdGuardHome、xiaorouji 的 `v2ray-geodata` 和 Lean LuCI 的 TurboACC；真实冲突 provider 会在 feed checkout 后被精确移除并重新索引。Geo 数据角色与来源映射则只定义在 `profiles/common/geodata-sources.json`：`v2ray-geodata` 是同时产出 `v2ray-geoip` 与 `v2ray-geosite` 的 package recipe，不是第三份规则数据；resolver、validator 和 applicator 共用该合同，把两个 download block 改写成对应 Loyalsoldier 载荷的当轮精确 tag、URL 与 SHA256，执行代码不再各自枚举仓库和字段。
 

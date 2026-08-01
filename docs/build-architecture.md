@@ -422,7 +422,7 @@ apply-source-lock-artifacts.sh <openwrt-root> <source-lock.json> <report-json>
 
 `optimization-contracts.json` 是这些性能意图的唯一声明层。它只保存稳定的功能语义、相对路径模板和内容断言，不保存 kernel 版本、Lean commit、patch 文件名或逐轮 hash。`check-profile-contract.sh` 提供一个通用解释器：rootfs 规则在 prepare 的静态检查中执行；带 `{kernel_series}` 的 upstream 规则在 build 已 checkout 本轮 source-lock 后展开；需要在 patch stack 中定位的能力按目录 glob 和语义内容匹配，而不是依赖可能被上游改名的 patch。任一声明必须命中且不得靠另一个 profile 的文件满足。
 
-每个平台的 `profile_digest` 统一覆盖 `profiles/common/`、对应设备目录和这份共享优化合同。修改任何共同性能意图都会同时改变 R4S/N5105 的 profile/cache/update 身份；修改某一设备目录仍只改变该设备身份。路径集合只在 resolver 的 `profile_digest()` 中定义，workflow 不复制。
+每个平台的 `profile_digest` 统一覆盖 `profiles/common/`、对应设备目录和这份共享优化合同。修改任何共同性能意图都会同时改变 R4S/N5105 的两个 profile digest；修改某一设备目录只改变对应设备的 profile digest。完整 source-lock digest 还独立包含仓库 commit，继续作为整轮 update fingerprint 和 exact cache key 的组成部分。路径集合只在 resolver 的 `profile_digest()` 中定义，workflow 不复制。
 
 规则命名统一使用 `<scope>.<capability>`，例如 `r4s.irq-affinity`、`x86-n5105-pve.igc-vlan-offload`；检查结果使用相同名称写入 `profile-contract-report.txt`。新优化必须先在这个声明层定义可验证行为，再进入配置或文档；不建立第二套设备专用 checker。
 
