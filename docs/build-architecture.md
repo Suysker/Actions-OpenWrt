@@ -302,6 +302,7 @@ patchsets/
 
 scripts/
   bbr3_module_version.py
+  firmware_image.py
   render-profile.sh
   profile_model.py
   profile_contract.py
@@ -324,6 +325,7 @@ scripts/
 tests/
   fixtures/source-lock/
   source_lock_fixtures.py
+  test-firmware-image.py
   test-resolve-source-lock.sh
   test-apply-source-lock-artifacts.sh
   test-apply-profile-patches.sh
@@ -545,7 +547,7 @@ verify-firmware-artifacts.sh <profile> <target-directory> <source-lock.json>
 验证：
 
 - 固件文件模式和非零大小
-- gzip 完整性
+- gzip payload 完整性，以及存在 OpenWrt fwtool trailer 时的结构/CRC/metadata 完整性
 - manifest 存在
 - `config.buildinfo` 存在
 - `version.buildinfo` 和 `feeds.buildinfo` 存在
@@ -559,6 +561,27 @@ verify-firmware-artifacts.sh <profile> <target-directory> <source-lock.json>
 - target/kernel/compiler/CPU flags 与 profile contract 一致
 - BBRv3 algorithm commit、kernel port hash 与实际 `tcp_bbr.ko` 的 module version `3` 一致
 - manifest 包含 `kmod-sched`，构建树包含 `sch_fq.ko`
+
+`run 30728862881` 的 R4S `make world` 成功，provenance 也已经逐一证明全部 `tcp_bbr.ko` 为 `version=3`、vermagic 为锁定的 6.12.100，随后旧 verifier 在 `gzip -t` 报 `decompression OK, trailing garbage ignored` 并以 code 2 失败。这里的尾部不是可忽略垃圾：本轮锁定 Lean 通过 OpenWrt `fwtool` 在 gzip payload 后追加 image metadata（以及启用签名时的 signature），其 trailer 是带累计 CRC 的正式 sysupgrade 格式。既不能继续把整文件当纯 gzip，也不能用 `gzip -t ... || true` 吞掉真实损坏。
+
+镜像字节验证划分为三个单一职责模块：
+
+1. `scripts/firmware_image.py` 是唯一 image byte-format 解释器。它以 `zlib` 流式解压一个 gzip member、验证 gzip header/DEFLATE/trailer CRC/ISIZE 并记录精确 compressed EOF，不把完整 raw image 载入内存；随后从文件末尾按锁定 Lean 所用 OpenWrt `fwimage_trailer`（big-endian magic `0x46577830`、累计 CRC、type、zero pad、chunk size）反向解析连续 chunk。
+2. 解释器覆盖 OpenWrt 官方构建能产生的四种完整布局：纯 gzip、单份 `FWIMAGE_INFO`、单份 `FWIMAGE_SIGNATURE`、INFO 后置 SIGNATURE。当前 R4S 有 supported device，生成 INFO；x86 `Device/Default` 明确清空 `SUPPORTED_DEVICES`，因此未签名构建是纯 gzip，未来配置 build key 时可生成 signature-only。选择完全由文件字节决定，不加入 profile 分支。metadata/signature 分别受 OpenWrt 的 30 KiB/1 KiB 上限约束；每个 trailer 的 CRC 必须等于从镜像开头到该 trailer 前一字节的 OpenWrt raw CRC32，chunk 链起点必须精确等于 gzip EOF。INFO 的 8 字节 header 必须使用官方 fwtool 当前接受的 version `0`；flags 保持为受 CRC 保护的透明字段，与官方 extractor 一致，不额外写死为零。余下载荷必须是 UTF-8 JSON object；未知 type、重复/逆序 chunk、任意间隙/垃圾、坏 CRC、越界 size、截断 gzip 均失败。
+3. `verify-firmware-artifacts.sh` 仍只负责按同一 rendered profile 找到唯一镜像、检查最低尺寸并调用该解释器；build、draft 回下载与 publish 复用同一入口，不在 R4S/x86 分支中重复格式判断。解释器输出版本化 `firmware-image-v1` 报告供日志审计。`tests/test-firmware-image.py` 覆盖纯 gzip、metadata、metadata+signature、标准 CRC check value，以及 gzip/trailer/JSON 的逐类破坏；另以锁定 Lean 的官方 fwtool commit 生成样本做实现交叉验证。
+
+依赖方向固定为：
+
+```text
+profile image_pattern -> verify-firmware-artifacts.sh
+  -> firmware_image.py
+      -> gzip stream integrity + exact EOF
+      -> optional fwtool chunk structure + cumulative CRC + metadata JSON
+  -> SHA256/manifest/buildinfo/provenance contracts
+  -> draft re-download -> publish
+```
+
+命名保持领域一致：`GzipStream` 表示压缩成员边界，`FwtoolChunk` 表示尾部块，`FirmwareImage` 表示一次完整检查结果，所有模糊/损坏状态统一抛出 `FirmwareImageError`。不引入 profile 名判断、外部 `fwtool` 二进制下载、固定镜像文件名或宽松 fallback。
 
 `run 30721359572` 已证明 R4S 与 N5105 的完整 `make world` 同时成功，并且同一 `995-bbrv3.patch` 在两个 Linux 6.12.100 tree 都实际应用、`tcp_bbr.ko` 都实际打包；随后旧 verifier 报 `version=missing`。旧实现用 host `modinfo` 并以 `2>/dev/null || true` 吞掉具体状态，所以当时只能证明 verifier 没有得到值。
 
@@ -1687,12 +1710,12 @@ find build_dir -type f -name sch_fq.ko -print -quit | grep -q .
 R4S：
 
 - 存在 NanoPi R4S squashfs SD/sysupgrade `*.img.gz`
-- `gzip -t` 成功
+- gzip payload 完整，且其后的 INFO（可选后置 SIGNATURE）通过结构、边界、CRC 与 metadata JSON 验证
 
 N5105 PVE：
 
 - 存在 x86_64 squashfs combined EFI `*.img.gz`
-- `gzip -t` 成功
+- 通过与 R4S 相同的解释器验证纯 gzip；未来出现官方 signature-only/INFO trailer 时仍走相同结构与 CRC 路径，不维护设备分支
 
 共同：
 
@@ -1916,6 +1939,7 @@ openwrt-<YYYY.MM.DD-HHMMSS>-<lede-short-sha>
 | AdGuardHome 设备自更新破坏 OPKG/回滚 | 保持非特权 jail 和 `--no-check-update`；由 update checker 触发新的可验证双平台固件 |
 | master 提升稳定内核后 provider 尚无对应 BBRv3 port | resolver 按策略查询受信任单文件/多文件 provider，并在 matrix 前明确失败；provider 发布兼容 port 后下一轮自动吸收并执行 clean-apply，不切 testing kernel、不回退算法代际 |
 | BBRv3 patch 已应用但模块身份不符 | 保留 Lean 全局 module-strip，只按唯一合同为需要的 provider 后置一行 direct `MODULE_INFO` companion；再以源码后置断言、build 读取每个 ELF `.modinfo` 的 `version=3`/`vermagic`、真机 `/sys/module/tcp_bbr/version=3` 三重门禁，读取失败保留原始诊断与模块样本 |
+| `.img.gz` 被误判为 trailing garbage 或真的尾部损坏 | 不放宽 gzip 错误；共享解释器接受纯 gzip 或官方 fwtool 合法序列，并验证所有尾部 magic、size、累计 CRC、header/JSON，任意未解释字节仍失败 |
 | `default_qdisc=fq` 但固件缺少 provider | common 显式选择 `kmod-sched`；build 检查 `sch_fq.ko`，真机检查 `/sys/module/sch_fq` 与实际 qdisc |
 | GCC 15 对 package 暴露新错误 | 当前实际通用 package 闭包整体消费锁定的 OpenWrt 官方 packages master；官方 core 缺口走窄 overlay，只有 canonical 来源也未解决时才评审语义变换；不下载外部 toolchain、不用 GCC13 自动 fallback |
 | N5105 guest 未暴露 CPU flags | PVE CPU 必须为 `host`，启动前检查 `/proc/cpuinfo` |

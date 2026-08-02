@@ -128,7 +128,7 @@ bash scripts/resolve-source-lock.sh materialize \
 bash scripts/resolve-source-lock.sh digest /tmp/source-input/source-lock.json
 ```
 
-GitHub build 还会执行两次 `make defconfig` 及 forbidden 子选项收敛、required/forbidden/provider 契约、锁定源码的优化语义合同、定向下载、完整 `make download`、一次并行编译、直接读取全部 `tcp_bbr.ko` ELF `.modinfo` 并验证 version 3/vermagic、一致的 `sch_fq.ko`、GCC 15、镜像 gzip、manifest、buildinfo、SBOM 和所有 SHA256 验证。
+GitHub build 还会执行两次 `make defconfig` 及 forbidden 子选项收敛、required/forbidden/provider 契约、锁定源码的优化语义合同、定向下载、完整 `make download`、一次并行编译、直接读取全部 `tcp_bbr.ko` ELF `.modinfo` 并验证 version 3/vermagic、一致的 `sch_fq.ko`、GCC 15、镜像 gzip payload 与可选 OpenWrt fwtool metadata/signature trailer、manifest、buildinfo、SBOM 和所有 SHA256 验证。
 
 ## 产物与迁移说明
 

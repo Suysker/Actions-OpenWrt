@@ -39,7 +39,7 @@ image="${images[0]}"
   echo "::error::Firmware image is unexpectedly small: $image" >&2
   exit 1
 }
-gzip -t "$image"
+python3 "$repo_root/scripts/firmware_image.py" "$image"
 
 require_one() {
   local pattern="$1" label="$2"
