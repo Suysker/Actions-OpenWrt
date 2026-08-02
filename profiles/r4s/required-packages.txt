@@ -9,4 +9,5 @@ package:kmod-r8168
 package:luci-app-cpufreq
 package:kmod-hwmon-pwmfan
 package:kmod-zram
+package:kmod-lib-lz4
 package:zram-swap

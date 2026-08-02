@@ -54,6 +54,8 @@ expect_error(
 )
 assert MODULE.selected_series(TARGET, "stable") == "6.12"
 assert MODULE.selected_series(TARGET, "testing") == "6.18"
+assert MODULE.kernel_series_symbol("6.18") == "LINUX_6_18"
+expect_error(lambda: MODULE.kernel_series_symbol("6.18.38"), "invalid kernel series")
 expect_error(
     lambda: MODULE.selected_series(TARGET + "KERNEL_TESTING_PATCHVER:=6.19\n", "testing"),
     "expected one KERNEL_TESTING_PATCHVER",

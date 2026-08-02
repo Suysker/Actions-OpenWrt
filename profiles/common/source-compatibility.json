@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "rules": [
     {
       "id": "libsepol-gnu17",
@@ -33,6 +33,14 @@
         "LDFLAGS=\"$(TARGET_LDFLAGS)\""
       ],
       "upstream_default_marker": "define Build/Compile"
+    },
+    {
+      "id": "zram-selected-kernel-backend",
+      "operation": "kernel-series-config-guard",
+      "path": "package/kernel/linux/modules/other.mk",
+      "define": "KernelPackage/zram/config",
+      "config": "KERNEL_ZRAM_BACKEND_LZ4",
+      "parent_guard": "PACKAGE_kmod-zram"
     },
     {
       "id": "image-cyclonedx-sbom",

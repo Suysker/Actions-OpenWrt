@@ -210,6 +210,23 @@ AUTOLOAD:=$(call AutoProbe,tcp_bbr)
 define KernelPackage/sched
 FILES:=$(LINUX_DIR)/net/sched/sch_fq.ko
 EOF
+cat > "$openwrt/package/kernel/linux/modules/other.mk" <<'EOF'
+define KernelPackage/zram/config
+  if PACKAGE_kmod-zram
+    if LINUX_6_12
+        config KERNEL_ZRAM_BACKEND_LZO
+                bool "lzo and lzo-rle compression support"
+
+        config KERNEL_ZRAM_BACKEND_LZ4
+                bool "lz4 compression support"
+
+    endif
+    choice
+      prompt "ZRAM Default compressor"
+    endchoice
+  endif
+endef
+EOF
 
 report="$tmpdir/patch-report.txt"
 bash "$repo_root/scripts/apply-profile-patches.sh" \
@@ -243,6 +260,8 @@ grep -qx 'source_compatibility_wol_gnu17_status=inserted' "$report"
 grep -qx 'source_compatibility_wol_gnu17_detail=gnu17' "$report"
 grep -qx 'source_compatibility_tcping_target_make_environment_status=inserted' "$report"
 grep -qx 'source_compatibility_tcping_target_make_environment_detail=$(TARGET_CONFIGURE_OPTS)' "$report"
+grep -qx 'source_compatibility_zram_selected_kernel_backend_status=upstream' "$report"
+grep -qx 'source_compatibility_zram_selected_kernel_backend_detail=KERNEL_ZRAM_BACKEND_LZ4@LINUX_6_12' "$report"
 grep -qx 'source_compatibility_image_cyclonedx_sbom_status=inserted' "$report"
 grep -qx 'source_compatibility_image_cyclonedx_sbom_detail=Image/Manifest' "$report"
 python3 - "$repo_root/profiles/common/source-compatibility.json" \
@@ -265,6 +284,42 @@ grep -qx 'bbrv3_module_version_destination=target/linux/generic/hack-6.12/996-bb
 grep -qx 'assertion_BBR_VERSION=3' "$report"
 grep -qx 'assertion_module_version_metadata=retained' "$report"
 
+# The same semantic rule extends whatever selected kernel series the lock
+# provides; neither the policy nor the implementation enumerates 6.18.
+zram_618_report="$tmpdir/source-compatibility-zram-618.txt"
+python3 "$repo_root/scripts/apply-source-compatibility.py" \
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" \
+  "$zram_618_report" 6.18
+grep -Fqx '    if LINUX_6_12 || LINUX_6_18' \
+  "$openwrt/package/kernel/linux/modules/other.mk"
+grep -qx 'source_compatibility_zram_selected_kernel_backend_status=inserted' \
+  "$zram_618_report"
+grep -qx 'source_compatibility_zram_selected_kernel_backend_detail=KERNEL_ZRAM_BACKEND_LZ4@LINUX_6_18' \
+  "$zram_618_report"
+
+zram_618_second_report="$tmpdir/source-compatibility-zram-618-second.txt"
+python3 "$repo_root/scripts/apply-source-compatibility.py" \
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" \
+  "$zram_618_second_report" 6.18
+grep -qx 'source_compatibility_zram_selected_kernel_backend_status=upstream' \
+  "$zram_618_second_report"
+
+# A changed conditional must not be mistaken for an unconditional upstream
+# implementation; ambiguous semantics remain a hard failure.
+cp "$openwrt/package/kernel/linux/modules/other.mk" "$tmpdir/other.mk.valid"
+sed -i 's/if LINUX_6_12 || LINUX_6_18/if LINUX_6_12 \&\& EXPERIMENTAL_ZRAM/' \
+  "$openwrt/package/kernel/linux/modules/other.mk"
+if python3 "$repo_root/scripts/apply-source-compatibility.py" \
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" \
+  "$tmpdir/source-compatibility-zram-drift.txt" 6.18 \
+  >"$tmpdir/source-compatibility-zram-drift.out" 2>&1; then
+  echo "zram compatibility accepted a non-canonical kernel guard" >&2
+  exit 1
+fi
+grep -Fq 'non-canonical kernel-series guard' \
+  "$tmpdir/source-compatibility-zram-drift.out"
+cp "$tmpdir/other.mk.valid" "$openwrt/package/kernel/linux/modules/other.mk"
+
 second_report="$tmpdir/patch-report-second.txt"
 bash "$repo_root/scripts/apply-profile-patches.sh" \
   r4s "$openwrt" "$lock_dir/source-lock.json" "$second_report"
@@ -274,6 +329,7 @@ bash "$repo_root/scripts/apply-profile-patches.sh" \
 grep -qx 'source_compatibility_libsepol_gnu17_status=upstream' "$second_report"
 grep -qx 'source_compatibility_wol_gnu17_status=upstream' "$second_report"
 grep -qx 'source_compatibility_tcping_target_make_environment_status=upstream' "$second_report"
+grep -qx 'source_compatibility_zram_selected_kernel_backend_status=upstream' "$second_report"
 grep -qx 'source_compatibility_image_cyclonedx_sbom_status=upstream' "$second_report"
 grep -qx 'bbrv3_module_version_status=compatibility-present' "$second_report"
 
@@ -317,7 +373,7 @@ endef
 EOF
 third_report="$tmpdir/source-compatibility-upstream.txt"
 python3 "$repo_root/scripts/apply-source-compatibility.py" \
-  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" "$third_report"
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" "$third_report" 6.12
 grep -qx 'source_compatibility_tcping_target_make_environment_status=upstream' "$third_report"
 grep -qx 'source_compatibility_tcping_target_make_environment_detail=$(MAKE_FLAGS)' "$third_report"
 
@@ -347,7 +403,7 @@ rm "$openwrt/scripts/openwrt-sbom/package-metadata.pl" \
   "$openwrt/scripts/openwrt-sbom/metadata.pm"
 native_report="$tmpdir/source-compatibility-native.txt"
 python3 "$repo_root/scripts/apply-source-compatibility.py" \
-  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" "$native_report"
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" "$native_report" 6.12
 grep -qx 'source_compatibility_image_cyclonedx_sbom_status=upstream' "$native_report"
 
 cat > "$openwrt/feeds/small/tcping/Makefile" <<'EOF'
@@ -361,7 +417,8 @@ endef
 EOF
 if python3 "$repo_root/scripts/apply-source-compatibility.py" \
   "$repo_root/profiles/common/source-compatibility.json" "$openwrt" \
-  "$tmpdir/source-compatibility-drift.txt" >"$tmpdir/source-compatibility-drift.out" 2>&1; then
+  "$tmpdir/source-compatibility-drift.txt" 6.12 \
+  >"$tmpdir/source-compatibility-drift.out" 2>&1; then
   echo "tcping compatibility unexpectedly accepted a changed custom recipe" >&2
   exit 1
 fi
@@ -394,7 +451,7 @@ path.write_text(
 PY
 if python3 "$repo_root/scripts/apply-source-compatibility.py" \
   "$repo_root/profiles/common/source-compatibility.json" "$openwrt" \
-  "$tmpdir/source-compatibility-partial.txt" \
+  "$tmpdir/source-compatibility-partial.txt" 6.12 \
   >"$tmpdir/source-compatibility-partial.out" 2>&1; then
   echo "image SBOM compatibility unexpectedly accepted a partial semantic block" >&2
   exit 1
@@ -410,7 +467,7 @@ endef
 EOF
 if python3 "$repo_root/scripts/apply-source-compatibility.py" \
   "$repo_root/profiles/common/source-compatibility.json" "$openwrt" \
-  "$tmpdir/source-compatibility-missing-generator.txt" \
+  "$tmpdir/source-compatibility-missing-generator.txt" 6.12 \
   >"$tmpdir/source-compatibility-missing-generator.out" 2>&1; then
   echo "image SBOM compatibility accepted a missing generator" >&2
   exit 1

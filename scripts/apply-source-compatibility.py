@@ -10,15 +10,24 @@ import re
 import sys
 from typing import Any
 
+from kernel_selection import KernelSelectionError, kernel_series_symbol
+
 
 RULE_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 MAKE_DEFINE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]*$")
+KCONFIG_SYMBOL_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+KCONFIG_GUARD_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+KERNEL_CONDITION_RE = re.compile(
+    r"^(LINUX_[0-9]+_[0-9]+)(?:\s*\|\|\s*(LINUX_[0-9]+_[0-9]+))*$"
+)
 STANDARD_RE = re.compile(r"(?:^|\s)-std=([A-Za-z0-9+_.-]+)")
 ASSIGNMENT_RE = re.compile(
     r"^(?:TARGET_(?:C|CPP)FLAGS|PKG_(?:C|CPP)FLAGS)\s*(?::|\+|\?)?=\s*(.*)$"
 )
 PACKAGE_PREFIXES = ("package/", "feeds/")
-SHARED_BUILD_FILES = frozenset({"include/image.mk"})
+SHARED_BUILD_FILES = frozenset(
+    {"include/image.mk", "package/kernel/linux/modules/other.mk"}
+)
 
 
 class CompatibilityError(RuntimeError):
@@ -81,7 +90,7 @@ def load_rules(policy_path: pathlib.Path) -> list[dict[str, Any]]:
 
     if not isinstance(policy, dict) or set(policy) != {"schema", "rules"}:
         raise CompatibilityError("source compatibility policy must contain schema and rules")
-    if policy["schema"] != 2 or not isinstance(policy["rules"], list) or not policy["rules"]:
+    if policy["schema"] != 3 or not isinstance(policy["rules"], list) or not policy["rules"]:
         raise CompatibilityError("source compatibility policy schema or rules are invalid")
 
     identifiers: set[str] = set()
@@ -246,6 +255,34 @@ def load_rules(policy_path: pathlib.Path) -> list[dict[str, Any]]:
                     raise CompatibilityError(f"{file_label} content markers are invalid")
             if not required_paths:
                 raise CompatibilityError(f"{label} declares no required files")
+        elif operation == "kernel-series-config-guard":
+            if path != "package/kernel/linux/modules/other.mk":
+                raise CompatibilityError(
+                    f"{label} kernel-series-config-guard has an unsupported path"
+                )
+            expect_keys(
+                raw_rule,
+                {
+                    "id",
+                    "operation",
+                    "path",
+                    "define",
+                    "config",
+                    "parent_guard",
+                },
+                label,
+            )
+            define = require_text(raw_rule["define"], f"{label} define")
+            config = require_text(raw_rule["config"], f"{label} config")
+            parent_guard = require_text(
+                raw_rule["parent_guard"], f"{label} parent_guard"
+            )
+            if not MAKE_DEFINE_RE.fullmatch(define):
+                raise CompatibilityError(f"{label} has an invalid Make define name")
+            if not KCONFIG_SYMBOL_RE.fullmatch(config):
+                raise CompatibilityError(f"{label} has an invalid Kconfig symbol")
+            if not KCONFIG_GUARD_RE.fullmatch(parent_guard):
+                raise CompatibilityError(f"{label} has an invalid parent guard")
         else:
             raise CompatibilityError(f"{label} has unsupported operation {operation!r}")
 
@@ -452,11 +489,129 @@ def apply_make_define_block(
     return "inserted", rule["define"]
 
 
+def kernel_series_token(kernel_series: str) -> str:
+    try:
+        return kernel_series_symbol(kernel_series)
+    except KernelSelectionError as exc:
+        raise CompatibilityError(str(exc)) from exc
+
+
+def parse_kernel_condition(expression: str) -> tuple[str, ...] | None:
+    if not KERNEL_CONDITION_RE.fullmatch(expression):
+        return None
+    return tuple(part.strip() for part in expression.split("||"))
+
+
+def locate_config_series_guard(
+    lines: list[str],
+    start: int,
+    end: int,
+    config: str,
+    parent_guard: str,
+    label: str,
+) -> tuple[int, tuple[str, ...]] | None:
+    stack: list[tuple[int, str]] = []
+    declarations: list[tuple[int, tuple[tuple[int, str], ...]]] = []
+    declaration = f"config {config}"
+
+    for index in range(start + 1, end):
+        stripped = lines[index].strip()
+        if stripped.startswith("if "):
+            expression = stripped[3:].strip()
+            if not expression:
+                raise CompatibilityError(f"{label} contains an empty Kconfig guard")
+            stack.append((index, expression))
+        elif stripped == "endif":
+            if not stack:
+                raise CompatibilityError(f"{label} contains an unmatched endif")
+            stack.pop()
+        elif stripped == declaration:
+            declarations.append((index, tuple(stack)))
+
+    if stack:
+        raise CompatibilityError(f"{label} contains an unclosed Kconfig guard")
+    if len(declarations) != 1:
+        raise CompatibilityError(
+            f"{label} must declare {config} exactly once, found {len(declarations)}"
+        )
+
+    _, guards = declarations[0]
+    parent_matches = [item for item in guards if item[1] == parent_guard]
+    if len(parent_matches) != 1:
+        raise CompatibilityError(
+            f"{label} must place {config} under exactly one {parent_guard} guard"
+        )
+    residual = [item for item in guards if item[1] != parent_guard]
+    if not residual:
+        return None
+    if len(residual) != 1:
+        raise CompatibilityError(
+            f"{label} has ambiguous nested guards around {config}"
+        )
+    guard_index, expression = residual[0]
+    tokens = parse_kernel_condition(expression)
+    if tokens is None or len(tokens) != len(set(tokens)):
+        raise CompatibilityError(
+            f"{label} has a non-canonical kernel-series guard around {config}"
+        )
+    return guard_index, tokens
+
+
+def apply_kernel_series_config_guard(
+    rule: dict[str, Any], path: pathlib.Path, kernel_series: str
+) -> tuple[str, str]:
+    selected = kernel_series_token(kernel_series)
+    original = path.read_text(encoding="utf-8")
+    lines = original.splitlines()
+    start, end = find_make_define(lines, rule["define"], rule["id"])
+    located = locate_config_series_guard(
+        lines,
+        start,
+        end,
+        rule["config"],
+        rule["parent_guard"],
+        rule["id"],
+    )
+    detail = f"{rule['config']}@{selected}"
+    if located is None:
+        return "upstream-unconditional", detail
+    guard_index, tokens = located
+    if selected in tokens:
+        return "upstream", detail
+
+    indentation = lines[guard_index][
+        : len(lines[guard_index]) - len(lines[guard_index].lstrip())
+    ]
+    lines[guard_index] = f"{indentation}if {' || '.join((*tokens, selected))}"
+    changed = "\n".join(lines) + "\n"
+    write_if_changed(path, original, changed)
+
+    final_lines = path.read_text(encoding="utf-8").splitlines()
+    final_start, final_end = find_make_define(
+        final_lines, rule["define"], rule["id"]
+    )
+    final_located = locate_config_series_guard(
+        final_lines,
+        final_start,
+        final_end,
+        rule["config"],
+        rule["parent_guard"],
+        rule["id"],
+    )
+    if final_located is None or selected not in final_located[1]:
+        raise CompatibilityError(
+            f"{rule['id']} kernel-series guard postcondition failed"
+        )
+    return "inserted", detail
+
+
 def report_key(identifier: str) -> str:
     return identifier.replace("-", "_")
 
 
-def apply_rule(rule: dict[str, Any], openwrt_root: pathlib.Path) -> tuple[str, str]:
+def apply_rule(
+    rule: dict[str, Any], openwrt_root: pathlib.Path, kernel_series: str
+) -> tuple[str, str]:
     path = target_path(openwrt_root, rule["path"])
     if rule["operation"] == "language-standard":
         return apply_language_standard(rule, path)
@@ -464,13 +619,16 @@ def apply_rule(rule: dict[str, Any], openwrt_root: pathlib.Path) -> tuple[str, s
         return apply_make_environment(rule, path)
     if rule["operation"] == "make-define-block":
         return apply_make_define_block(rule, path, openwrt_root)
+    if rule["operation"] == "kernel-series-config-guard":
+        return apply_kernel_series_config_guard(rule, path, kernel_series)
     raise CompatibilityError(f"unsupported validated operation: {rule['operation']}")
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 4:
+    if len(argv) != 5:
         print(
-            "Usage: apply-source-compatibility.py <policy.json> <openwrt-root> <report>",
+            "Usage: apply-source-compatibility.py "
+            "<policy.json> <openwrt-root> <report> <kernel-series>",
             file=sys.stderr,
         )
         return 2
@@ -478,12 +636,16 @@ def main(argv: list[str]) -> int:
     policy_path = pathlib.Path(argv[1])
     openwrt_root = pathlib.Path(argv[2])
     report_path = pathlib.Path(argv[3])
+    kernel_series = argv[4]
     try:
+        kernel_series_token(kernel_series)
         rules = load_rules(policy_path)
         root = openwrt_root.resolve()
         if not root.is_dir():
             raise CompatibilityError(f"OpenWrt root does not exist: {openwrt_root}")
-        results = [(rule["id"], *apply_rule(rule, root)) for rule in rules]
+        results = [
+            (rule["id"], *apply_rule(rule, root, kernel_series)) for rule in rules
+        ]
     except CompatibilityError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1

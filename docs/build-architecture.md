@@ -128,6 +128,7 @@ repository declarations + rendered common/device intent + floating upstreams
 | `scripts/profile_contract.py` | 最终 config、seed drift、package、provider、target、kernel、rootfs/source 语义验收 |
 | `scripts/profile_semantics.py` | 声明式验证 rootfs、Lean target patch 与 prepared kernel upstream 等价语义 |
 | `scripts/apply_source_lock_artifacts.py` | 把 lock 中的精确 release metadata 写入唯一 package provider |
+| `scripts/apply-source-compatibility.py` | 按声明式规则处理当前编译闭包内的非内核源码兼容，并以 selected kernel series 驱动系列相关 Kconfig 守卫 |
 | `scripts/apply-profile-patches.sh` | 应用仓库 patch、源码兼容规则和本轮 BBRv3 patch stack |
 | `scripts/collect-build-provenance.sh` | 从真实 build tree 生成平台交付目录和 `build-provenance.json` |
 | `scripts/verify-firmware-artifacts.sh` | 平台交付的唯一验收器 |
@@ -140,6 +141,7 @@ repository declarations + rendered common/device intent + floating upstreams
 - shell 只编排进程与文件，JSON/schema 解释由 Python 模块拥有。
 - `source_lock.py`、`profile_contract.py` 和 patch applicator 不再分别用正则解释 `KERNEL_PATCHVER`；它们只消费 `kernel_selection.py` 的统一结果。
 - BBRv3 resolver 与 clean-apply checker 不再分别解析 patch 路径；它们只消费 `kernel_patch.py` 的同一规范化 touched-path 集合。
+- `apply-profile-patches.sh` 把 source-lock 中已经解析完成的 `kernel_series` 传给源码兼容执行器；兼容规则不得重新读取 target Makefile、猜测版本或维护第二份 series 映射。
 - `render-profile.sh`、`check-profile-contract.sh`、`resolve-source-lock.sh`、`assemble-release.sh` 和 `verify-release-assets.sh` 都是薄 CLI。
 - build、aggregate 和 release-download 三个边界复用 `verify-firmware-artifacts.sh`。
 - 失败日志属于 diagnostics；正式资产只保留可复核交付及一个结构化 provenance。
@@ -460,6 +462,28 @@ N5105 的 igc VLAN tag insertion/stripping 是首个必须使用该模型的合�
 
 最终 profile contract 在 `make download` 与 `make target/linux/prepare` 之后运行一次，同时检查最终 Kconfig、Lean target patch 和 prepared kernel source。这样没有第二个 checker，也不需要 resolver/build 各维护一套版本特判。
 
+### 14.2 selected-kernel package Kconfig 兼容
+
+Lean master 的 `package/kernel/linux/modules/other.mk` 当前只在 `LINUX_6_12` 条件内声明 `KERNEL_ZRAM_BACKEND_LZ4`，而 6.18 kernel 仍要求先启用 `ZRAM_BACKEND_LZ4` 才能选择 `ZRAM_DEF_COMP_LZ4`。直接删除 R4S 的 backend 合同会让界面配置看似收敛、实际内核却回落到其他压缩后端；替换整份 modules 文件则会把无关 package 和上游漂移一起纳入维护。
+
+该兼容使用一条声明式 `kernel-series-config-guard` 规则，依赖链固定为：
+
+```text
+rendered profile intent
+  -> source-lock selected kernel_series
+  -> apply-profile-patches.sh
+  -> apply-source-compatibility.py
+  -> KernelPackage/zram/config
+```
+
+执行器只在目标 `define` 中定位声明 `KERNEL_ZRAM_BACKEND_LZ4` 的最内层 kernel-series guard，并接受三种状态：
+
+- guard 已包含本轮 `LINUX_<major>_<minor>`：记录 `upstream`，不修改。
+- backend 已由上游无条件声明：记录 `upstream-unconditional`，不修改。
+- backend 仍只受其他明确 kernel series 保护：把本轮 token 幂等追加到同一 guard，并验证后置条件。
+
+缺少声明、存在多个声明、条件结构不闭合或 guard 不是可证明的纯 kernel-series 表达式时必须失败。series token 只能从同一 source-lock 结果生成，规则文件不保存 `6.18.38`、kernel hash 或未来 series 枚举。R4S 继续同时要求 backend/default 两个 LZ4 Kconfig 和实际 `kmod-lib-lz4` package；x86 不因此选择 zram 或增加固件闭包。
+
 ## 15. GitHub Actions 事务
 
 ### 15.0 构建与发布授权边界
@@ -556,6 +580,7 @@ fixture 必须覆盖：
 - feeds 与 source overlay 投影。
 - profile common/device 合并和 seed drift。
 - provider、artifact metadata 与源码兼容。
+- selected-kernel package Kconfig guard 的当前系列原生、自动扩展、重复执行幂等和非规范条件漂移拒绝；R4S 必须在真实 Lean `make defconfig` 后同时保留 LZ4 backend/default 与 `kmod-lib-lz4`。
 - Git format-patch 与 OpenWrt/quilt patch 的等价 touched-path 解析，以及绝对路径、`..`、NUL、空 patch、不配对 header 的拒绝。
 - BBRv3 module-version 状态机、selected 6.18 directory provider 与 ELF metadata。
 - kernel semantic 的 `backport`、`upstream`、missing/partial 三种状态，至少覆盖 6.12 backport 与 6.18 prepared-source 两条 igc VLAN 路径。

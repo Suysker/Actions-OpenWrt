@@ -29,6 +29,14 @@ class KernelSelectionError(RuntimeError):
     """The rendered config and selected Lean target metadata are inconsistent."""
 
 
+def kernel_series_symbol(series: str) -> str:
+    """Return OpenWrt's Kconfig selector for one validated Linux series."""
+
+    if not SERIES_RE.fullmatch(series):
+        raise KernelSelectionError(f"invalid kernel series: {series!r}")
+    return "LINUX_" + series.replace(".", "_")
+
+
 @dataclass(frozen=True)
 class KernelSelection:
     channel: str
