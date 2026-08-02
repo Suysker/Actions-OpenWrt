@@ -22,6 +22,10 @@ done
   echo "::error::OpenWrt target output is missing" >&2
   exit 2
 }
+[ -r "$openwrt/.config" ] || {
+  echo "::error::Final OpenWrt config is missing" >&2
+  exit 2
+}
 
 mapfile -t target_dirs < <(
   find "$openwrt/bin/targets" -mindepth 2 -maxdepth 2 -type d -print |
@@ -41,116 +45,85 @@ mkdir -p "$output"
 while IFS= read -r -d '' file; do
   cp -a "$file" "$output/"
 done < <(find "$target_dir" -maxdepth 1 -type f -print0)
-
 cp "$source_lock" "$output/source-lock.json"
-source_lock_dir="$(cd "$(dirname "$source_lock")" && pwd -P)"
-[ -d "$source_lock_dir/bbr3" ] || {
-  echo "::error::Materialized BBRv3 source-lock directory is missing" >&2
-  exit 1
-}
-tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
-  -C "$source_lock_dir" -cf - bbr3 | gzip -n > "$output/bbr3-patches.tar.gz"
-cp "$artifact_report" "$output/artifact-override-report.json"
-cp "$patch_report" "$output/patch-report.txt"
-cp "$runner_report" "$output/runner-report.txt"
 cp "$openwrt/.config" "$output/openwrt.config"
 
-locked_kernel_version="$(python3 - "$source_lock" "$profile" <<'PY'
-import json, sys
-lock = json.load(open(sys.argv[1], encoding="utf-8"))
-entry = lock.get("profiles", {}).get(sys.argv[2], {})
-print(entry.get("kernel_version", ""))
+locked_kernel_version="$(PYTHONPATH="$repo_root/scripts" python3 - "$source_lock" "$profile" <<'PY'
+import pathlib
+import sys
+
+import source_lock
+
+lock = source_lock.load_lock(pathlib.Path(sys.argv[1]))
+entry = lock["profiles"].get(sys.argv[2])
+if not isinstance(entry, dict) or not entry.get("kernel_version"):
+    raise SystemExit("::error::Profile kernel version is absent from source-lock")
+print(entry["kernel_version"])
 PY
 )"
-[ -n "$locked_kernel_version" ] || {
-  echo "::error::Profile kernel version is absent from source-lock" >&2
-  exit 1
-}
+
+module_records="$(mktemp)"
+gcc_banner="$(mktemp)"
+sums_tmp="$(mktemp)"
+trap 'rm -f "$module_records" "$gcc_banner" "$sums_tmp"' EXIT
 
 mapfile -d '' -t bbr_modules < <(
-  find "$openwrt/build_dir" -type f -name tcp_bbr.ko -print0 |
-    LC_ALL=C sort -z
+  find "$openwrt/build_dir" -type f -name tcp_bbr.ko -print0 | LC_ALL=C sort -z
 )
 [ "${#bbr_modules[@]}" -gt 0 ] || {
   echo "::error::Build tree contains no tcp_bbr.ko" >&2
   exit 1
 }
-bbr_version=""
 bbr_vermagic=""
-declare -a bbr_relative_paths=()
-declare -a bbr_versions=()
-declare -a bbr_vermagics=()
-declare -a bbr_sha256s=()
 for module in "${bbr_modules[@]}"; do
   relative="${module#"$openwrt"/}"
-  if ! version="$(
-    python3 "$repo_root/scripts/kernel_module_metadata.py" "$module" version
-  )"; then
+  version="$(python3 "$repo_root/scripts/kernel_module_metadata.py" "$module" version)" || {
     echo "::error::Cannot verify BBR module metadata: $relative" >&2
     exit 1
-  fi
-  if ! vermagic="$(
-    python3 "$repo_root/scripts/kernel_module_metadata.py" "$module" vermagic
-  )"; then
+  }
+  vermagic="$(python3 "$repo_root/scripts/kernel_module_metadata.py" "$module" vermagic)" || {
     echo "::error::Cannot verify BBR module metadata: $relative" >&2
     exit 1
-  fi
-  [ "$version" = "3" ] || {
+  }
+  [ "$version" = 3 ] || {
     echo "::error::Built $relative reports module version '$version', expected 3" >&2
     exit 1
   }
   case "$vermagic" in
     "$locked_kernel_version"*) ;;
-    *)
-      echo "::error::$relative vermagic '$vermagic' does not start with locked kernel $locked_kernel_version" >&2
-      exit 1
-      ;;
+    *) echo "::error::$relative vermagic '$vermagic' does not start with locked kernel $locked_kernel_version" >&2; exit 1 ;;
   esac
-  if [ -n "$bbr_version" ] && [ "$version" != "$bbr_version" ]; then
-    echo "::error::Built tcp_bbr modules report inconsistent versions" >&2
-    exit 1
-  fi
-  if [ -n "$bbr_vermagic" ] && [ "$vermagic" != "$bbr_vermagic" ]; then
+  [ -z "$bbr_vermagic" ] || [ "$vermagic" = "$bbr_vermagic" ] || {
     echo "::error::Built tcp_bbr modules report inconsistent vermagic" >&2
     exit 1
-  fi
-  bbr_version="$version"
+  }
   bbr_vermagic="$vermagic"
-  bbr_relative_paths+=("$relative")
-  bbr_versions+=("$version")
-  bbr_vermagics+=("$vermagic")
-  bbr_sha256s+=("$(sha256sum "$module" | awk '{print $1}')")
+  printf 'tcp_bbr\t%s\t%s\t%s\t%s\n' \
+    "$relative" "$(sha256sum "$module" | awk '{print $1}')" \
+    "$version" "$vermagic" >> "$module_records"
 done
-[ "$bbr_version" = "3" ] || {
-  echo "::error::Built tcp_bbr.ko module version is '$bbr_version', expected 3" >&2
-  exit 1
-}
 
 mapfile -d '' -t sch_fq_modules < <(
-  find "$openwrt/build_dir" -type f -name sch_fq.ko -print0 |
-    LC_ALL=C sort -z
+  find "$openwrt/build_dir" -type f -name sch_fq.ko -print0 | LC_ALL=C sort -z
 )
 [ "${#sch_fq_modules[@]}" -gt 0 ] || {
   echo "::error::Build tree contains no sch_fq.ko" >&2
   exit 1
 }
-sch_fq_module="${sch_fq_modules[0]}"
-
-{
-  echo "module-report-v2"
-  echo "tcp_bbr_version=$bbr_version"
-  echo "tcp_bbr_vermagic=$bbr_vermagic"
-  echo "tcp_bbr_candidates=${#bbr_modules[@]}"
-  echo "sch_fq_present=1"
-  echo "sch_fq_path=${sch_fq_module#"$openwrt"/}"
-  for index in "${!bbr_modules[@]}"; do
-    printf -v field '%03d' "$((index + 1))"
-    echo "tcp_bbr_${field}_path=${bbr_relative_paths[$index]}"
-    echo "tcp_bbr_${field}_sha256=${bbr_sha256s[$index]}"
-    echo "tcp_bbr_${field}_version=${bbr_versions[$index]}"
-    echo "tcp_bbr_${field}_vermagic=${bbr_vermagics[$index]}"
-  done
-} > "$output/module-report.txt"
+for module in "${sch_fq_modules[@]}"; do
+  relative="${module#"$openwrt"/}"
+  vermagic="$(python3 "$repo_root/scripts/kernel_module_metadata.py" "$module" vermagic)" || {
+    echo "::error::Cannot verify sch_fq module metadata: $relative" >&2
+    exit 1
+  }
+  case "$vermagic" in
+    "$locked_kernel_version"*) ;;
+    *) echo "::error::$relative vermagic '$vermagic' does not start with locked kernel $locked_kernel_version" >&2; exit 1 ;;
+  esac
+  printf 'sch_fq\t%s\t%s\t\t%s\n' \
+    "$relative" "$(sha256sum "$module" | awk '{print $1}')" \
+    "$vermagic" >> "$module_records"
+done
 
 toolchain_gcc="$(find "$openwrt/staging_dir" \( -type f -o -type l \) -path '*/bin/*-openwrt-*-gcc' -print -quit)"
 [ -n "$toolchain_gcc" ] || toolchain_gcc="$(find "$openwrt/staging_dir" \( -type f -o -type l \) -path '*/bin/*-gcc' -print -quit)"
@@ -163,47 +136,132 @@ case "$gcc_version" in
   15.*) ;;
   *) echo "::error::Expected GCC 15, built $gcc_version" >&2; exit 1 ;;
 esac
-{
-  echo "toolchain-report-v1"
-  echo "gcc_path=${toolchain_gcc#"$openwrt"/}"
-  echo "gcc_version=$gcc_version"
-  echo "external_prebuilt_toolchain=0"
-  "$toolchain_gcc" --version
-} > "$output/toolchain-report.txt"
+"$toolchain_gcc" --version > "$gcc_banner"
 
-source_lock_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$source_lock")"
-python3 - "$profile" "$source_lock_digest" "$locked_kernel_version" \
-  "$bbr_version" "$bbr_vermagic" "$gcc_version" "$output/provenance.json" <<'PY'
+source_lock_digest="$(python3 "$repo_root/scripts/source_lock.py" digest "$source_lock")"
+PYTHONPATH="$repo_root/scripts" python3 - \
+  "$profile" "$source_lock" "$source_lock_digest" "$locked_kernel_version" \
+  "${toolchain_gcc#"$openwrt"/}" "$gcc_version" "$gcc_banner" \
+  "$artifact_report" "$patch_report" "$runner_report" "$module_records" \
+  "$output/build-provenance.json" <<'PY'
 import datetime as dt
 import json
+import pathlib
 import sys
 
-profile, lock_digest, kernel, bbr, vermagic, gcc, output = sys.argv[1:]
+import source_lock
+
+(
+    profile,
+    lock_path,
+    lock_digest,
+    kernel_version,
+    gcc_path,
+    gcc_version,
+    gcc_banner_path,
+    artifact_path,
+    patch_path,
+    runner_path,
+    modules_path,
+    output_path,
+) = sys.argv[1:]
+
+
+def text_report(path: str) -> dict[str, object]:
+    lines = pathlib.Path(path).read_text(encoding="utf-8", errors="replace").splitlines()
+    if not lines or "=" in lines[0]:
+        raise SystemExit(f"::error::Structured report has no format header: {path}")
+    values: dict[str, object] = {}
+    blocks: dict[str, list[str]] = {}
+    active: str | None = None
+    for line in lines[1:]:
+        if active is not None:
+            if line == f"{active}_end":
+                active = None
+            else:
+                blocks[active].append(line)
+            continue
+        if line.endswith("_begin") and "=" not in line:
+            active = line.removesuffix("_begin")
+            blocks[active] = []
+            continue
+        key, separator, value = line.partition("=")
+        if not separator:
+            if line:
+                raise SystemExit(f"::error::Invalid structured report line in {path}: {line}")
+            continue
+        previous = values.get(key)
+        if previous is None:
+            values[key] = value
+        elif isinstance(previous, list):
+            previous.append(value)
+        else:
+            values[key] = [previous, value]
+    if active is not None:
+        raise SystemExit(f"::error::Unterminated {active} block in {path}")
+    return {"format": lines[0], "values": values, "blocks": blocks}
+
+
+lock = source_lock.load_lock(pathlib.Path(lock_path))
+if source_lock.lock_digest(lock) != lock_digest:
+    raise SystemExit("::error::Source-lock digest changed during provenance collection")
+artifact_overrides = json.loads(pathlib.Path(artifact_path).read_text(encoding="utf-8"))
+if not isinstance(artifact_overrides, dict):
+    raise SystemExit("::error::Artifact override report is not a JSON object")
+if artifact_overrides.get("source_lock_digest") != lock_digest:
+    raise SystemExit("::error::Artifact override report has the wrong source-lock digest")
+patches = text_report(patch_path)
+runner = text_report(runner_path)
+if patches["format"] != "patch-report-v2":
+    raise SystemExit("::error::Unsupported patch report format")
+if runner["format"] != "runner-report-v1":
+    raise SystemExit("::error::Unsupported runner report format")
+
+modules: dict[str, list[dict[str, str]]] = {"tcp_bbr": [], "sch_fq": []}
+for raw in pathlib.Path(modules_path).read_text(encoding="utf-8").splitlines():
+    kind, path, digest, version, vermagic = raw.split("\t")
+    entry = {"path": path, "sha256": digest, "vermagic": vermagic}
+    if version:
+        entry["version"] = version
+    modules[kind].append(entry)
+
 report = {
     "schema": 1,
     "profile": profile,
+    "generated_at": dt.datetime.now(dt.timezone.utc)
+    .replace(microsecond=0)
+    .isoformat()
+    .replace("+00:00", "Z"),
     "source_lock_digest": lock_digest,
-    "kernel_version": kernel,
-    "tcp_bbr_module_version": bbr,
-    "tcp_bbr_vermagic": vermagic,
-    "sch_fq_module_present": True,
-    "gcc_version": gcc,
-    "generated_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    "kernel_version": kernel_version,
+    "build_inputs": {
+        "artifact_overrides": artifact_overrides,
+        "patches": patches,
+        "runner": runner,
+    },
+    "toolchain": {
+        "gcc_path": gcc_path,
+        "gcc_version": gcc_version,
+        "external_prebuilt": False,
+        "version_banner": pathlib.Path(gcc_banner_path)
+        .read_text(encoding="utf-8", errors="replace")
+        .splitlines(),
+    },
+    "kernel_modules": modules,
 }
-with open(output, "w", encoding="utf-8") as handle:
-    json.dump(report, handle, ensure_ascii=False, indent=2, sort_keys=True)
-    handle.write("\n")
+pathlib.Path(output_path).write_text(
+    json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
 PY
 
-sums_tmp="$(mktemp)"
-trap 'rm -f "$sums_tmp"' EXIT
 (
   cd "$output"
   find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\0' |
-    sort -z |
-    xargs -0 sha256sum > "$sums_tmp"
+    sort -z | xargs -0 sha256sum > "$sums_tmp"
 )
 mv "$sums_tmp" "$output/SHA256SUMS"
 trap - EXIT
+rm -f "$module_records" "$gcc_banner"
 
 echo "Build provenance collected for $profile: $output"

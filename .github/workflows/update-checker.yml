@@ -52,34 +52,13 @@ jobs:
         uses: actions/cache@main
         with:
           path: .source-state
-          key: source-lock-v3-${{ steps.lock.outputs.source_digest }}
+          key: source-lock-v4-${{ steps.lock.outputs.source_digest }}
 
       - name: Show changed immutable inputs
         if: steps.fingerprint.outputs.cache-hit != 'true' || inputs.force_build == true
         shell: bash
         run: |
-          python3 - .source-state/source-lock.json <<'PY'
-          import json, sys
-          lock = json.load(open(sys.argv[1], encoding="utf-8"))
-          print("OpenWrt:", lock["openwrt"]["commit"])
-          print(
-              "Source overlays:",
-              ", ".join(
-                  f"{name}@{entry['commit']}"
-                  for name, entry in sorted(lock["source_overlays"].items())
-              ),
-          )
-          for name, feed in lock["feeds"].items():
-              print(f"Feed {name}: {feed['commit']}")
-          for name, artifact in lock["upstream_artifacts"].items():
-              print(f"Artifact {name}: {artifact.get('version', artifact.get('tag'))}")
-          for profile, entry in lock["profiles"].items():
-              print(f"{profile}: Linux {entry['kernel_version']}")
-          for series, port in lock["kernel_features"]["bbr3"]["ports"].items():
-              print(f"BBRv3 {series}: {port['provider']}@{port['origin_commit']}")
-          for name, action in lock["actions"].items():
-              print(f"Action {name}@main observed at {action['commit']}")
-          PY
+          python3 scripts/source_lock.py summary .source-state/source-lock.json
 
       - name: Dispatch the exact source lock to the dual build
         if: steps.fingerprint.outputs.cache-hit != 'true' || inputs.force_build == true
@@ -100,4 +79,4 @@ jobs:
 
       - name: Report unchanged fingerprint
         if: steps.fingerprint.outputs.cache-hit == 'true' && inputs.force_build != true
-        run: echo 'Lean, feeds, official package overrides, controlled releases, BBRv3 ports, profiles, patches and observed Actions HEADs are unchanged.'
+        run: echo 'Lean, feeds, source overlays, controlled releases, BBRv3 ports, profiles and patches are unchanged.'

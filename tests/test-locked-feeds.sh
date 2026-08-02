@@ -53,7 +53,7 @@ if FEED_LOG="$tmpdir/invalid-reindex.log" \
   echo "feed reindex accepted duplicate origin/order" >&2
   exit 1
 fi
-grep -Fq 'Invalid locked feed origin/order' "$tmpdir/invalid.out"
+grep -Fq 'feed origin custom reuses order 4' "$tmpdir/invalid.out"
 [ ! -s "$tmpdir/invalid-reindex.log" ]
 
 echo "Locked feed rendering tests passed."

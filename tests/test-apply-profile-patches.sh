@@ -67,7 +67,7 @@ for raw in (repo_root / "feeds.custom.conf").read_text(
 origin_commit = "9" * 40
 origin_path = "6.12/bbr3.patch"
 lock = {
-    "schema": 3,
+    "schema": 4,
     "resolved_at": "2026-01-01T00:00:00Z",
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
@@ -111,9 +111,6 @@ lock = {
             "checksum_url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat.sha256sum",
             "checksum_sha256": "0" * 64,
         },
-    },
-    "actions": {
-        "actions/checkout": {"requested_ref": "main", "commit": "5" * 40}
     },
     "profiles": {
         "r4s": {

@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import pathlib
 import re
 import subprocess
@@ -18,9 +17,11 @@ from profile_model import (
     evaluate_package_contract,
     parse_config,
     rendered_config_problems,
+    seed_config_problems,
     write_package_contract_reports,
 )
 from profile_semantics import ProfileSemanticError, check_contract, load_contract
+import source_lock
 
 
 ENVIRONMENT_FIELDS = {
@@ -60,16 +61,6 @@ def resolve_kernel_series(openwrt: pathlib.Path, target: str) -> str:
             f"expected one stable KERNEL_PATCHVER in {target_makefile}, got {matches}"
         )
     return matches[0]
-
-
-def load_source_lock(path: pathlib.Path) -> dict[str, object]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ProfileModelError(f"invalid source lock: {exc}") from exc
-    if not isinstance(value, dict):
-        raise ProfileModelError("source lock must be a JSON object")
-    return value
 
 
 def source_lock_problems(
@@ -166,6 +157,16 @@ def run(args: argparse.Namespace) -> tuple[list[str], list[str]]:
             return checks, problems
 
         diagnostics = args.diagnostics_dir or pathlib.Path(temporary) / "diagnostics"
+        seed_problems = seed_config_problems(rendered.config, final_config_path)
+        diagnostics.mkdir(parents=True, exist_ok=True)
+        (diagnostics / "seed-config.mismatches.txt").write_text(
+            "".join(f"{problem}\n" for problem in seed_problems),
+            encoding="utf-8",
+        )
+        problems.extend(seed_problems)
+        if not seed_problems:
+            checks.append("rendered seed survived final defconfig")
+
         package_contract = evaluate_package_contract(
             final_config_path,
             rendered.required,
@@ -195,7 +196,7 @@ def run(args: argparse.Namespace) -> tuple[list[str], list[str]]:
         if args.source_lock is None:
             problems.append("source lock is required with an OpenWrt tree")
         else:
-            lock = load_source_lock(args.source_lock)
+            lock = source_lock.load_lock(args.source_lock)
             lock_problems = source_lock_problems(
                 lock, args.profile, kernel_series
             )
@@ -237,7 +238,12 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 2
     try:
         checks, problems = run(args)
-    except (OSError, ProfileModelError, ProfileSemanticError) as exc:
+    except (
+        OSError,
+        ProfileModelError,
+        ProfileSemanticError,
+        source_lock.ResolutionError,
+    ) as exc:
         checks, problems = [], [str(exc)]
 
     status = "passed" if not problems else "failed"

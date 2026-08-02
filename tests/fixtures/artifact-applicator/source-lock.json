@@ -1,8 +1,28 @@
 {
-  "schema": 3,
+  "schema": 4,
   "resolved_at": "2026-01-01T00:00:00Z",
   "repository_commit": "1111111111111111111111111111111111111111",
-  "openwrt": {"commit": "2222222222222222222222222222222222222222"},
+  "openwrt": {
+    "url": "https://github.com/coolsnowwolf/lede.git",
+    "requested_ref": "master",
+    "resolved_ref": "refs/heads/master",
+    "commit": "2222222222222222222222222222222222222222"
+  },
+  "source_overlays": {
+    "openwrt-core": {
+      "url": "https://github.com/openwrt/openwrt.git",
+      "requested_ref": "master",
+      "resolved_ref": "refs/heads/master",
+      "commit": "9999999999999999999999999999999999999999",
+      "mappings": [
+        {"kind": "tree", "source": "package/libs/gmp", "target": "package/libs/gmp"},
+        {"kind": "tree", "source": "package/libs/pcre2", "target": "package/libs/pcre2"},
+        {"kind": "tree", "source": "package/system/mtd", "target": "package/system/mtd"},
+        {"kind": "file", "source": "scripts/package-metadata.pl", "target": "scripts/openwrt-sbom/package-metadata.pl"},
+        {"kind": "file", "source": "scripts/metadata.pm", "target": "scripts/openwrt-sbom/metadata.pm"}
+      ]
+    }
+  },
   "feeds": {
     "small": {
       "type": "src-git",
@@ -61,7 +81,12 @@
   },
   "profiles": {
     "r4s": {
-      "kernel_series": "6.12"
+      "kernel_target": "rockchip",
+      "kernel_series": "6.12",
+      "kernel_version": "6.12.100",
+      "kernel_source_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "target_check_regex": "^CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r4s=y$",
+      "image_pattern": "*friendlyarm_nanopi-r4s*squashfs*sysupgrade.img.gz"
     }
   },
   "kernel_features": {
@@ -131,12 +156,6 @@
       "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
       "checksum_url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat.sha256sum",
       "checksum_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
-    }
-  },
-  "actions": {
-    "actions/checkout": {
-      "requested_ref": "main",
-      "commit": "5555555555555555555555555555555555555555"
     }
   },
   "profile_digests": {"r4s": "sha256:6666666666666666666666666666666666666666666666666666666666666666"},

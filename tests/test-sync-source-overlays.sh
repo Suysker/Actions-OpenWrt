@@ -73,7 +73,8 @@ done
 git -C "$openwrt" init -q
 
 lock="$tmpdir/source-lock.json"
-python3 - "$contract" "$commits" "$lock" <<'PY'
+python3 - "$contract" "$commits" "$lock" \
+  "$repo_root/tests/fixtures/artifact-applicator/source-lock.json" <<'PY'
 import json
 import pathlib
 import sys
@@ -83,7 +84,8 @@ commits = dict(
     line.split("\t", 1)
     for line in pathlib.Path(sys.argv[2]).read_text(encoding="utf-8").splitlines()
 )
-lock = {"schema": 3, "source_overlays": {}}
+lock = json.loads(pathlib.Path(sys.argv[4]).read_text(encoding="utf-8"))
+lock["source_overlays"] = {}
 for repository in contract["repositories"]:
     identifier = repository["id"]
     lock["source_overlays"][identifier] = {

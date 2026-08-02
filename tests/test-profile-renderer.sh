@@ -119,6 +119,7 @@ from profile_model import (  # noqa: E402
     ForbiddenRules,
     RequiredRules,
     evaluate_package_contract,
+    seed_config_problems,
     write_package_contract_reports,
 )
 
@@ -146,6 +147,21 @@ assert (fixture / "reports/package-list.txt").read_text(encoding="utf-8") == (
 assert (fixture / "reports/forbidden-packages.detected.txt").read_text(
     encoding="utf-8"
 ) == "forbidden-item\n"
+
+seed = fixture / "seed.config"
+seed.write_text(
+    "CONFIG_KEEP=y\nCONFIG_VALUE=\"seed\"\n# CONFIG_DISABLED is not set\n",
+    encoding="utf-8",
+)
+final = fixture / "final.config"
+final.write_text(
+    "CONFIG_KEEP=y\nCONFIG_VALUE=\"changed\"\nCONFIG_DISABLED=y\n",
+    encoding="utf-8",
+)
+assert seed_config_problems(seed, final) == [
+    'changed selected seed symbol: CONFIG_VALUE expected "seed", got "changed"',
+    "disabled seed symbol became selected: CONFIG_DISABLED got y",
+]
 PY
 
 echo "Profile renderer tests passed."

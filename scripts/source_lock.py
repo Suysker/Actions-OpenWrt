@@ -28,6 +28,7 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 FEED_RE = re.compile(r"^(src-git(?:-full)?)\s+([A-Za-z0-9_.-]+)\s+(\S+)$")
 ACTION_USE_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^@\s]+)@([^\s#]+)")
+SOURCE_LOCK_SCHEMA = 4
 
 
 class ResolutionError(RuntimeError):
@@ -1106,25 +1107,137 @@ def validate_locked_feeds(value: Any, repo_root: pathlib.Path) -> None:
         )
 
 
+def ordered_locked_feeds(lock: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    feeds = lock["feeds"]
+    return sorted(
+        feeds.items(),
+        key=lambda item: (
+            0 if item[1]["origin"] == "custom" else 1,
+            item[1]["order"],
+            item[0],
+        ),
+    )
+
+
+def render_locked_feeds(lock: dict[str, Any]) -> str:
+    lines = ["# Generated from source-lock.json; every feed is immutable."]
+    lines.extend(
+        f"{feed['type']} {name} {feed['url']}^{feed['commit']}"
+        for name, feed in ordered_locked_feeds(lock)
+    )
+    return "\n".join(lines) + "\n"
+
+
+def render_source_overlay_manifest(lock: dict[str, Any]) -> str:
+    lines: list[str] = []
+    for identifier in sorted(lock["source_overlays"]):
+        entry = lock["source_overlays"][identifier]
+        lines.append(
+            "\t".join(("R", identifier, entry["url"], entry["commit"]))
+        )
+        lines.extend(
+            "\t".join(
+                (
+                    "M",
+                    identifier,
+                    mapping["kind"],
+                    mapping["source"],
+                    mapping["target"],
+                )
+            )
+            for mapping in entry["mappings"]
+        )
+    return "\n".join(lines) + "\n"
+
+
+def locked_profile(lock: dict[str, Any], profile: str) -> dict[str, Any]:
+    entry = lock["profiles"].get(profile)
+    if not isinstance(entry, dict):
+        raise ResolutionError(f"profile {profile} is absent from source-lock")
+    return entry
+
+
+def locked_profile_string(
+    lock: dict[str, Any], profile: str, field: str
+) -> str:
+    value = locked_profile(lock, profile).get(field)
+    if not isinstance(value, str) or not value:
+        raise ResolutionError(f"profile {profile} has no locked {field}")
+    return value
+
+
+def render_profile_identity(lock: dict[str, Any], profile: str) -> str:
+    locked_profile(lock, profile)
+    digest = lock["profile_digests"].get(profile)
+    if not isinstance(digest, str):
+        raise ResolutionError(f"profile {profile} has no source-lock digest")
+    return "\n".join(
+        (
+            f"profile_digest={digest.removeprefix('sha256:')}",
+            f"patch_digest={lock['patch_digest'].removeprefix('sha256:')}",
+            f"openwrt_commit={lock['openwrt']['commit']}",
+        )
+    ) + "\n"
+
+
+def render_lock_summary(lock: dict[str, Any]) -> str:
+    lines = [f"OpenWrt: {lock['openwrt']['commit']}"]
+    lines.append(
+        "Source overlays: "
+        + ", ".join(
+            f"{name}@{entry['commit']}"
+            for name, entry in sorted(lock["source_overlays"].items())
+        )
+    )
+    lines.extend(
+        f"Feed {name}: {feed['commit']}"
+        for name, feed in ordered_locked_feeds(lock)
+    )
+    lines.extend(
+        f"Artifact {name}: {artifact.get('version', artifact.get('tag'))}"
+        for name, artifact in sorted(lock["upstream_artifacts"].items())
+    )
+    lines.extend(
+        f"{profile}: Linux {locked_profile_string(lock, profile, 'kernel_version')}"
+        for profile in sorted(lock["profiles"])
+    )
+    lines.extend(
+        f"BBRv3 {series}: {port['provider']}@{port['origin_commit']}"
+        for series, port in sorted(
+            lock["kernel_features"]["bbr3"]["ports"].items()
+        )
+    )
+    return "\n".join(lines) + "\n"
+
+
 def validate_lock(
     lock: dict[str, Any], repo_root: pathlib.Path | None = None
 ) -> None:
     if repo_root is None:
         repo_root = pathlib.Path(__file__).resolve().parent.parent
     geodata_contracts = load_geodata_contracts(repo_root)
-    if lock.get("schema") != 3:
-        raise ResolutionError("source-lock schema must be 3")
+    expected_fields = {
+        "schema",
+        "resolved_at",
+        "repository_commit",
+        "openwrt",
+        "feeds",
+        "source_overlays",
+        "upstream_artifacts",
+        "profiles",
+        "kernel_features",
+        "profile_digests",
+        "patch_digest",
+    }
+    if set(lock) != expected_fields:
+        raise ResolutionError("source-lock fields differ from schema 4")
+    if lock.get("schema") != SOURCE_LOCK_SCHEMA:
+        raise ResolutionError(f"source-lock schema must be {SOURCE_LOCK_SCHEMA}")
     require_sha1(lock.get("repository_commit", ""), "repository commit")
     require_sha1(lock.get("openwrt", {}).get("commit", ""), "OpenWrt commit")
     validate_locked_feeds(lock.get("feeds"), repo_root)
     validate_source_overlays(lock.get("source_overlays"), repo_root)
     validate_upstream_artifacts(lock.get("upstream_artifacts"), geodata_contracts)
-    for name, value in lock.get("actions", {}).items():
-        if not re.fullmatch(r"actions/[A-Za-z0-9_.-]+", name):
-            raise ResolutionError(f"source-lock contains a non-official action: {name}")
-        if not isinstance(value, dict) or value.get("requested_ref") != "main":
-            raise ResolutionError(f"action {name} must track main")
-        require_sha1(value.get("commit", ""), f"observed action {name} HEAD")
     for name, value in lock.get("profile_digests", {}).items():
         require_sha256(value, f"profile {name} digest")
     require_sha256(lock.get("patch_digest", ""), "patch digest")
@@ -1253,19 +1366,12 @@ def validate_action_refs(workflow_paths: Iterable[pathlib.Path]) -> None:
     collect_action_refs(workflow_paths)
 
 
-def resolve_actions(workflow_paths: Iterable[pathlib.Path]) -> dict[str, Any]:
-    actions = collect_action_refs(workflow_paths)
-    return {
-        name: resolve_git_ref(f"https://github.com/{name}.git", ref)
-        for name, ref in actions.items()
-    }
-
-
 def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
     if not profiles:
         raise ResolutionError("at least one profile is required")
     if len(profiles) != len(set(profiles)):
         raise ResolutionError("profile list contains duplicates")
+    validate_action_refs(sorted((repo_root / ".github/workflows").glob("*.yml")))
 
     geodata_contracts = load_geodata_contracts(repo_root)
     environments = {profile: merged_profile_env(repo_root, profile) for profile in profiles}
@@ -1389,7 +1495,6 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         profile: profile_digest(repo_root, profile) for profile in profiles
     }
     patch_digest = tree_digest([repo_root / "patchsets"], repo_root)
-    actions = resolve_actions(sorted((repo_root / ".github/workflows").glob("*.yml")))
     geodata_artifacts = {
         contract["id"]: resolve_geodata(
             repo=contract["repository"],
@@ -1403,7 +1508,7 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         run("git", "rev-parse", "HEAD", cwd=repo_root).strip(), "repository commit"
     )
     lock: dict[str, Any] = {
-        "schema": 3,
+        "schema": SOURCE_LOCK_SCHEMA,
         "resolved_at": dt.datetime.now(dt.timezone.utc)
         .replace(microsecond=0)
         .isoformat()
@@ -1427,7 +1532,6 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         },
         "profile_digests": profile_digests,
         "patch_digest": patch_digest,
-        "actions": actions,
     }
     validate_lock(lock, repo_root)
     return lock
@@ -1453,7 +1557,12 @@ def main(argv: list[str]) -> int:
         print(
             "Usage: source_lock.py resolve <profiles> <output> | "
             "materialize <lock> <output-dir> | digest <lock> | "
-            "compare <old> <new> | validate-actions <workflow>...",
+            "compare <old> <new> | list-feeds <lock> | "
+            "render-feeds <lock> <output> | overlay-manifest <lock> | "
+            "repository-commit <lock> | kernel-versions <lock> | "
+            "profile-names <lock> | profile-identity <lock> <profile> | "
+            "openwrt-source <lock> | summary <lock> | "
+            "validate-actions <workflow>...",
             file=sys.stderr,
         )
         return 2
@@ -1487,6 +1596,57 @@ def main(argv: list[str]) -> int:
             return 0
         print(f"changed {old_digest} -> {new_digest}")
         return 1
+    if command == "list-feeds" and len(argv) == 3:
+        lock = load_lock(pathlib.Path(argv[2]))
+        print("\n".join(name for name, _ in ordered_locked_feeds(lock)))
+        return 0
+    if command == "render-feeds" and len(argv) == 4:
+        lock = load_lock(pathlib.Path(argv[2]))
+        output = pathlib.Path(argv[3])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        temporary = output.with_name(f".{output.name}.source-lock-{os.getpid()}")
+        temporary.write_text(render_locked_feeds(lock), encoding="utf-8", newline="\n")
+        os.replace(temporary, output)
+        return 0
+    if command == "overlay-manifest" and len(argv) == 3:
+        lock = load_lock(pathlib.Path(argv[2]))
+        print(render_source_overlay_manifest(lock), end="")
+        return 0
+    if command == "repository-commit" and len(argv) == 3:
+        print(load_lock(pathlib.Path(argv[2]))["repository_commit"])
+        return 0
+    if command == "kernel-versions" and len(argv) == 3:
+        lock = load_lock(pathlib.Path(argv[2]))
+        print(
+            "\n".join(
+                sorted(
+                    {
+                        locked_profile_string(lock, profile, "kernel_version")
+                        for profile in lock["profiles"]
+                    }
+                )
+            )
+        )
+        return 0
+    if command == "profile-names" and len(argv) == 3:
+        print("\n".join(sorted(load_lock(pathlib.Path(argv[2]))["profiles"])))
+        return 0
+    if command == "profile-identity" and len(argv) == 4:
+        print(
+            render_profile_identity(load_lock(pathlib.Path(argv[2])), argv[3]),
+            end="",
+        )
+        return 0
+    if command == "openwrt-source" and len(argv) == 3:
+        entry = load_lock(pathlib.Path(argv[2]))["openwrt"]
+        url = entry.get("url")
+        if not isinstance(url, str) or not url.startswith("https://"):
+            raise ResolutionError("source-lock OpenWrt URL is invalid")
+        print(f"{url}\n{entry['commit']}")
+        return 0
+    if command == "summary" and len(argv) == 3:
+        print(render_lock_summary(load_lock(pathlib.Path(argv[2]))), end="")
+        return 0
     if command == "validate-actions" and len(argv) >= 3:
         validate_action_refs(pathlib.Path(value) for value in argv[2:])
         print("Official actions/*@main validation passed.")

@@ -285,7 +285,7 @@ def fixture_feeds():
 
 
 base = {
-    "schema": 3,
+    "schema": 4,
     "resolved_at": "2026-01-01T00:00:00Z",
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
@@ -331,13 +331,6 @@ base = {
         },
     },
     "profiles": {"r4s": {"kernel_series": "6.12"}},
-    "actions": {
-        "actions/checkout": {
-            "requested_ref": "main",
-            "resolved_ref": "refs/heads/main",
-            "commit": "5" * 40,
-        }
-    },
     "kernel_features": {
         "bbr3": {
             "algorithm": {

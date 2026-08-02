@@ -22,43 +22,8 @@ openwrt_root="${3:-.}"
   exit 2
 }
 
-manifest="$(PYTHONPATH="$repo_root/scripts" python3 - "$lock_file" "$repo_root" <<'PY'
-import json
-import pathlib
-import sys
-
-import source_lock
-
-lock_path = pathlib.Path(sys.argv[1])
-repo_root = pathlib.Path(sys.argv[2])
-try:
-    lock = json.loads(lock_path.read_text(encoding="utf-8"))
-except (OSError, json.JSONDecodeError) as exc:
-    raise SystemExit(f"::error::Cannot read source lock: {exc}") from exc
-if not isinstance(lock, dict) or lock.get("schema") != 3:
-    raise SystemExit("::error::Unsupported source-lock schema")
-try:
-    source_lock.validate_source_overlays(lock.get("source_overlays"), repo_root)
-except source_lock.ResolutionError as exc:
-    raise SystemExit(f"::error::{exc}") from exc
-
-for identifier in sorted(lock["source_overlays"]):
-    entry = lock["source_overlays"][identifier]
-    print("\t".join(("R", identifier, entry["url"], entry["commit"])))
-    for mapping in entry["mappings"]:
-        print(
-            "\t".join(
-                (
-                    "M",
-                    identifier,
-                    mapping["kind"],
-                    mapping["source"],
-                    mapping["target"],
-                )
-            )
-        )
-PY
-)" || exit
+manifest="$(python3 "$repo_root/scripts/source_lock.py" \
+  overlay-manifest "$lock_file")" || exit
 
 declare -a overlay_ids=()
 declare -A overlay_urls=()

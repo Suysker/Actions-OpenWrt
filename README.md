@@ -21,7 +21,7 @@
                               -> 成功后保留最近 6 个生产 Release
 ```
 
-`prepare` 只解析一次所有浮动输入。两个 build job 随后只使用完整 Git commit、精确 release URL 和 64 位 SHA256，不读取 branch HEAD、GitHub `latest/download`，也不接受 `PKG_HASH:=skip`。失败只保留诊断 artifact 或 draft，不公开半套固件，也不清理已有生产版本。
+`prepare` 只解析一次所有浮动输入。两个 build job 随后只使用完整 Git commit、精确 release URL 和 64 位 SHA256，不读取 branch HEAD、GitHub `latest/download`，也不接受 `PKG_HASH:=skip`。正式路径固定为 source lock、最终 config、固件交付、Release 回下载四层门禁；失败只保留诊断 artifact 或 draft，不公开半套固件，也不清理已有生产版本。
 
 ## 使用方法
 
@@ -128,17 +128,17 @@ bash scripts/resolve-source-lock.sh materialize \
 bash scripts/resolve-source-lock.sh digest /tmp/source-input/source-lock.json
 ```
 
-GitHub build 还会执行两次 `make defconfig` 及 forbidden 子选项收敛、required/forbidden/provider 契约、锁定源码的优化语义合同、定向下载、完整 `make download`、一次并行编译、直接读取全部 `tcp_bbr.ko` ELF `.modinfo` 并验证 version 3/vermagic、一致的 `sch_fq.ko`、GCC 15、镜像 gzip payload 与可选 OpenWrt fwtool metadata/signature trailer、manifest、buildinfo、SBOM 和所有 SHA256 验证。
+GitHub build 还会执行两次 `make defconfig` 及 forbidden 子选项收敛、一次最终 required/forbidden/provider/seed/source contract、完整 `make download`、一次并行编译、直接读取全部 `tcp_bbr.ko` ELF `.modinfo` 并验证 version 3/vermagic、一致的 `sch_fq.ko`、GCC 15、镜像 gzip payload 与可选 OpenWrt fwtool metadata/signature trailer、manifest、buildinfo、SBOM 和所有 SHA256 验证。
 
 ## 产物与迁移说明
 
-每个平台 artifact 包含固件、原始 manifest/buildinfo/SBOM/sha256sums，以及 source lock、物化的 BBRv3 patch archive、artifact override、patch、module、runner、toolchain 和构建 provenance。生产 Release 的通用文件统一加 profile 前缀，并由 `delivery-index.json` 映射回原名；Release 发布前会据此重建两套 artifact 并再次运行同一 verifier。
+每个平台 artifact 包含固件、原始 manifest/buildinfo/SBOM/sha256sums、source lock、最终 `.config`、单一 `build-provenance.json` 和覆盖整个目录的 `SHA256SUMS`。provenance 结构化记录受控 metadata、patch/source compatibility、runner、GCC15 以及全部 BBRv3/sch_fq module 证据。生产 Release 的通用文件统一加 profile 前缀，并由 `delivery-index.json` 映射回原名；assembler 在聚合前验证两套 artifact，Release 发布前再据此重建并运行同一 verifier。
 
 Breaking changes：
 
 - `profiles/x86` 和 workflow 输入 `x86` 已改名为 `x86-n5105-pve`，没有兼容别名。
 - workflow 的 `profile` 输入由静态下拉框改为字符串：填 `all` 或任一 `profiles/<device>` 目录名；matrix、update checker、静态检查和 Release 聚合均自动发现目录，不再维护第二份 profile 名单。
-- source lock 已升级为 schema 3，并以 `source_overlays` 取代单仓库 `official_packages`；旧 lock 需重新运行 resolver，设备配置与 sysupgrade 行为不受影响。
+- source lock 当前为 schema 4；Action 执行身份不属于 source lock，feeds/source overlays 等消费者统一通过 `source_lock.py` 解释。其他 schema 的 incoming lock 需重新运行 resolver，设备配置与 sysupgrade 行为不受影响。
 - 生产 profile 跟随 Lean target 稳定内核；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析最新兼容 BBRv3 port、物化并锁定 commit/hash。
 - GitHub 官方复用 Actions 直接使用 `actions/*@main`，按用户选择追踪最新默认分支；任何上游 runtime/行为不兼容会使门禁直接失败。
 - `diy-part2.sh` 不再做可变 release 查询、`sed` 服务策略或 `PKG_HASH:=skip`；它只应用 source lock 中已经验证的 metadata。

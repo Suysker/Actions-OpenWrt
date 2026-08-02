@@ -15,8 +15,12 @@ mkdir -p \
   "$openwrt/staging_dir/toolchain-fixture/bin" \
   "$lock_dir/bbr3/6.12"
 
-printf 'fixture 1\n' > "$target/fixture.manifest"
-printf 'CONFIG_FIXTURE=y\n' > "$openwrt/.config"
+printf 'fixture-package 1\n' > "$target/fixture.manifest"
+cat > "$openwrt/.config" <<'EOF'
+CONFIG_TARGET_OPTIMIZATION="-O2"
+CONFIG_KEEP=y
+CONFIG_PACKAGE_fixture-package=y
+EOF
 printf 'fixture patch\n' > "$lock_dir/bbr3/6.12/0001-bbrv3.patch"
 cp "$repo_root/tests/fixtures/artifact-applicator/source-lock.json" \
   "$lock_dir/source-lock.json"
@@ -34,6 +38,7 @@ lock["profiles"] = {
         "kernel_target": "fixture",
         "kernel_series": "6.12",
         "kernel_version": "6.12.100",
+        "image_pattern": "fixture-*.img.gz",
     }
 }
 lock["profile_digests"] = {"fixture": "sha256:" + "6" * 64}
@@ -43,9 +48,22 @@ lock["kernel_features"]["bbr3"]["profile_kernel_series"] = {
 path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
 PY
 
-for report in artifact patch runner; do
-  printf '%s report\n' "$report" > "$temporary/$report-report.txt"
-done
+lock_digest="$(python3 "$repo_root/scripts/source_lock.py" \
+  digest "$lock_dir/source-lock.json")"
+printf '{"schema":1,"source_lock_digest":"%s","components":{}}\n' \
+  "$lock_digest" > "$temporary/artifact-report.txt"
+cat > "$temporary/patch-report.txt" <<EOF
+patch-report-v2
+source_lock_digest=$lock_digest
+assertion_BBR_VERSION=3
+assertion_runtime_name=bbr
+assertion_module_version_metadata=retained
+EOF
+cat > "$temporary/runner-report.txt" <<'EOF'
+runner-report-v1
+generated_at=2026-01-01T00:00:00Z
+build_jobs=2
+EOF
 
 cat > "$temporary/module.c" <<'C'
 static const char version[]
@@ -71,25 +89,44 @@ esac
 SH
 chmod +x "$toolchain"
 
+cat > "$target/fixture-config.buildinfo" <<'EOF'
+CONFIG_TARGET_OPTIMIZATION="-O2"
+EOF
+printf 'fixture version\n' > "$target/fixture-version.buildinfo"
+printf 'fixture feeds\n' > "$target/fixture-feeds.buildinfo"
+printf '{"profiles":{}}\n' > "$target/profiles.json"
+printf '{"bomFormat":"CycloneDX","specVersion":"1.4","version":1}\n' \
+  > "$target/fixture.bom.cdx.json"
+python3 - "$target/fixture-sysupgrade.img.gz" <<'PY'
+import gzip
+import os
+import pathlib
+import sys
+
+pathlib.Path(sys.argv[1]).write_bytes(gzip.compress(os.urandom(2 * 1024 * 1024), mtime=0))
+PY
+(
+  cd "$target"
+  find . -maxdepth 1 -type f ! -name sha256sums -printf '%P\0' |
+    sort -z | xargs -0 sha256sum > sha256sums
+)
+
 output="$temporary/output"
 bash "$repo_root/scripts/collect-build-provenance.sh" \
   fixture "$openwrt" "$lock_dir/source-lock.json" \
   "$temporary/artifact-report.txt" "$temporary/patch-report.txt" \
   "$temporary/runner-report.txt" "$output"
 
-grep -Fxq 'module-report-v2' "$output/module-report.txt"
-grep -Fxq 'tcp_bbr_version=3' "$output/module-report.txt"
-grep -Fxq 'tcp_bbr_vermagic=6.12.100 SMP mod_unload' \
-  "$output/module-report.txt"
-grep -Fxq 'tcp_bbr_candidates=2' "$output/module-report.txt"
-grep -Fxq 'tcp_bbr_001_version=3' "$output/module-report.txt"
-grep -Fxq 'tcp_bbr_002_version=3' "$output/module-report.txt"
-grep -Fxq 'gcc_version=15.2.0' "$output/toolchain-report.txt"
+[ ! -e "$output/module-report.txt" ]
+[ ! -e "$output/toolchain-report.txt" ]
+[ ! -e "$output/artifact-override-report.json" ]
+[ ! -e "$output/patch-report.txt" ]
+[ ! -e "$output/runner-report.txt" ]
 (
   cd "$output"
   sha256sum -c SHA256SUMS
 )
-python3 - "$output/provenance.json" <<'PY'
+python3 - "$output/build-provenance.json" <<'PY'
 import json
 import pathlib
 import sys
@@ -97,10 +134,44 @@ import sys
 report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 assert report["profile"] == "fixture"
 assert report["kernel_version"] == "6.12.100"
-assert report["tcp_bbr_module_version"] == "3"
-assert report["tcp_bbr_vermagic"] == "6.12.100 SMP mod_unload"
-assert report["gcc_version"] == "15.2.0"
+assert len(report["kernel_modules"]["tcp_bbr"]) == 2
+assert {entry["version"] for entry in report["kernel_modules"]["tcp_bbr"]} == {"3"}
+assert {entry["vermagic"] for entry in report["kernel_modules"]["tcp_bbr"]} == {
+    "6.12.100 SMP mod_unload"
+}
+assert len(report["kernel_modules"]["sch_fq"]) == 1
+assert report["toolchain"]["gcc_version"] == "15.2.0"
+assert report["toolchain"]["external_prebuilt"] is False
+assert report["build_inputs"]["patches"]["format"] == "patch-report-v2"
+assert report["build_inputs"]["runner"]["format"] == "runner-report-v1"
 PY
+
+profiles="$temporary/profiles"
+mkdir -p "$profiles/common/files" "$profiles/fixture/files"
+cat > "$profiles/common/config.seed" <<'EOF'
+CONFIG_TARGET_OPTIMIZATION="-O2"
+EOF
+cat > "$profiles/common/required-packages.txt" <<'EOF'
+package:fixture-package
+config:CONFIG_KEEP
+EOF
+printf 'exact:forbidden-package\n' > "$profiles/common/forbidden-packages.txt"
+: > "$profiles/common/profile.env"
+: > "$profiles/fixture/config.seed"
+: > "$profiles/fixture/required-packages.txt"
+: > "$profiles/fixture/forbidden-packages.txt"
+printf 'PROFILE_NAME=fixture\n' > "$profiles/fixture/profile.env"
+
+PROFILE_ROOT_OVERRIDE="$profiles" \
+  bash "$repo_root/scripts/verify-firmware-artifacts.sh" \
+  fixture "$output" "$lock_dir/source-lock.json"
+
+release="$temporary/release"
+PROFILE_ROOT_OVERRIDE="$profiles" \
+  bash "$repo_root/scripts/assemble-release.sh" \
+  "$lock_dir/source-lock.json" "$release" "fixture=$output"
+PROFILE_ROOT_OVERRIDE="$profiles" \
+  bash "$repo_root/scripts/verify-release-assets.sh" "$release"
 
 cat > "$temporary/inconsistent.c" <<'C'
 static const char version[]

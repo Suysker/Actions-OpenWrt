@@ -268,6 +268,31 @@ def rendered_config_problems(
     return problems
 
 
+def seed_config_problems(
+    seed_path: pathlib.Path, final_config_path: pathlib.Path
+) -> list[str]:
+    """Report seed selections changed by the final OpenWrt defconfig."""
+
+    expected = parse_config(seed_path)
+    actual = parse_config(final_config_path)
+    problems: list[str] = []
+    for symbol, wanted in expected.items():
+        observed = actual.get(symbol)
+        if wanted == "n":
+            if observed not in {None, "n"}:
+                problems.append(
+                    f"disabled seed symbol became selected: {symbol} got {observed}"
+                )
+        elif observed is None:
+            problems.append(f"missing selected seed symbol: {symbol}={wanted}")
+        elif observed != wanted:
+            problems.append(
+                f"changed selected seed symbol: {symbol} expected {wanted}, "
+                f"got {observed}"
+            )
+    return problems
+
+
 def derive_config(
     seed_path: pathlib.Path,
     required_path: pathlib.Path,

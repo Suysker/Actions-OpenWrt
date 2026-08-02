@@ -18,16 +18,20 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 rendered="$tmpdir/rendered"
 bash "$repo_root/scripts/render-profile.sh" bundle "$profile" "$rendered"
-image_pattern="$(python3 - "$source_lock" "$profile" <<'PY'
-import json, sys
-lock = json.load(open(sys.argv[1], encoding="utf-8"))
-entry = lock.get("profiles", {}).get(sys.argv[2])
-if not isinstance(entry, dict):
-    raise SystemExit(f"::error::Profile {sys.argv[2]} is absent from source-lock")
-print(entry.get("image_pattern", ""))
+
+image_pattern="$(PYTHONPATH="$repo_root/scripts" python3 - "$source_lock" "$profile" <<'PY'
+import pathlib
+import sys
+
+import source_lock
+
+lock = source_lock.load_lock(pathlib.Path(sys.argv[1]))
+entry = lock["profiles"].get(sys.argv[2])
+if not isinstance(entry, dict) or not entry.get("image_pattern"):
+    raise SystemExit(f"::error::Profile {sys.argv[2]} has no locked image pattern")
+print(entry["image_pattern"])
 PY
 )"
-[ -n "$image_pattern" ] || { echo "::error::Locked image pattern is empty" >&2; exit 1; }
 
 mapfile -t images < <(find "$artifact_dir" -maxdepth 1 -type f -name "$image_pattern" -print)
 [ "${#images[@]}" -eq 1 ] || {
@@ -63,11 +67,10 @@ mapfile -t sboms < <(find "$artifact_dir" -maxdepth 1 -type f \( -name '*.bom.cd
 }
 
 for required_file in \
-  source-lock.json artifact-override-report.json patch-report.txt runner-report.txt \
-  bbr3-patches.tar.gz toolchain-report.txt module-report.txt provenance.json \
-  openwrt.config SHA256SUMS sha256sums; do
+  source-lock.json build-provenance.json openwrt.config \
+  SHA256SUMS sha256sums; do
   [ -s "$artifact_dir/$required_file" ] || {
-    echo "::error::Required artifact/provenance file is missing: $required_file" >&2
+    echo "::error::Required artifact file is missing: $required_file" >&2
     exit 1
   }
 done
@@ -78,60 +81,52 @@ done
   sha256sum -c sha256sums
 )
 
-expected_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$source_lock")"
-embedded_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$artifact_dir/source-lock.json")"
+expected_digest="$(python3 "$repo_root/scripts/source_lock.py" digest "$source_lock")"
+embedded_digest="$(python3 "$repo_root/scripts/source_lock.py" digest "$artifact_dir/source-lock.json")"
 [ "$expected_digest" = "$embedded_digest" ] || {
   echo "::error::Embedded source-lock differs from the build lock" >&2
   exit 1
 }
 
-python3 - "$repo_root" "$profile" "$manifest" "$config_buildinfo" \
-  "$artifact_dir" "$expected_digest" "$rendered/config.seed" \
-  "$rendered/required.txt" "$rendered/forbidden.txt" <<'PY'
+PYTHONPATH="$repo_root/scripts" python3 - \
+  "$profile" "$manifest" "$config_buildinfo" "$artifact_dir" \
+  "$expected_digest" "$rendered/config.seed" "$rendered/required.txt" \
+  "$rendered/forbidden.txt" "${sboms[@]}" <<'PY'
 import json
-import hashlib
 import pathlib
 import re
 import sys
-import tarfile
 
-root = pathlib.Path(sys.argv[1])
-profile = sys.argv[2]
-manifest = pathlib.Path(sys.argv[3])
-config_buildinfo = pathlib.Path(sys.argv[4])
-artifacts = pathlib.Path(sys.argv[5])
-expected_digest = sys.argv[6]
-expected_config_path = pathlib.Path(sys.argv[7])
-required_path = pathlib.Path(sys.argv[8])
-forbidden_path = pathlib.Path(sys.argv[9])
+import source_lock
+from profile_model import (
+    load_forbidden,
+    load_required,
+    parse_config,
+    seed_config_problems,
+)
 
-sys.path.insert(0, str(root / "scripts"))
-from profile_model import load_forbidden, load_required, parse_config
+profile = sys.argv[1]
+manifest = pathlib.Path(sys.argv[2])
+config_buildinfo = pathlib.Path(sys.argv[3])
+artifacts = pathlib.Path(sys.argv[4])
+expected_digest = sys.argv[5]
+expected_config_path = pathlib.Path(sys.argv[6])
+required_path = pathlib.Path(sys.argv[7])
+forbidden_path = pathlib.Path(sys.argv[8])
+sbom_paths = [pathlib.Path(value) for value in sys.argv[9:]]
 
-lock = json.loads((artifacts / "source-lock.json").read_text(encoding="utf-8"))
-expected_bbr_patches = {
-    patch["artifact_path"]: patch["sha256"]
-    for port in lock["kernel_features"]["bbr3"]["ports"].values()
-    for patch in port["patches"]
-}
-observed_bbr_patches = {}
-with tarfile.open(artifacts / "bbr3-patches.tar.gz", "r:gz") as archive:
-    for member in archive.getmembers():
-        if member.isdir():
-            continue
-        unsafe = (
-            not member.isfile()
-            or member.name.startswith("/")
-            or ".." in pathlib.PurePosixPath(member.name).parts
-        )
-        if unsafe:
-            raise SystemExit(f"::error::Unsafe BBRv3 archive member: {member.name}")
-        handle = archive.extractfile(member)
-        if handle is None:
-            raise SystemExit(f"::error::Cannot read BBRv3 archive member: {member.name}")
-        observed_bbr_patches[member.name] = hashlib.sha256(handle.read()).hexdigest()
-if observed_bbr_patches != expected_bbr_patches:
-    raise SystemExit("::error::Materialized BBRv3 archive differs from source-lock")
+lock = source_lock.load_lock(artifacts / "source-lock.json")
+if source_lock.lock_digest(lock) != expected_digest:
+    raise SystemExit("::error::Embedded source-lock digest changed during verification")
+locked_profile = lock["profiles"].get(profile)
+if not isinstance(locked_profile, dict):
+    raise SystemExit(f"::error::Profile {profile} is absent from embedded source-lock")
+kernel_version = locked_profile.get("kernel_version")
+
+for sbom_path in sbom_paths:
+    sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
+    if sbom.get("bomFormat") != "CycloneDX":
+        raise SystemExit(f"::error::Invalid CycloneDX SBOM: {sbom_path.name}")
 
 packages = {
     line.split()[0]
@@ -148,50 +143,111 @@ for package in forbidden.exact:
     if package in packages:
         raise SystemExit(f"::error::Manifest contains forbidden package {package}")
 for expression in forbidden.regex:
-    pattern = re.compile(expression)
-    matches = sorted(item for item in packages if pattern.search(item))
+    matches = sorted(item for item in packages if re.search(expression, item))
     if matches:
         raise SystemExit(
-            f"::error::Manifest packages match forbidden {pattern.pattern}: {matches}"
+            f"::error::Manifest packages match forbidden {expression}: {matches}"
         )
 
-config = config_buildinfo.read_text(encoding="utf-8", errors="replace")
+final_config_path = artifacts / "openwrt.config"
+drift = seed_config_problems(expected_config_path, final_config_path)
+if drift:
+    raise SystemExit("::error::Delivered config differs from the profile seed: " + "; ".join(drift))
+final_config = parse_config(final_config_path)
+for symbol in required.configs:
+    if final_config.get(symbol) != "y":
+        raise SystemExit(f"::error::Delivered config misses required {symbol}")
+
 expected_config = parse_config(expected_config_path)
 target_optimization = expected_config.get("CONFIG_TARGET_OPTIMIZATION")
 if target_optimization is None:
     raise SystemExit("::error::Rendered profile has no CONFIG_TARGET_OPTIMIZATION")
 expected_optimization = f"CONFIG_TARGET_OPTIMIZATION={target_optimization}"
-if expected_optimization not in config.splitlines():
+if expected_optimization not in config_buildinfo.read_text(
+    encoding="utf-8", errors="replace"
+).splitlines():
     raise SystemExit(
         f"::error::config.buildinfo misses profile optimization: {expected_optimization}"
     )
 
-override = json.loads((artifacts / "artifact-override-report.json").read_text(encoding="utf-8"))
-provenance = json.loads((artifacts / "provenance.json").read_text(encoding="utf-8"))
-if override.get("source_lock_digest") != expected_digest:
-    raise SystemExit("::error::Artifact override report has the wrong source-lock digest")
+provenance = json.loads(
+    (artifacts / "build-provenance.json").read_text(encoding="utf-8")
+)
+if provenance.get("schema") != 1 or provenance.get("profile") != profile:
+    raise SystemExit("::error::Build provenance identity is invalid")
 if provenance.get("source_lock_digest") != expected_digest:
     raise SystemExit("::error::Build provenance has the wrong source-lock digest")
-if provenance.get("profile") != profile:
-    raise SystemExit("::error::Build provenance has the wrong profile")
-if provenance.get("tcp_bbr_module_version") != "3":
-    raise SystemExit("::error::Build provenance does not prove BBRv3 module version 3")
-if provenance.get("sch_fq_module_present") is not True:
-    raise SystemExit("::error::Build provenance does not prove sch_fq")
+if provenance.get("kernel_version") != kernel_version:
+    raise SystemExit("::error::Build provenance has the wrong kernel version")
 
-patch = (artifacts / "patch-report.txt").read_text(encoding="utf-8")
-for expected in (
-    f"source_lock_digest={expected_digest}",
-    "assertion_BBR_VERSION=3",
-    "assertion_runtime_name=bbr",
-    "assertion_module_version_metadata=retained",
+toolchain = provenance.get("toolchain", {})
+if not str(toolchain.get("gcc_version", "")).startswith("15."):
+    raise SystemExit("::error::Build provenance does not prove GCC 15")
+if toolchain.get("external_prebuilt") is not False:
+    raise SystemExit("::error::Build provenance reports an external prebuilt toolchain")
+
+inputs = provenance.get("build_inputs", {})
+if not isinstance(inputs, dict):
+    raise SystemExit("::error::Build provenance inputs are invalid")
+overrides = inputs.get("artifact_overrides", {})
+if not isinstance(overrides, dict):
+    raise SystemExit("::error::Artifact override evidence is invalid")
+if overrides.get("source_lock_digest") != expected_digest:
+    raise SystemExit("::error::Artifact override evidence has the wrong source-lock digest")
+patches = inputs.get("patches", {})
+if not isinstance(patches, dict):
+    raise SystemExit("::error::Build provenance patch evidence is invalid")
+if patches.get("format") != "patch-report-v2":
+    raise SystemExit("::error::Build provenance has an unsupported patch report")
+patch_values = patches.get("values", {})
+if not isinstance(patch_values, dict):
+    raise SystemExit("::error::Build provenance patch values are invalid")
+for key, expected in (
+    ("source_lock_digest", expected_digest),
+    ("assertion_BBR_VERSION", "3"),
+    ("assertion_runtime_name", "bbr"),
+    ("assertion_module_version_metadata", "retained"),
 ):
-    if expected not in patch:
-        raise SystemExit(f"::error::Patch report misses {expected}")
+    if patch_values.get(key) != expected:
+        raise SystemExit(f"::error::Build provenance patch evidence misses {key}={expected}")
+runner = inputs.get("runner", {})
+if not isinstance(runner, dict) or runner.get("format") != "runner-report-v1":
+    raise SystemExit("::error::Build provenance has an unsupported runner report")
 
-module = (artifacts / "module-report.txt").read_text(encoding="utf-8")
-if "tcp_bbr_version=3" not in module or "sch_fq_present=1" not in module:
-    raise SystemExit("::error::Module report does not prove BBRv3 and sch_fq")
+sha_re = re.compile(r"[0-9a-f]{64}")
+
+
+def validate_module(entry: object, *, versioned: bool) -> str:
+    if not isinstance(entry, dict):
+        raise SystemExit("::error::Build provenance has an invalid module entry")
+    path = str(entry.get("path", ""))
+    pure = pathlib.PurePosixPath(path)
+    if not path or pure.is_absolute() or ".." in pure.parts:
+        raise SystemExit(f"::error::Build provenance has an unsafe module path: {path}")
+    if not sha_re.fullmatch(str(entry.get("sha256", ""))):
+        raise SystemExit(f"::error::Build provenance has an invalid module hash: {path}")
+    if versioned and entry.get("version") != "3":
+        raise SystemExit(f"::error::Build provenance does not prove BBRv3: {path}")
+    vermagic = str(entry.get("vermagic", ""))
+    if not vermagic.startswith(str(kernel_version)):
+        raise SystemExit(f"::error::Module vermagic differs from locked kernel: {path}")
+    return vermagic
+
+
+modules = provenance.get("kernel_modules", {})
+if not isinstance(modules, dict):
+    raise SystemExit("::error::Build provenance module evidence is invalid")
+bbr_modules = modules.get("tcp_bbr", [])
+sch_fq_modules = modules.get("sch_fq", [])
+if not isinstance(bbr_modules, list) or not isinstance(sch_fq_modules, list):
+    raise SystemExit("::error::Build provenance module lists are invalid")
+if not bbr_modules or not sch_fq_modules:
+    raise SystemExit("::error::Build provenance does not contain BBRv3 and sch_fq modules")
+vermagics = {validate_module(entry, versioned=True) for entry in bbr_modules}
+if len(vermagics) != 1:
+    raise SystemExit("::error::Build provenance contains inconsistent BBR module vermagic")
+for entry in sch_fq_modules:
+    validate_module(entry, versioned=False)
 PY
 
 echo "Firmware artifact contract passed for $profile: $(basename "$image")"

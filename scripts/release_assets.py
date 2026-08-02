@@ -12,6 +12,8 @@ import subprocess
 import sys
 import tempfile
 
+import source_lock as source_lock_model
+
 
 class ReleaseError(RuntimeError):
     pass
@@ -37,12 +39,28 @@ def write_sums(directory: pathlib.Path) -> None:
 
 def parse_profile_input(value: str) -> tuple[str, pathlib.Path]:
     profile, separator, directory = value.partition("=")
-    if not separator or not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", profile):
+    if not separator or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", profile):
         raise ReleaseError(f"invalid profile input: {value}")
     path = pathlib.Path(directory).resolve()
     if not path.is_dir():
         raise ReleaseError(f"profile artifact directory is missing: {path}")
     return profile, path
+
+
+def verify_profile_firmware(
+    profile: str, directory: pathlib.Path, lock_path: pathlib.Path
+) -> None:
+    repo_root = pathlib.Path(__file__).resolve().parent.parent
+    subprocess.run(
+        [
+            "bash",
+            str(repo_root / "scripts/verify-firmware-artifacts.sh"),
+            profile,
+            str(directory),
+            str(lock_path),
+        ],
+        check=True,
+    )
 
 
 def assemble(argv: list[str]) -> int:
@@ -57,9 +75,21 @@ def assemble(argv: list[str]) -> int:
         raise ReleaseError("duplicate profile passed to release assembler")
     if not source_lock.is_file():
         raise ReleaseError(f"source lock is missing: {source_lock}")
+    lock = source_lock_model.load_lock(source_lock)
+    locked_profiles = set(lock["profiles"])
+    supplied_profiles = {profile for profile, _ in inputs}
+    if supplied_profiles != locked_profiles:
+        raise ReleaseError(
+            "release profiles differ from source-lock: "
+            f"extra={sorted(supplied_profiles-locked_profiles)}, "
+            f"missing={sorted(locked_profiles-supplied_profiles)}"
+        )
     output.mkdir(parents=True, exist_ok=True)
     if any(output.iterdir()):
         raise ReleaseError(f"release output directory is not empty: {output}")
+
+    for profile, directory in sorted(inputs):
+        verify_profile_firmware(profile, directory, source_lock)
 
     shutil.copy2(source_lock, output / "source-lock.json")
     lock_hash = sha256(source_lock)
@@ -141,24 +171,39 @@ def verify(argv: list[str]) -> int:
 
     index_path = directory / "delivery-index.json"
     source_lock = directory / "source-lock.json"
+    lock = source_lock_model.load_lock(source_lock)
     index = json.loads(index_path.read_text(encoding="utf-8"))
+    if not isinstance(index, dict):
+        raise ReleaseError("delivery index is not a JSON object")
     if index.get("schema") != 1:
         raise ReleaseError("unsupported delivery-index schema")
     if index.get("source_lock_sha256") != sha256(source_lock):
         raise ReleaseError("delivery index source-lock hash mismatch")
 
     indexed_assets: set[str] = set()
-    repo_root = pathlib.Path(__file__).resolve().parent.parent
+    profile_entries = index.get("profiles")
+    if not isinstance(profile_entries, dict):
+        raise ReleaseError("delivery index profiles are invalid")
+    indexed_profiles = set(profile_entries)
+    if indexed_profiles != set(lock["profiles"]):
+        raise ReleaseError("delivery index profiles differ from source-lock")
     with tempfile.TemporaryDirectory() as temporary:
         root = pathlib.Path(temporary)
-        for profile, profile_entry in sorted(index.get("profiles", {}).items()):
-            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", profile):
+        for profile, profile_entry in sorted(profile_entries.items()):
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", profile):
                 raise ReleaseError(f"invalid indexed profile: {profile}")
+            if not isinstance(profile_entry, dict):
+                raise ReleaseError(f"invalid delivery index entry for {profile}")
             reconstructed = root / profile
             reconstructed.mkdir()
             shutil.copy2(source_lock, reconstructed / "source-lock.json")
             original_names: set[str] = set()
-            for entry in profile_entry.get("files", []):
+            entries = profile_entry.get("files")
+            if not isinstance(entries, list) or not entries:
+                raise ReleaseError(f"delivery index has no files for {profile}")
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    raise ReleaseError(f"invalid delivery index file for {profile}")
                 original = entry.get("original_name", "")
                 asset = entry.get("asset_name", "")
                 expected = entry.get("sha256", "")
@@ -175,16 +220,7 @@ def verify(argv: list[str]) -> int:
                     raise ReleaseError(f"indexed asset size changed: {asset}")
                 shutil.copy2(source, reconstructed / original)
 
-            subprocess.run(
-                [
-                    "bash",
-                    str(repo_root / "scripts/verify-firmware-artifacts.sh"),
-                    profile,
-                    str(reconstructed),
-                    str(source_lock),
-                ],
-                check=True,
-            )
+            verify_profile_firmware(profile, reconstructed, source_lock)
 
     expected_indexed = actual_names - {
         "SHA256SUMS",
@@ -210,6 +246,12 @@ def main(argv: list[str]) -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main(sys.argv))
-    except (ReleaseError, OSError, ValueError, subprocess.CalledProcessError) as exc:
+    except (
+        ReleaseError,
+        source_lock_model.ResolutionError,
+        OSError,
+        ValueError,
+        subprocess.CalledProcessError,
+    ) as exc:
         print(f"::error::{exc}", file=sys.stderr)
         raise SystemExit(1)

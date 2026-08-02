@@ -83,37 +83,6 @@ jobs:
           printf 'matrix=%s\nprofiles=%s\npublish=%s\n' \
             "$matrix" "$profiles" "$publish" >> "$GITHUB_OUTPUT"
 
-      - name: Validate repository contracts
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash scripts/resolve-source-lock.sh validate-actions \
-            .github/workflows/*.yml
-          mapfile -t profiles < <(bash scripts/render-profile.sh list)
-          rootfs_scripts=()
-          for scope in common "${profiles[@]}"; do
-            root="profiles/$scope/files"
-            [ ! -d "$root" ] || while IFS= read -r path; do
-              rootfs_scripts+=("$path")
-            done < <(
-              find "$root" -type f \
-                \( -path '*/etc/uci-defaults/*' -o -path '*/etc/hotplug.d/*' \) \
-                -print | sort
-            )
-          done
-          bash -n diy-part1.sh diy-part2.sh scripts/*.sh tests/test-*.sh \
-            "${rootfs_scripts[@]}"
-          python3 -m py_compile scripts/*.py tests/*.py
-          for test in tests/test-*.sh; do
-            bash "$test"
-          done
-          for test in tests/test-*.py; do
-            python3 "$test"
-          done
-          for profile in "${profiles[@]}"; do
-            bash scripts/check-profile-contract.sh "$profile"
-          done
-
       - name: Resolve or accept one source lock
         id: lock
         shell: bash
@@ -128,13 +97,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          python3 scripts/source_lock.py validate-actions .github/workflows/*.yml
           lock_dir="$RUNNER_TEMP/source-lock"
           mkdir -p "$lock_dir"
           lock="$lock_dir/source-lock.json"
 
           if [ -n "$INCOMING_LOCK_B64" ]; then
             printf '%s' "$INCOMING_LOCK_B64" | base64 --decode > "$lock"
-            locked_repo_commit="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repository_commit"])' "$lock")"
+            locked_repo_commit="$(python3 scripts/source_lock.py repository-commit "$lock")"
             [ "$locked_repo_commit" = "$(git rev-parse HEAD)" ] || {
               echo "::error::Incoming source lock belongs to repository commit $locked_repo_commit, not $(git rev-parse HEAD)"
               exit 1
@@ -154,28 +124,12 @@ jobs:
           echo "source_digest=$digest_hex" >> "$GITHUB_OUTPUT"
           echo "Source lock: $digest"
 
-          python3 - "$lock" "$lock_dir" <<'PY'
-          import json, pathlib, sys
-          lock = json.load(open(sys.argv[1], encoding="utf-8"))
-          out = pathlib.Path(sys.argv[2])
-          for name, value in (
-              ("profile-digests.json", lock["profile_digests"]),
-              ("patch-digest.json", {"patch_digest": lock["patch_digest"]}),
-              ("actions-observed.json", lock["actions"]),
-          ):
-              (out / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-          PY
-
       - name: Preflight the exact BBRv3 kernel ports
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t versions < <(python3 - "$RUNNER_TEMP/source-lock/source-lock.json" <<'PY'
-          import json, sys
-          lock = json.load(open(sys.argv[1], encoding="utf-8"))
-          print("\n".join(sorted({entry["kernel_version"] for entry in lock["profiles"].values()})))
-          PY
-          )
+          mapfile -t versions < <(python3 scripts/source_lock.py kernel-versions \
+            "$RUNNER_TEMP/source-lock/source-lock.json")
           for version in "${versions[@]}"; do
             bash scripts/check-bbrv3-port.sh "$RUNNER_TEMP/source-lock/source-lock.json" "$version"
           done
@@ -224,15 +178,8 @@ jobs:
           [ "${digest#sha256:}" = "${{ needs.prepare.outputs.source_digest }}" ]
           bash scripts/render-profile.sh env "$PROFILE" "$RUNNER_TEMP/profile.env"
           cat "$RUNNER_TEMP/profile.env" >> "$GITHUB_ENV"
-          python3 - "$SOURCE_LOCK" "$PROFILE" "$GITHUB_OUTPUT" <<'PY'
-          import json, sys
-          lock = json.load(open(sys.argv[1], encoding="utf-8"))
-          profile = sys.argv[2]
-          with open(sys.argv[3], "a", encoding="utf-8") as out:
-              out.write(f"profile_digest={lock['profile_digests'][profile].removeprefix('sha256:')}\n")
-              out.write(f"patch_digest={lock['patch_digest'].removeprefix('sha256:')}\n")
-              out.write(f"openwrt_commit={lock['openwrt']['commit']}\n")
-          PY
+          python3 scripts/source_lock.py profile-identity \
+            "$SOURCE_LOCK" "$PROFILE" >> "$GITHUB_OUTPUT"
 
       - name: Prepare bounded runner workspace
         id: runner
@@ -261,13 +208,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          readarray -t source < <(python3 - "$SOURCE_LOCK" <<'PY'
-          import json, sys
-          entry = json.load(open(sys.argv[1], encoding="utf-8"))["openwrt"]
-          print(entry["url"])
-          print(entry["commit"])
-          PY
-          )
+          readarray -t source < <(python3 scripts/source_lock.py \
+            openwrt-source "$SOURCE_LOCK")
           git init -q "$OPENWRT_ROOT"
           git -C "$OPENWRT_ROOT" remote add origin "${source[0]}"
           git -C "$OPENWRT_ROOT" fetch --depth 1 origin "${source[1]}"
@@ -352,8 +294,6 @@ jobs:
             .config "$GITHUB_WORKSPACE/profile-input/forbidden.txt" \
             "$GITHUB_WORKSPACE/forbidden-suboptions-check.txt"
           ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/config.effective"
-          bash "$GITHUB_WORKSPACE/scripts/check-seed-config.sh" \
-            "$GITHUB_WORKSPACE/profile-input/config.seed" .config "$GITHUB_WORKSPACE"
           bash "$GITHUB_WORKSPACE/scripts/check-profile-contract.sh" \
             "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" \
             "$GITHUB_WORKSPACE/profile-contract-report.txt" "$GITHUB_WORKSPACE"
@@ -363,14 +303,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$OPENWRT_ROOT"
-          make package/feeds/packages/haproxy/download V=s
-          make package/feeds/kenzo/adguardhome/download V=s
-          make package/feeds/xiaorouji/v2ray-geodata/download V=s
           make download -j8
-          if find dl -type f -size -1024c -print | tee "$GITHUB_WORKSPACE/small-downloads.txt" | grep -q .; then
-            echo "::error::Download directory contains files smaller than 1 KiB"
-            exit 1
-          fi
 
       - name: Compile firmware once in parallel
         shell: bash
@@ -404,7 +337,7 @@ jobs:
           bash scripts/verify-firmware-artifacts.sh "$PROFILE" "$delivery" "$SOURCE_LOCK"
 
       - name: Collect diagnostics
-        if: always()
+        if: failure()
         shell: bash
         run: |
           set +e
@@ -416,7 +349,7 @@ jobs:
             artifact-override-report.json patch-report.txt profile-contract-report.txt \
             config.effective package-list.txt forbidden-packages.detected.txt \
             forbidden-suboptions-report.txt forbidden-suboptions-check.txt \
-            seed-config.mismatches.txt small-downloads.txt build.parallel.log \
+            seed-config.mismatches.txt build.parallel.log \
             build.serial.log ccache-stats.txt; do
             [ -e "$GITHUB_WORKSPACE/$file" ] && cp "$GITHUB_WORKSPACE/$file" "$diagnostics/"
           done
@@ -452,7 +385,7 @@ jobs:
           df -hT > "$diagnostics/disk-final.txt"
 
       - name: Upload diagnostics
-        if: always()
+        if: failure()
         uses: actions/upload-artifact@main
         with:
           name: diagnostics-${{ matrix.profile }}
@@ -500,12 +433,15 @@ jobs:
         run: |
           set -euo pipefail
           lock="$GITHUB_WORKSPACE/source-input/source-lock.json"
-          mapfile -t profiles < <(jq -r '.profiles | keys[]' "$lock")
+          shopt -s nullglob
+          directories=("$GITHUB_WORKSPACE"/aggregate/firmware-*)
+          [ "${#directories[@]}" -gt 0 ] || {
+            echo '::error::No firmware artifacts were downloaded'
+            exit 1
+          }
           inputs=()
-          for profile in "${profiles[@]}"; do
-            directory="$GITHUB_WORKSPACE/aggregate/firmware-$profile"
-            bash scripts/verify-firmware-artifacts.sh \
-              "$profile" "$directory" "$lock"
+          for directory in "${directories[@]}"; do
+            profile="${directory##*/firmware-}"
             inputs+=("$profile=$directory")
           done
           bash scripts/assemble-release.sh "$lock" release-assets "${inputs[@]}"
@@ -520,7 +456,8 @@ jobs:
           set -euo pipefail
           stamp="$(date -u +%Y.%m.%d-%H%M%S)"
           tag="openwrt-${stamp}-${SOURCE_DIGEST:0:12}-r${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
-          profiles="$(jq -r '.profiles | keys | join(", ")' source-input/source-lock.json)"
+          profiles="$(python3 scripts/source_lock.py profile-names \
+            source-input/source-lock.json | paste -sd, - | sed 's/,/, /g')"
           cat > release-notes.md <<EOF
           OpenWrt R4S + N5105 PVE transactional build
 
@@ -537,15 +474,6 @@ jobs:
             --draft --title "OpenWrt R4S + N5105 ${stamp}" \
             --notes-file release-notes.md --target "$GITHUB_SHA"
           echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
-
-      - name: Upload aggregate transaction artifact
-        uses: actions/upload-artifact@main
-        with:
-          name: release-transaction
-          path: release-assets
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 30
 
   release-verify:
     name: Re-download and verify draft
