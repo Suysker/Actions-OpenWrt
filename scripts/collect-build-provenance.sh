@@ -43,7 +43,13 @@ target_dir="${target_dirs[0]}"
 
 mkdir -p "$output"
 while IFS= read -r -d '' file; do
-  cp -a "$file" "$output/"
+  name="$(basename "$file")"
+  [ "$name" != sha256sums ] || name=openwrt-sha256sums
+  [ ! -e "$output/$name" ] || {
+    echo "::error::Normalized delivery file collides: $name" >&2
+    exit 1
+  }
+  cp -a "$file" "$output/$name"
 done < <(find "$target_dir" -maxdepth 1 -type f -print0)
 cp "$source_lock" "$output/source-lock.json"
 cp "$openwrt/.config" "$output/openwrt.config"

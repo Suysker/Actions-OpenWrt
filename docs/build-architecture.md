@@ -95,7 +95,7 @@ repository declarations + floating upstreams
 | `scripts/apply-profile-patches.sh` | 应用仓库 patch、源码兼容规则和本轮 BBRv3 patch stack |
 | `scripts/collect-build-provenance.sh` | 从真实 build tree 生成平台交付目录和 `build-provenance.json` |
 | `scripts/verify-firmware-artifacts.sh` | 平台交付的唯一验收器 |
-| `scripts/release_assets.py` | 双平台聚合、资产命名、delivery index、回下载重建和复验 |
+| `scripts/release_assets.py` | 双平台聚合、专业资产命名、完整包/release index、回下载重建和复验 |
 | `.github/workflows/openwrt-builder.yml` | 编排四层门禁，不解释领域 schema |
 | `.github/workflows/update-checker.yml` | 定时调用同一个 resolver；source digest 变化时派发双平台构建 |
 
@@ -109,6 +109,8 @@ repository declarations + floating upstreams
 ### 5.3 命名与风格
 
 - profile 与文件名使用 kebab-case，例如 `x86-n5105-pve`。
+- Release tag 使用 `openwrt-YYYY.MM.DD-r<run>[.<attempt>]`；用户直接刷写的镜像使用 `openwrt-<profile>-<release-id>-<image-role>.img.gz`。
+- Release 不暴露内部 `<profile>--<file>` 名称。每个 profile 只提供一个主刷写镜像和一个 `-full.tar.gz` 完整可复核包。
 - JSON 字段与 Python 标识符使用 snake_case。
 - report schema 使用明确整数版本；不为旧内部 schema 保留平行解释器。
 - 路径安全检查位于真正执行 clone、copy、remove、archive reconstruction 的边界。
@@ -337,15 +339,15 @@ BBRv3 适用于路由器本机 IPv4 与 IPv6 TCP socket。它不控制 UDP/QUIC�
 
 ## 15. GitHub Actions 事务
 
-### 15.0 分支与发布边界
+### 15.0 构建与发布授权边界
 
-构建选择与 Release 授权是两个独立的职责：
+构建选择与 Release 授权是两个独立职责：
 
-- `prepare / Select profiles` 是唯一决策点：它从 profile 目录发现构建矩阵，并由 GitHub 提供的当前 ref 和默认分支推导 `publish`，不在仓库中枚举分支名。
-- `build` 只依赖选中的 profile 矩阵和 source lock；分支是否允许发布不改变编译、校验或 firmware artifact。
-- `aggregate -> release-verify -> publish-final -> retention` 复用同一个 `publish` 输出，只在选择全部 profile 且当前 ref 是默认分支时运行。
+- `prepare / Select profiles` 只从 profile 目录发现构建矩阵；选择 `all` 就进入完整 Release 事务，不枚举或特判分支名。
+- `build` 只依赖 profile 矩阵和 source lock，不理解发布令牌、tag 或资产命名。
+- Release jobs 由当前 ref 自动选择授权：默认分支使用内置 `GITHUB_TOKEN`；非默认分支使用仓库已有的 `ACTIONS_TRIGGER_PAT`，因为当目标 commit 相对默认分支修改 workflow 时，GitHub 不允许内置 token 创建或更新指向该 commit 的 Release。
 
-依赖图为 `profile 目录 -> prepare 矩阵 -> build artifacts`；只有 `all + default branch -> publish=true` 才从 prepare 分叉进入 Release 事务。因此，任意功能分支都能完整验证双平台编译并下载 Actions artifacts；生产 Release 始终由默认分支上的同一套 workflow 生成。这保证 tag 指向真实构建提交，不需要 PAT，也不会把分支固件错挂到默认分支的 commit。
+依赖图为 `profile 目录 -> prepare 矩阵 -> build artifacts -> aggregate -> draft -> re-download -> publish`。令牌选择只存在于 Release jobs 的 `GH_TOKEN` 环境边界，不新增第二套发布逻辑。tag 始终指向真实构建 commit，不得为规避权限而错挂到默认分支。
 
 ### 15.1 prepare / resolve-lock
 
@@ -376,9 +378,10 @@ diagnostics 只在失败时上传。成功路径只上传 verified firmware arti
 
 - `release_assets.py assemble` 要求输入 profile 集合与 lock 完全一致。
 - assembler 在复制前先对每个平台运行唯一 firmware verifier。
-- 通用文件加 `<profile>--` 前缀，`delivery-index.json` 保存原名、资产名、大小和 SHA256。
+- assembler 从 lock 的 `image_pattern` 找到每个 profile 唯一主刷写镜像，发布为带 release id 的直接下载文件；完整平台交付打包为同名 `-full.tar.gz`。
+- `release-index.json` 只保存 profile、主镜像原名/资产名、完整包名、大小和 SHA256，不向 Release 平铺内部 metadata 文件。
 - 创建 draft Release 后，从 GitHub 重新下载所有资产。
-- verifier 校验顶层 SHA256、index 覆盖范围，重建两套原始目录并再次运行 firmware verifier。
+- verifier 校验顶层 SHA256、index 覆盖范围和 tar 安全边界，从完整包重建两套原始目录，证明直接下载镜像与包内原件字节一致，再复用 firmware verifier。
 - 全部通过后公开同一个 draft。
 - 成功发布后只清理超出最近六个的已发布 `openwrt-*` Release。
 
@@ -389,7 +392,7 @@ diagnostics 只在失败时上传。成功路径只上传 verified firmware arti
 每个平台 delivery 包含：
 
 - 固件 image。
-- OpenWrt 生成的 manifest、config/version/feeds buildinfo、profiles.json、CycloneDX SBOM 和 `sha256sums`。
+- OpenWrt 生成的 manifest、config/version/feeds buildinfo、profiles.json、CycloneDX SBOM 和规范化为 `openwrt-sha256sums` 的上游校验表。
 - 本轮 `source-lock.json`。
 - 最终 `openwrt.config`。
 - 单一 `build-provenance.json`。
@@ -482,8 +485,8 @@ N5105 PVE：
 4. R4S 与 N5105 在同一新 source lock 下都完成 `make world`。
 5. 两个平台都通过最终 config、firmware、manifest、SBOM、GCC15、BBRv3/sch_fq 和 SHA256 验证。
 6. aggregate 只接受 lock 声明的完整 profile 集合。
-7. 默认分支的 draft Release 全部资产回下载后再次通过同一 verifier。
-8. 默认分支上同一 draft 成功公开，cleanup 仅在发布成功后执行；非默认分支的 `all` 以双平台 verified artifacts 作为成功终点。
+7. draft Release 只包含两个专业命名的主刷写镜像、两个完整包和全局 index/lock/SHA256，全部回下载后再次通过同一 verifier。
+8. 任意分支的 `all` 都成功公开指向当次构建 commit 的同一 draft，cleanup 仅在发布成功后执行。
 
 ## 19. 维护规则与风险
 

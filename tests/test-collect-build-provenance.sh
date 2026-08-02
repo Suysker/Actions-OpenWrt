@@ -122,6 +122,8 @@ bash "$repo_root/scripts/collect-build-provenance.sh" \
 [ ! -e "$output/artifact-override-report.json" ]
 [ ! -e "$output/patch-report.txt" ]
 [ ! -e "$output/runner-report.txt" ]
+[ ! -e "$output/sha256sums" ]
+[ -s "$output/openwrt-sha256sums" ]
 (
   cd "$output"
   sha256sum -c SHA256SUMS
@@ -169,7 +171,10 @@ PROFILE_ROOT_OVERRIDE="$profiles" \
 release="$temporary/release"
 PROFILE_ROOT_OVERRIDE="$profiles" \
   bash "$repo_root/scripts/assemble-release.sh" \
-  "$lock_dir/source-lock.json" "$release" "fixture=$output"
+  "$lock_dir/source-lock.json" "$release" 2026.08.02-r1 "fixture=$output"
+[ -s "$release/openwrt-fixture-2026.08.02-r1-sysupgrade.img.gz" ]
+[ -s "$release/openwrt-fixture-2026.08.02-r1-full.tar.gz" ]
+[ "$(find "$release" -maxdepth 1 -type f | wc -l)" -eq 5 ]
 PROFILE_ROOT_OVERRIDE="$profiles" \
   bash "$repo_root/scripts/verify-release-assets.sh" "$release"
 

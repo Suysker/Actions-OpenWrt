@@ -56,8 +56,6 @@ jobs:
         env:
           MANUAL_PROFILE: ${{ inputs.profile }}
           DISPATCH_PROFILE: ${{ github.event.client_payload.profile }}
-          CURRENT_REF: ${{ github.ref_name }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           requested="${MANUAL_PROFILE:-${DISPATCH_PROFILE:-all}}"
@@ -68,6 +66,7 @@ jobs:
           }
           if [ "$requested" = all ]; then
             selected=("${available[@]}")
+            publish=true
           else
             selected=()
             for profile in "${available[@]}"; do
@@ -77,12 +76,7 @@ jobs:
               echo "::error::Unknown profile: $requested"
               exit 2
             }
-          fi
-          publish=false
-          if [ "$requested" = all ] && [ "$CURRENT_REF" = "$DEFAULT_BRANCH" ]; then
-            publish=true
-          elif [ "$requested" = all ]; then
-            echo "::notice::Selected all profiles on $CURRENT_REF; production Release is restricted to $DEFAULT_BRANCH"
+            publish=false
           fi
           matrix="$(printf '%s\n' "${selected[@]}" | jq -R . | jq -sc '{profile: .}')"
           profiles="$(IFS=,; echo "${selected[*]}")"
@@ -434,8 +428,20 @@ jobs:
           pattern: firmware-*
           path: aggregate
 
+      - name: Name Release
+        id: naming
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_id="$(date -u +%Y.%m.%d)-r${GITHUB_RUN_NUMBER}"
+          [ "$GITHUB_RUN_ATTEMPT" -eq 1 ] || release_id="${release_id}.${GITHUB_RUN_ATTEMPT}"
+          printf 'release_id=%s\nrelease_tag=openwrt-%s\n' \
+            "$release_id" "$release_id" >> "$GITHUB_OUTPUT"
+
       - name: Re-verify and assemble collision-free assets
         shell: bash
+        env:
+          RELEASE_ID: ${{ steps.naming.outputs.release_id }}
         run: |
           set -euo pipefail
           lock="$GITHUB_WORKSPACE/source-input/source-lock.json"
@@ -450,18 +456,23 @@ jobs:
             profile="${directory##*/firmware-}"
             inputs+=("$profile=$directory")
           done
-          bash scripts/assemble-release.sh "$lock" release-assets "${inputs[@]}"
+          bash scripts/assemble-release.sh \
+            "$lock" release-assets "$RELEASE_ID" "${inputs[@]}"
 
       - name: Create draft Release
         id: release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.ref_name == github.event.repository.default_branch && github.token || secrets.ACTIONS_TRIGGER_PAT }}
           SOURCE_DIGEST: ${{ needs.prepare.outputs.source_digest }}
+          RELEASE_ID: ${{ steps.naming.outputs.release_id }}
+          RELEASE_TAG: ${{ steps.naming.outputs.release_tag }}
         run: |
           set -euo pipefail
-          stamp="$(date -u +%Y.%m.%d-%H%M%S)"
-          tag="openwrt-${stamp}-${SOURCE_DIGEST:0:12}-r${GITHUB_RUN_NUMBER}.${GITHUB_RUN_ATTEMPT}"
+          [ -n "$GH_TOKEN" ] || {
+            echo '::error::ACTIONS_TRIGGER_PAT is required to publish a workflow-changing non-default branch'
+            exit 1
+          }
           profiles="$(python3 scripts/source_lock.py profile-names \
             source-input/source-lock.json | paste -sd, - | sed 's/,/, /g')"
           cat > release-notes.md <<EOF
@@ -476,10 +487,10 @@ jobs:
           The Release remains a draft until every uploaded asset is downloaded again,
           hash-checked, reconstructed, and passed through the firmware verifier.
           EOF
-          gh release create "$tag" release-assets/* \
-            --draft --title "OpenWrt R4S + N5105 ${stamp}" \
+          gh release create "$RELEASE_TAG" release-assets/* \
+            --draft --title "OpenWrt ${RELEASE_ID} · R4S + N5105 PVE" \
             --notes-file release-notes.md --target "$GITHUB_SHA"
-          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
   release-verify:
     name: Re-download and verify draft
@@ -495,7 +506,7 @@ jobs:
       - name: Download every draft asset
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.ref_name == github.event.repository.default_branch && github.token || secrets.ACTIONS_TRIGGER_PAT }}
           RELEASE_TAG: ${{ needs.aggregate.outputs.release_tag }}
         run: gh release download "$RELEASE_TAG" --dir downloaded-release
 
@@ -514,7 +525,7 @@ jobs:
       - name: Publish the same verified draft
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.ref_name == github.event.repository.default_branch && github.token || secrets.ACTIONS_TRIGGER_PAT }}
           RELEASE_TAG: ${{ needs.aggregate.outputs.release_tag }}
         run: gh release edit "$RELEASE_TAG" --draft=false
 
@@ -529,7 +540,7 @@ jobs:
       - name: Delete only excess published OpenWrt Releases
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.ref_name == github.event.repository.default_branch && github.token || secrets.ACTIONS_TRIGGER_PAT }}
         run: |
           set -euo pipefail
           mapfile -t old_tags < <(

@@ -27,12 +27,14 @@
 
 1. 在 GitHub Actions 中选择 `OpenWrt Builder`。
 2. 点击 `Run workflow`。
-3. 正式发布在默认分支选择 `profile=all`。其他分支的 `all` 仍会构建两个平台，但只提供 Actions artifacts；`r4s` 或 `x86-n5105-pve` 也只构建对应 artifact。
+3. 任意分支选择 `profile=all` 都会构建两个平台并发布正式 Release；`r4s` 或 `x86-n5105-pve` 只构建对应 Actions artifact。
 4. 通常把四个版本输入留空，resolver 会选择：
    - 仍受支持的最高 HAProxy LTS 分支最新 patch release；
    - 最新 AdGuardHome stable；
    - `Loyalsoldier/geoip` 的最新 `geoip.dat` 和 `Loyalsoldier/v2ray-rules-dat` 的最新 `geosite.dat`。
 5. 需要故障回滚时才填写精确 `haproxy_version`、`adguardhome_version`、`geoip_tag` 或 `geosite_tag`；resolver 仍会获取并验证真实 hash。
+
+默认分支发布使用 GitHub 内置 token。当非默认分支相对默认分支修改了 workflow，GitHub API 要求一个同时具有仓库与 workflow 写权限的凭据；workflow 只在 Release jobs 中使用仓库已配置的 `ACTIONS_TRIGGER_PAT`。
 
 定时 `Update Checker` 使用同一个 resolver。Lean、任一 feed、四类上游产物、profile 或 patch digest 变化时，它会把已经解析好的完整 source lock 交给一次双平台构建，避免 update checker 与 builder 各自维护一套版本查询逻辑。
 
@@ -132,7 +134,9 @@ GitHub build 还会执行两次 `make defconfig` 及 forbidden 子选项收敛�
 
 ## 产物与迁移说明
 
-每个平台 artifact 包含固件、原始 manifest/buildinfo/SBOM/sha256sums、source lock、最终 `.config`、单一 `build-provenance.json` 和覆盖整个目录的 `SHA256SUMS`。provenance 结构化记录受控 metadata、patch/source compatibility、runner、GCC15 以及全部 BBRv3/sch_fq module 证据。生产 Release 的通用文件统一加 profile 前缀，并由 `delivery-index.json` 映射回原名；assembler 在聚合前验证两套 artifact，Release 发布前再据此重建并运行同一 verifier。
+每个平台 artifact 包含固件、原始 manifest/buildinfo/SBOM、规范化的 `openwrt-sha256sums`、source lock、最终 `.config`、单一 `build-provenance.json` 和覆盖整个目录的 `SHA256SUMS`。不再保留只有大小写区别、会使 Windows 解压冲突的文件名。
+
+正式 Release 只展示两个可直接刷写的专业命名镜像、每平台一个 `-full.tar.gz` 完整包，以及 `release-index.json`、`source-lock.json` 和顶层 `SHA256SUMS`。完整包保留全部 provenance 和原始产物；发布前会从 GitHub 回下载并重建两套交付目录，证明直接镜像与包内原件一致后复用同一 verifier。
 
 Breaking changes：
 
@@ -142,7 +146,7 @@ Breaking changes：
 - 生产 profile 跟随 Lean target 稳定内核；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析最新兼容 BBRv3 port、物化并锁定 commit/hash。
 - GitHub 官方复用 Actions 直接使用 `actions/*@main`，按用户选择追踪最新默认分支；任何上游 runtime/行为不兼容会使门禁直接失败。
 - `diy-part2.sh` 不再做可变 release 查询、`sed` 服务策略或 `PKG_HASH:=skip`；它只应用 source lock 中已经验证的 metadata。
-- 正式 Release 必须由默认分支上同一 source lock 下两台设备同时通过；非默认分支和单 profile 仅提供 Actions artifact。
+- 正式 Release 必须由同一 source lock 下两台设备同时通过；任意分支的 `all` 都发布，单 profile 仅提供 Actions artifact。
 
 ## Credits
 

@@ -68,7 +68,7 @@ mapfile -t sboms < <(find "$artifact_dir" -maxdepth 1 -type f \( -name '*.bom.cd
 
 for required_file in \
   source-lock.json build-provenance.json openwrt.config \
-  SHA256SUMS sha256sums; do
+  SHA256SUMS openwrt-sha256sums; do
   [ -s "$artifact_dir/$required_file" ] || {
     echo "::error::Required artifact file is missing: $required_file" >&2
     exit 1
@@ -78,7 +78,7 @@ done
 (
   cd "$artifact_dir"
   sha256sum -c SHA256SUMS
-  sha256sum -c sha256sums
+  sha256sum -c openwrt-sha256sums
 )
 
 expected_digest="$(python3 "$repo_root/scripts/source_lock.py" digest "$source_lock")"
