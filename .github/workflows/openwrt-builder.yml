@@ -482,7 +482,7 @@ jobs:
           - Repository commit: ${GITHUB_SHA}
           - Profiles: ${profiles}
           - Firewall: firewall3 / iptables
-          - Kernel policy: target stable kernel with BBRv3 module version 3
+          - Kernel policy: target stable kernel
 
           The Release remains a draft until every uploaded asset is downloaded again,
           hash-checked, reconstructed, and passed through the firmware verifier.
