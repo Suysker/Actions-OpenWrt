@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 usage() {
   echo "Usage: $0 <source-lock.json> <kernel-version>" >&2
 }
@@ -50,6 +52,21 @@ PY
   exit 1
 }
 
+mapfile -t module_version_contract < <(
+  python3 "$repo_root/scripts/bbr3_module_version.py" \
+    describe "$repo_root" "$kernel_series"
+)
+[ "${#module_version_contract[@]}" -eq 7 ] || {
+  echo "::error::Could not load the BBRv3 module-version compatibility contract" >&2
+  exit 1
+}
+module_version_patch="${module_version_contract[0]}"
+module_version_source="${module_version_contract[3]}"
+provider_module_version_state="$(
+  python3 "$repo_root/scripts/bbr3_module_version.py" \
+    provider-state "$repo_root" "$kernel_series" "${locked_patches[@]}"
+)"
+
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 linux_dir="$tmpdir/linux"
@@ -58,6 +75,8 @@ paths="$tmpdir/paths"
 for patch in "${locked_patches[@]}"; do
   sed -n 's#^diff --git a/\([^ ]*\) b/.*#\1#p' "$patch"
 done | sort -u > "$paths"
+printf '%s\n' "$module_version_source" >> "$paths"
+sort -u -o "$paths" "$paths"
 [ -s "$paths" ] || {
   echo "::error::BBRv3 patches do not contain git paths" >&2
   exit 1
@@ -73,9 +92,34 @@ for patch in "${locked_patches[@]}"; do
   git -C "$linux_dir" apply "$patch"
 done
 
+source_module_version_state="$(
+  python3 "$repo_root/scripts/bbr3_module_version.py" \
+    source-state "$repo_root" "$kernel_series" "$linux_dir"
+)"
+case "$provider_module_version_state:$source_module_version_state" in
+  compatibility-required:stripped)
+    git -C "$linux_dir" apply --check "$module_version_patch"
+    git -C "$linux_dir" apply "$module_version_patch"
+    module_version_status="compatibility-applied"
+    ;;
+  upstream:retained)
+    module_version_status="upstream"
+    ;;
+  *)
+    echo "::error::Provider/source module-version states disagree: $provider_module_version_state/$source_module_version_state" >&2
+    exit 1
+    ;;
+esac
+[ "$(
+  python3 "$repo_root/scripts/bbr3_module_version.py" \
+    source-state "$repo_root" "$kernel_series" "$linux_dir"
+)" = retained ] || {
+  echo "::error::BBRv3 final source does not retain module version metadata" >&2
+  exit 1
+}
+
 grep -Fq '#define BBR_VERSION' "${locked_patches[@]}"
 grep -Eq '^\+.*BBR_VERSION[[:space:]]+3$' "${locked_patches[@]}"
-grep -Fq 'MODULE_VERSION(__stringify(BBR_VERSION));' "${locked_patches[@]}"
 grep -Eq '^[ +].*\.name[[:space:]]*=[[:space:]]*"bbr"' "${locked_patches[@]}"
 
-echo "BBRv3 port (${#locked_patches[@]} patch(es)) applies cleanly to pristine Linux v$kernel_version and preserves module/runtime identity."
+echo "BBRv3 port (${#locked_patches[@]} provider patch(es), module-version=$module_version_status) applies cleanly to pristine Linux v$kernel_version and preserves module/runtime identity."

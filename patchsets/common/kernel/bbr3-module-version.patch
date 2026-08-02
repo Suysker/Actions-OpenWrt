@@ -1,0 +1,22 @@
+From: Actions-OpenWrt <noreply@localhost>
+Subject: [PATCH] tcp: bbr: retain BBRv3 module version metadata
+
+Lean enables CONFIG_MODULE_STRIPPED, which intentionally turns
+MODULE_VERSION() into a disabled MODULE_INFO_STRIP() declaration. BBRv3's
+generation must remain observable at build time and through the module sysfs
+version attribute, so emit this one identity field directly. Other module
+metadata remains stripped.
+
+---
+ net/ipv4/tcp_bbr.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/net/ipv4/tcp_bbr.c b/net/ipv4/tcp_bbr.c
+--- a/net/ipv4/tcp_bbr.c
++++ b/net/ipv4/tcp_bbr.c
+@@ -2404,4 +2404,4 @@ MODULE_AUTHOR("David Morley <morleyd@google.com>");
+ 
+ MODULE_LICENSE("Dual BSD/GPL");
+ MODULE_DESCRIPTION("TCP BBR (Bottleneck Bandwidth and RTT)");
+-MODULE_VERSION(__stringify(BBR_VERSION));
++MODULE_INFO(version, __stringify(BBR_VERSION));

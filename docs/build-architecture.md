@@ -294,12 +294,14 @@ patchsets/
     series
     kernel/
       bbr3-sources.json
+      bbr3-module-version.patch
   r4s/
     series
   x86-n5105-pve/
     series
 
 scripts/
+  bbr3_module_version.py
   render-profile.sh
   profile_model.py
   profile_contract.py
@@ -334,6 +336,7 @@ tests/
   test-profile-semantics.py
   test-kernel-module-metadata.py
   test-collect-build-provenance.sh
+  test-bbr3-module-version.py
 
 docs/
   build-architecture.md
@@ -470,7 +473,7 @@ apply-source-lock-artifacts.sh <openwrt-root> <source-lock.json> <report-json>
 3. 禁止运行第三方 build script，也禁止在 apply 阶段 clone 远程仓库。
 4. 仓库 common/device patch 先对 OpenWrt tree 执行 `git apply --check`；BBRv3 patch 已在 prepare 对精确 kernel 顺序 clean-apply，build 再验证物化字节的 SHA 后安装进锁定的 OpenWrt kernel patch stack。
 5. patch 应用失败立即终止；不存在 `skipped-conflict`。
-6. BBRv3 后置断言至少确认 `BBR_VERSION=3`、拥塞控制运行名为 `bbr`、`MODULE_VERSION` 存在，并确认 Lean 的 `KernelPackage/tcp-bbr` 定义未被整体替换。
+6. BBRv3 后置断言至少确认 `BBR_VERSION=3`、拥塞控制运行名为 `bbr`、最终源码以不受 Lean module-strip 影响的 `MODULE_INFO(version, ...)` 保留代际，并确认 Lean 的 `KernelPackage/tcp-bbr` 定义未被整体替换；成品仍须直接读取 `.modinfo` 证明 `version=3`。
 7. 每个其他 patch 也必须声明后置检查，证明预期行为确实存在。
 8. `profiles/common/package-compatibility.json` 和 `scripts/apply-package-compatibility.py` 构成唯一的非内核 recipe 兼容接口。manifest 负责稳定声明，执行器负责路径安全、唯一锚点、幂等变换、上游等价语义识别和后置断言；`apply-profile-patches.sh` 只编排它，不为具体 package 写分支。`libsepol`/`wol` 复用同一种语言标准操作，`tcping` 使用 target make 环境操作；它们只是规则实例，不是三套实现。
 9. `small/tcping` 是 PassWall 的硬依赖，不能从精简 allowlist 中删除。其 current recipe 自定义了 `Build/Compile`，却未继承 OpenWrt 默认 `MAKE_FLAGS` 中的 `$(TARGET_CONFIGURE_OPTS)`；规则只在该唯一 make invocation 后插入这一稳定工具链契约，保留最新 feed 的 source URL、版本与 hash。它不切换到旧 tcping provider，也不直接写入 target triple。
@@ -557,18 +560,26 @@ verify-firmware-artifacts.sh <profile> <target-directory> <source-lock.json>
 - BBRv3 algorithm commit、kernel port hash 与实际 `tcp_bbr.ko` 的 module version `3` 一致
 - manifest 包含 `kmod-sched`，构建树包含 `sch_fq.ko`
 
-`run 30721359572` 已证明 R4S 与 N5105 的完整 `make world` 同时成功，并且同一 `995-bbrv3.patch` 在两个 Linux 6.12.100 tree 都实际应用、`tcp_bbr.ko` 都实际打包；随后旧 verifier 报 `version=missing`。旧实现用 host `modinfo` 读取 cross-built ELF，并以 `2>/dev/null || true` 同时吞掉“命令不可用、ELF 解析失败、字段缺失”三类状态，空字符串不能证明 module 真正缺少 metadata。
+`run 30721359572` 已证明 R4S 与 N5105 的完整 `make world` 同时成功，并且同一 `995-bbrv3.patch` 在两个 Linux 6.12.100 tree 都实际应用、`tcp_bbr.ko` 都实际打包；随后旧 verifier 报 `version=missing`。旧实现用 host `modinfo` 并以 `2>/dev/null || true` 吞掉具体状态，所以当时只能证明 verifier 没有得到值。
 
-模块身份验收因此划分为三个单一职责模块：
+`run 30725235385` 的 R4S 与 N5105 `make world` 再次全部成功；新增诊断归档了两边内核目录、pkgdir、ipkg、rootfs 中的真实 module。架构无关读取器能从每份 `tcp_bbr.ko` 正确读取对应的 `vermagic=6.12.100 ...`，但两边所有候选都确实没有 `version`。根因是 Lean 通用 `204-module_strip.patch` 与 `CONFIG_MODULE_STRIPPED=y`：它把 loadable module 的 `MODULE_VERSION(x)` 重定义为 `MODULE_INFO_STRIP(version, x)`，进而变成禁用声明。这是 Lean 有意保留的体积优化，不应为了一个模块关闭全局 strip；provider patch 中出现 `MODULE_VERSION` 也不能作为成品身份的充分证据。
 
-1. `scripts/kernel_module_metadata.py` 是唯一 ELF `.modinfo` 读取接口。它调用已作为构建前置依赖的 GNU `readelf --wide --string-dump=.modinfo`，在 `LC_ALL=C` 且禁用 debuginfod 的确定环境中解析 `key=value`，拒绝 readelf 非零、section 缺失、字段缺失和同名字段冲突；不依赖 host kernel release、module install tree 或目标架构。
-2. `collect-build-provenance.sh` 只发现并排序本 profile 的全部 `tcp_bbr.ko` 候选，逐个调用同一读取器，要求每个候选的 `version=3`、`vermagic` 以 source-lock 的 kernel version 开头且候选之间完全一致，再生成 module report。任何读取失败必须保留模块相对路径和原始 readelf 诊断，不再转换成模糊的 `missing`。
-3. workflow diagnostics 从 `build_dir` 归档 `tcp_bbr.ko` 与 `sch_fq.ko` 候选；即使 provenance 失败，下一轮也能直接复核真实 ELF，不需要重新编译才能看样本。`tests/test-kernel-module-metadata.py` 构造 x86_64 与可用时的 AArch64 `.modinfo` ELF object，覆盖 version/vermagic、字段缺失、冲突和无 section；`tests/test-collect-build-provenance.sh` 复用现有 source-lock fixture，覆盖多候选发现、GCC15、报告/hash 生成以及候选 vermagic 不一致时拒绝。workflow 按 `tests/test-*.sh`/`tests/test-*.py` 自动发现测试，不为新增测试维护第二份清单。
+BBRv3 module 身份因此划分为四个单一职责模块：
+
+1. `bbr3-sources.json` 的 `module_version_compatibility` 是唯一静态合同，声明 repository patch、按本轮 series 展开的 hack 目录、安装名、最终 kernel source 路径、Lean 会吞掉的宏和必须保留的宏；不写 kernel version、provider commit 或当轮 hash。
+2. `scripts/bbr3_module_version.py` 是该合同的唯一解释器。它验证路径边界和模板，按 provider patch 的新增行把状态严格分为 `compatibility-required` 或 `upstream`，并对最终 kernel source 判定 `stripped`/`retained`；重复、两者并存或都不存在均失败。未来 provider 已直接使用保留宏时自动走 `upstream`，不应用多余补丁。
+3. `check-bbrv3-port.sh` 在动态 port 对精确 Linux source 顺序 clean-apply 后消费同一状态；需要时再 clean-apply repository companion，并断言最终 source 只含 `MODULE_INFO(version, __stringify(BBR_VERSION))`。`apply-profile-patches.sh` 对同一批物化 provider patch 得出同一状态，需要时把 companion 安装为同 series 的 `hack-*` 后置 patch；记录 repository patch SHA256，但不修改 source-lock 中的上游字节/hash。直接 `MODULE_INFO` 对 module 等价于未 strip 内核中的 `MODULE_VERSION`，同时不会恢复其他 module 的 author/description/firmware 等 metadata。
+4. `scripts/kernel_module_metadata.py` 是唯一 ELF `.modinfo` 读取接口；`collect-build-provenance.sh` 排序并逐一验证全部 `tcp_bbr.ko` 的 `version=3`、锁定 kernel vermagic 和候选一致性。workflow diagnostics 归档真实 module 与原始读取结果，读取失败不再转换成模糊的 `missing`。
+
+`tests/test-bbr3-module-version.py` 覆盖 compatibility-required、upstream 与歧义拒绝；profile patch fixture 覆盖 companion 安装和幂等；`tests/test-kernel-module-metadata.py` 构造 x86_64 与可用时的 AArch64 ELF；`tests/test-collect-build-provenance.sh` 覆盖多候选、GCC15、报告/hash 与不一致拒绝。workflow 自动发现全部 `tests/test-*.sh`/`tests/test-*.py`，不维护第二份测试清单。
 
 依赖方向固定为：
 
 ```text
-Linux MODULE_VERSION -> tcp_bbr.ko:.modinfo
+provider BBRv3 patch + Lean MODULE_STRIPPED
+  -> bbr3_module_version.py
+  -> exact-Linux preflight + OpenWrt companion patch stack
+  -> tcp_bbr.ko:.modinfo(version=3)
   -> kernel_module_metadata.py -> collect-build-provenance.sh
   -> module-report/provenance -> verify-firmware-artifacts.sh
   -> draft/re-download/publish
@@ -731,7 +742,7 @@ CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy=y
 # CONFIG_PACKAGE_luci-app-passwall_Nftables_Transparent_Proxy is not set
 ```
 
-两个设备都由 common 显式选择并要求 `kmod-tcp-bbr`，但该包在版本化 common 内核 patch 应用后承载的是 BBRv3。这里有意保持 Lean 的 package symbol、`tcp_bbr.ko` 模块名和 `bbr` 运行名不变：Google BBRv3 本身仍注册为 `bbr`，TurboACC 也已经依赖 `kmod-tcp-bbr`。算法代际不从包名猜测，而由 source-lock、patch hash、源码中的 `BBR_VERSION=3` 和模块 `version=3` 共同证明；因此不需要 fork `netsupport.mk` 或修改 TurboACC 依赖。
+两个设备都由 common 显式选择并要求 `kmod-tcp-bbr`，但该包在版本化 common 内核 patch 应用后承载的是 BBRv3。这里有意保持 Lean 的 package symbol、`tcp_bbr.ko` 模块名和 `bbr` 运行名不变：Google BBRv3 本身仍注册为 `bbr`，TurboACC 也已经依赖 `kmod-tcp-bbr`。算法代际不从包名猜测，而由 source-lock、patch hash、源码中的 `BBR_VERSION=3` 和模块 `version=3` 共同证明；因此不需要 fork `netsupport.mk` 或修改 TurboACC 依赖。Lean 的全局 module-strip 仍然保留；若本轮 provider 使用会被它吞掉的 `MODULE_VERSION`，统一解释器只在该 provider 后安装一行 companion，把 BBRv3 的版本字段改为直接 `MODULE_INFO`。provider 已自行保留该字段时自动跳过，绝不恢复其他模块元数据。
 
 当前审计快照中，R4S 与 x86 target 的默认稳定内核均为 Linux 6.12。审计时 Google `v3` HEAD 为 `90210de4...`，CachyOS 当前 `6.12/0002-bbr3.patch` 的内容 SHA256 为 `15d1563...`；这两个值只证明设计基线，生产不永久固定它们。动态映射规则为：
 
@@ -742,6 +753,7 @@ CONFIG_PACKAGE_luci-app-passwall_Iptables_Transparent_Proxy=y
 | 多文件适配 provider | 前者不提供当前 series 时，每轮解析 `sbwml/r4s_build_script@master`，查找 `openwrt/patch/kernel-<series>/bbr3/*.patch` 并保持文件顺序；不执行仓库脚本 |
 | 规范化 SHA256 | resolver 对每个 commit-addressed patch 计算；hash、URL、artifact path 和安装顺序进入本轮 source-lock digest |
 | 双平台适用性 | prepare 对精确 `kernel_version` 顺序 clean-apply；两个 profile 同 series 时复用同一物化 port，任一 hunk 不兼容即不启动 matrix |
+| module-strip 兼容 | 按 provider patch 的唯一语义自动判定；需要时安装 repository companion，最终源码与成品必须保留且只报告 version `3` |
 | 运行时身份 | `/sys/module/tcp_bbr/version` 必须为 `3`；available/current CCA 仍显示 `bbr` |
 
 sbwml 的公开 Linux 6.18 实现同样表明 BBRv3 需要一组 TCP-core patch，而不是单独拷贝 `tcp_bbr.c`。它作为动态多文件 provider，使 Lean 稳定内核切换到受支持 series 时不需要先把 patch 复制进本仓库；但每轮仍必须完成精确内核 apply 和双平台门禁，不能把 6.18 patch 套到 6.12，也不能为了 BBRv3 提前启用 testing kernel：
@@ -1593,7 +1605,7 @@ done < <(bash scripts/render-profile.sh list)
 - custom `packages` 同名覆盖精确指向 `openwrt/packages@master`，incoming lock 若改回 Lean packages 或改变任一 custom feed 身份必须失败
 - provider fixture 证明预期 Makefile/package 保留、已声明冲突目录删除、未声明目录不受影响，且 source-lock 中每个 feed 都被重建索引
 - forbidden suboption fixture 证明只清理 exact-forbidden 父包的选中子项、二次执行幂等，并保留允许 package 的子选项
-- BBRv3 每个物化 patch SHA256 与 source-lock/origin 一致；按序对精确 Linux 源码 clean-apply，且 `BBR_VERSION=3`、运行名 `bbr`、`MODULE_VERSION` 等后置断言通过
+- BBRv3 每个上游物化 patch SHA256 与 source-lock/origin 一致；按序对精确 Linux 源码 clean-apply，并由同一合同判定 provider 的 module-version 状态；最终源码为 `BBR_VERSION=3`、运行名 `bbr`、直接保留 `MODULE_INFO(version, ...)`，repository companion 的路径/hash/安装状态写入 patch report
 - ELF metadata fixture 证明 x86_64 与可用时的 AArch64 object 都能直接读取 `.modinfo`；provenance fixture 证明全部 `tcp_bbr.ko` 候选逐个验证，任一 version/vermagic 缺失或不一致均失败
 - `90-common-network` fixture 证明 DHCP `start=32`、`limit=232`、LAN DHCPv6/NDP relay 和 WAN relay master
 - 优化合同 fixture 证明 common/R4S/N5105 rootfs 语义完整，且 source rule 按动态 kernel series 展开、按同一文件的内容语义匹配；实际 build tree 还必须命中 TurboACC flow runtime、R4S affinity/接口映射/schedutil/crypto/OPP 与 N5105 VirtIO/EEE/VLAN 语义
@@ -1903,7 +1915,7 @@ openwrt-<YYYY.MM.DD-HHMMSS>-<lede-short-sha>
 | release 元数据或资产不完整 | HAProxy 官方 SHA256、GitHub asset digest、发布的 checksum 交叉校验；任一缺失或不一致即失败 |
 | AdGuardHome 设备自更新破坏 OPKG/回滚 | 保持非特权 jail 和 `--no-check-update`；由 update checker 触发新的可验证双平台固件 |
 | master 提升稳定内核后 provider 尚无对应 BBRv3 port | resolver 按策略查询受信任单文件/多文件 provider，并在 matrix 前明确失败；provider 发布兼容 port 后下一轮自动吸收并执行 clean-apply，不切 testing kernel、不回退算法代际 |
-| BBRv3 patch 已应用但模块身份不符 | 源码后置断言、build 直接读取每个 ELF `.modinfo` 的 `version=3`/`vermagic`、真机 `/sys/module/tcp_bbr/version=3` 三重门禁；读取失败保留原始诊断与模块样本 |
+| BBRv3 patch 已应用但模块身份不符 | 保留 Lean 全局 module-strip，只按唯一合同为需要的 provider 后置一行 direct `MODULE_INFO` companion；再以源码后置断言、build 读取每个 ELF `.modinfo` 的 `version=3`/`vermagic`、真机 `/sys/module/tcp_bbr/version=3` 三重门禁，读取失败保留原始诊断与模块样本 |
 | `default_qdisc=fq` 但固件缺少 provider | common 显式选择 `kmod-sched`；build 检查 `sch_fq.ko`，真机检查 `/sys/module/sch_fq` 与实际 qdisc |
 | GCC 15 对 package 暴露新错误 | 当前实际通用 package 闭包整体消费锁定的 OpenWrt 官方 packages master；官方 core 缺口走窄 overlay，只有 canonical 来源也未解决时才评审语义变换；不下载外部 toolchain、不用 GCC13 自动 fallback |
 | N5105 guest 未暴露 CPU flags | PVE CPU 必须为 `host`，启动前检查 `/proc/cpuinfo` |

@@ -78,6 +78,8 @@ AdGuardHome、MosDNS、SmartDNS、dnsmasq-full 和 PassWall 都会被编译，�
 
 BBRv3 同时适用于本机 IPv4 TCP 与 IPv6 TCP。Linux 的 IPv6 TCP socket 同样进入通用 `tcp_init_sock()` 和 `tcp_congestion_ops`，所以源码位于 `net/ipv4/tcp_bbr.c` 不代表“只支持 IPv4”。它不接管 UDP/QUIC，也不会改变普通 NAT 转发连接在 LAN 客户端/远端服务器上的端到端拥塞控制；PassWall/Xray 在路由器本机建立的 TCP outbound 才会直接使用它。
 
+Lean 会通过 `CONFIG_MODULE_STRIPPED` 剥离普通 `MODULE_VERSION`。构建保留这项全局体积优化，只在本轮 BBRv3 provider 仍使用该宏时自动安装一个单行 companion，以 direct `MODULE_INFO` 保留 BBRv3 的 `version=3`；若上游已经处理则自动跳过。随后对构建树中每一份 `tcp_bbr.ko` 直接读取 `.modinfo`，不会仅凭源码文本判定成功。
+
 ## N5105 PVE 前置条件
 
 推荐 VM 合同：

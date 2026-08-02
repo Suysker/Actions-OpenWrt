@@ -435,9 +435,11 @@ jobs:
               relative_modules+=("$relative")
               {
                 echo "module=$relative"
-                printf 'version='
-                python3 "$GITHUB_WORKSPACE/scripts/kernel_module_metadata.py" \
-                  "$module" version || true
+                if [ "$(basename "$module")" = tcp_bbr.ko ]; then
+                  printf 'version='
+                  python3 "$GITHUB_WORKSPACE/scripts/kernel_module_metadata.py" \
+                    "$module" version || true
+                fi
                 printf 'vermagic='
                 python3 "$GITHUB_WORKSPACE/scripts/kernel_module_metadata.py" \
                   "$module" vermagic || true

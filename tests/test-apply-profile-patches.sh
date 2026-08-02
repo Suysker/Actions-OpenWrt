@@ -193,6 +193,11 @@ bash "$repo_root/scripts/apply-profile-patches.sh" \
   r4s "$openwrt" "$lock_dir/source-lock.json" "$report"
 
 [ "$(sha256sum "$openwrt/target/linux/generic/hack-6.12/995-bbrv3.patch" | awk '{print $1}')" = "$patch_sha" ]
+module_version_patch="$openwrt/target/linux/generic/hack-6.12/996-bbrv3-module-version.patch"
+[ -f "$module_version_patch" ]
+[ "$(sha256sum "$module_version_patch" | awk '{print $1}')" = "$(
+  sha256sum "$repo_root/patchsets/common/kernel/bbr3-module-version.patch" | awk '{print $1}'
+)" ]
 grep -Fxq 'TARGET_CFLAGS += -std=gnu17' "$openwrt/package/libs/libsepol/Makefile"
 if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/package/libs/libsepol/Makefile"; then
   echo "libsepol compatibility fixture unexpectedly depends on version/hash fields" >&2
@@ -217,7 +222,11 @@ grep -qx 'compatibility_tcping_target_make_environment_status=inserted' "$report
 grep -qx 'compatibility_tcping_target_make_environment_detail=$(TARGET_CONFIGURE_OPTS)' "$report"
 grep -qx 'bbrv3_provider=fixture-single' "$report"
 grep -qx 'bbrv3_patch_count=1' "$report"
+grep -qx 'patch-report-v2' "$report"
+grep -qx 'bbrv3_module_version_status=compatibility-installed' "$report"
+grep -qx 'bbrv3_module_version_destination=target/linux/generic/hack-6.12/996-bbrv3-module-version.patch' "$report"
 grep -qx 'assertion_BBR_VERSION=3' "$report"
+grep -qx 'assertion_module_version_metadata=retained' "$report"
 
 second_report="$tmpdir/patch-report-second.txt"
 bash "$repo_root/scripts/apply-profile-patches.sh" \
@@ -228,6 +237,36 @@ bash "$repo_root/scripts/apply-profile-patches.sh" \
 grep -qx 'compatibility_libsepol_gnu17_status=upstream' "$second_report"
 grep -qx 'compatibility_wol_gnu17_status=upstream' "$second_report"
 grep -qx 'compatibility_tcping_target_make_environment_status=upstream' "$second_report"
+grep -qx 'bbrv3_module_version_status=compatibility-present' "$second_report"
+
+# Prove that a future provider retaining the field itself does not require a
+# second profile-specific rule or leave the repository companion installed.
+rm "$openwrt/target/linux/generic/hack-6.12/995-bbrv3.patch" \
+  "$openwrt/target/linux/generic/hack-6.12/996-bbrv3-module-version.patch"
+sed -i \
+  's/MODULE_VERSION(__stringify(BBR_VERSION));/MODULE_INFO(version, __stringify(BBR_VERSION));/' \
+  "$lock_dir/bbr3/6.12/0001-bbrv3.patch"
+python3 - "$lock_dir/source-lock.json" \
+  "$lock_dir/bbr3/6.12/0001-bbrv3.patch" <<'PY'
+import hashlib
+import json
+import sys
+
+lock_path, patch_path = sys.argv[1:]
+with open(lock_path, encoding="utf-8") as handle:
+    lock = json.load(handle)
+with open(patch_path, "rb") as handle:
+    digest = hashlib.sha256(handle.read()).hexdigest()
+lock["kernel_features"]["bbr3"]["ports"]["6.12"]["patches"][0]["sha256"] = digest
+with open(lock_path, "w", encoding="utf-8") as handle:
+    json.dump(lock, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+upstream_module_report="$tmpdir/patch-report-upstream-module.txt"
+bash "$repo_root/scripts/apply-profile-patches.sh" \
+  r4s "$openwrt" "$lock_dir/source-lock.json" "$upstream_module_report"
+[ ! -e "$openwrt/target/linux/generic/hack-6.12/996-bbrv3-module-version.patch" ]
+grep -qx 'bbrv3_module_version_status=upstream' "$upstream_module_report"
 
 cat > "$openwrt/feeds/small/tcping/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk

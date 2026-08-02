@@ -184,7 +184,7 @@ for expected in (
     f"source_lock_digest={expected_digest}",
     "assertion_BBR_VERSION=3",
     "assertion_runtime_name=bbr",
-    "assertion_MODULE_VERSION=present",
+    "assertion_module_version_metadata=retained",
 ):
     if expected not in patch:
         raise SystemExit(f"::error::Patch report misses {expected}")

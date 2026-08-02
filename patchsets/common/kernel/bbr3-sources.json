@@ -1,10 +1,18 @@
 {
-  "schema": 1,
+  "schema": 2,
   "algorithm": {
     "url": "https://github.com/google/bbr.git",
     "ref": "v3",
     "module_version": 3,
     "runtime_name": "bbr"
+  },
+  "module_version_compatibility": {
+    "patch": "bbr3-module-version.patch",
+    "install_directory_template": "hack-{series}",
+    "install_name": "996-bbrv3-module-version.patch",
+    "source_path": "net/ipv4/tcp_bbr.c",
+    "stripped_macro": "MODULE_VERSION(__stringify(BBR_VERSION));",
+    "retained_macro": "MODULE_INFO(version, __stringify(BBR_VERSION));"
   },
   "providers": [
     {

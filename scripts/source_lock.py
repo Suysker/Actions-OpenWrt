@@ -18,6 +18,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Iterable
 
+from bbr3_module_version import BBRModuleVersionError, validate_policy_compatibility
+
 from profile_model import ProfileModelError, ProfileRepository
 
 
@@ -696,14 +698,18 @@ def load_bbr_policy(repo_root: pathlib.Path) -> dict[str, Any]:
         policy = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ResolutionError(f"cannot read BBRv3 source policy {path}: {exc}") from exc
-    if not isinstance(policy, dict) or policy.get("schema") != 1:
-        raise ResolutionError("BBRv3 source policy schema must be 1")
+    if not isinstance(policy, dict) or policy.get("schema") != 2:
+        raise ResolutionError("BBRv3 source policy schema must be 2")
     algorithm = policy.get("algorithm")
     providers = policy.get("providers")
     if not isinstance(algorithm, dict) or not isinstance(providers, list) or not providers:
         raise ResolutionError("BBRv3 source policy needs algorithm and providers")
     if algorithm.get("module_version") != 3 or algorithm.get("runtime_name") != "bbr":
         raise ResolutionError("BBRv3 algorithm identity policy is invalid")
+    try:
+        validate_policy_compatibility(repo_root, policy)
+    except BBRModuleVersionError as exc:
+        raise ResolutionError(str(exc)) from exc
     return policy
 
 

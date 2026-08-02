@@ -92,6 +92,19 @@ origin_commit="${locked[6]}"
 install_directory="${locked[7]}"
 source_lock_dir="$(dirname "$source_lock")"
 
+mapfile -t module_version_contract < <(
+  python3 "$repo_root/scripts/bbr3_module_version.py" \
+    describe "$repo_root" "$kernel_series"
+)
+[ "${#module_version_contract[@]}" -eq 7 ] || {
+  echo "::error::Could not load the BBRv3 module-version compatibility contract" >&2
+  exit 1
+}
+module_version_patch="${module_version_contract[0]}"
+module_version_install_directory="${module_version_contract[1]}"
+module_version_install_name="${module_version_contract[2]}"
+module_version_sha256="${module_version_contract[6]}"
+
 mapfile -t locked_patches < <(python3 - "$source_lock" "$kernel_series" <<'PY'
 import json
 import pathlib
@@ -165,7 +178,7 @@ apply_series() {
 
 source_lock_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$source_lock")"
 {
-  echo "patch-report-v1"
+  echo "patch-report-v2"
   echo "profile=$profile"
   echo "source_lock_digest=$source_lock_digest"
   echo "kernel_target=$kernel_target"
@@ -224,8 +237,49 @@ for record in "${locked_patches[@]}"; do
   } >> "$report"
 done
 
+provider_module_version_state="$(
+  python3 "$repo_root/scripts/bbr3_module_version.py" \
+    provider-state "$repo_root" "$kernel_series" "${installed_bbr_patches[@]}"
+)"
+module_version_destination_dir="$openwrt_dir/target/linux/generic/$module_version_install_directory"
+[ -d "$module_version_destination_dir" ] || {
+  echo "::error::OpenWrt module-version patch directory is missing: $module_version_install_directory" >&2
+  exit 1
+}
+module_version_destination="$module_version_destination_dir/$module_version_install_name"
+case "$provider_module_version_state" in
+  compatibility-required)
+    if [ -e "$module_version_destination" ]; then
+      [ "$(sha256sum "$module_version_destination" | awk '{print $1}')" = "$module_version_sha256" ] || {
+        echo "::error::Refusing to overwrite a different BBRv3 module-version patch" >&2
+        exit 1
+      }
+      module_version_status="compatibility-present"
+    else
+      install -m 0644 "$module_version_patch" "$module_version_destination"
+      module_version_status="compatibility-installed"
+    fi
+    ;;
+  upstream)
+    [ ! -e "$module_version_destination" ] || {
+      echo "::error::Provider already retains module version but a companion patch is present" >&2
+      exit 1
+    }
+    module_version_status="upstream"
+    ;;
+  *)
+    echo "::error::Unsupported BBRv3 module-version state: $provider_module_version_state" >&2
+    exit 1
+    ;;
+esac
+{
+  echo "bbrv3_module_version_status=$module_version_status"
+  echo "bbrv3_module_version_patch=${module_version_patch#"$repo_root"/}"
+  echo "bbrv3_module_version_patch_sha256=$module_version_sha256"
+  echo "bbrv3_module_version_destination=${module_version_destination#"$openwrt_dir"/}"
+} >> "$report"
+
 grep -Eq '^\+.*BBR_VERSION[[:space:]]+3$' "${installed_bbr_patches[@]}"
-grep -Fq 'MODULE_VERSION(__stringify(BBR_VERSION));' "${installed_bbr_patches[@]}"
 grep -Eq '^[ +].*\.name[[:space:]]*=[[:space:]]*"bbr"' "${installed_bbr_patches[@]}"
 
 netsupport="$openwrt_dir/package/kernel/linux/modules/netsupport.mk"
@@ -245,7 +299,7 @@ grep -Fq 'sch_fq' "$netsupport"
   echo "bbrv3_install_directory=target/linux/generic/$install_directory"
   echo "assertion_BBR_VERSION=3"
   echo "assertion_runtime_name=bbr"
-  echo "assertion_MODULE_VERSION=present"
+  echo "assertion_module_version_metadata=retained"
   echo "assertion_kernel_package=tcp-bbr"
   echo "assertion_qdisc_provider=kmod-sched:sch_fq"
 } >> "$report"
