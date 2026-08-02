@@ -2,6 +2,7 @@
 
 ## OpenWrt 配置与构建架构
 
+- 文档连续性规则：简化 checker、报告或 workflow 时，只能删除重复实现，不能同步压缩掉产品决策、设备假设、模块接口、配置所有权、上游取舍、回滚和风险依据。对 `build-architecture.md` 做大幅重写前，必须审计从初始方案到当前实现的完整历史，将内容逐项分类为“仍有效、已演进、已被明确替代”；以机器可读声明保存精确清单，以架构文档保存原因和边界，不能用代码更短代替知识完整。
 - 根因模式：feed 漂移后，虚拟 provider、内嵌翻译和历史包别名可能不再对应真实 Kconfig symbol。预防规则：所有 profile 必须经过 `make defconfig` 后的 seed drift、required 和 forbidden 三类校验；修正包契约，不放宽检查。
 - 根因模式：失败后的 `!cancelled()` 发布/清理步骤会制造次生错误，甚至影响有效 Release。预防规则：构建、产物验证、发布和清理使用严格的成功依赖；只有新 Release 已创建并重新校验后才能清理旧版本。
 - 架构规则：用户明确要求继续追踪 Lean `master`、保留 firewall3/iptables，并一次性交付 R4S 与 N5105 优化。后续不得在未获得新产品决策前改为官方稳定分支、firewall4/nftables 或分阶段上线。

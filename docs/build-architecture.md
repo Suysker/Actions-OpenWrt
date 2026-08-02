@@ -1,16 +1,24 @@
-# R4S 与 N5105 OpenWrt 构建架构
+# Lean master + firewall3/iptables 的 R4S 与 N5105 OpenWrt 构建架构
 
 ## 1. 文档状态
 
-- 状态：设计修订 5；Linux 6.18 通道代码与本地 fixture 已完成，双平台 CI/Release 验收中
-- 日期：2026-08-02
+- 状态：设计修订 6；完成历史方案整合，Linux 6.18 通道代码与本地 fixture 已完成，双平台 CI/Release 验收中
+- 日期：2026-08-03
 - 源码基线：Lean `master`
 - 防火墙：firewall3 / iptables
 - 工具链：Lean 原生 GCC 15
 - 目标设备：NanoPi R4S、N5105 PVE
 - 正式交付：同一次 source lock 下的双平台固件与一个经回下载复验的 Release
 
-本文是唯一实施方案，不另建 Linux 6.18、R4S 或 N5105 的平行设计。当前 6.12 构建与发布闭环已经由 GitHub Actions 完整事务证明；整个仓库目标是否完成，以第 17 节的自动验证和第 18 节完成条件为准。
+本文是产品决策、模块边界、实施约束和验收口径的唯一架构方案，不另建 Linux 6.18、R4S 或 N5105 的平行设计。具体 package、Kconfig、provider 和动态版本仍由第 3 节列出的机器可读声明拥有；本文解释这些声明为何存在、如何协作，以及哪些边界不得被后续“简化”丢失。当前 6.12 构建与发布闭环已经由 GitHub Actions 完整事务证明；整个仓库目标是否完成，以第 17 节的自动验证和第 18 节完成条件为准。
+
+本文的事实分为三层：
+
+1. **稳定产品合同**：Lean master、firewall3/iptables、GCC15、精简应用集合、双平台同轮发布，以及 R4S/N5105 各自硬件定位。除非用户明确改变需求，否则不得自行重新选择。
+2. **动态构建事实**：Lean/feed commit、selected kernel point release、受控 release 版本、BBRv3 port 和 SHA256。它们每轮解析并进入 `source-lock.json`，不能抄进仓库成为永久锁。
+3. **审计依据**：某次上游 commit、历史 Action run 和 Release，用于说明设计曾在什么代码上核验；它们不是 production resolver 的输入。
+
+修订 6 重新整合了最初方案中仍然有效的产品决策、设备假设、模块接口、package/driver 取舍、sbwml 审计、CI 事务、回滚和风险说明；所有表述均以当前 `master` 实现为准，不恢复已被新架构替代的旧 schema、旧分支和重复校验路径。
 
 ## 2. 目标与边界
 
@@ -62,6 +70,80 @@ Linux 6.12 当前交付证据为 [GitHub Actions run 30740478414](https://github
 - 不接受删除整个 `target/linux/rockchip`、`target/linux/generic` 或 `package/kernel/linux` 后从私有 Gitea/远程脚本替换的做法，也不把授权凭据、私有 target 或争议源码带入公开生产链。
 - sbwml point release 比 Lean 更新时也不单独覆盖 Lean 的 kernel version/hash；selected kernel 必须使用本轮锁定 Lean target 已集成并验证的精确版本。
 
+R4S、内核和工具链的逐项取舍如下。“原生纳入”表示优化目标已经由本轮 Lean 提供，本项目以源码语义和最终配置守住它，而不是复制一份相同 patch：
+
+| 能力 | 决策 | 当前实现与理由 |
+|---|---|---|
+| R4S target/image、SD、LED | 原生纳入 | 保留 Lean `friendlyarm_nanopi-r4s` target 与 image pipeline，不维护第二套 Rockchip target |
+| R4S 网口 IRQ 大核分配 | 原生纳入 | Lean hotplug 动态把两个板载口分到 CPU4/CPU5；不写死 IRQ 号 |
+| packet steering | 原生纳入 | 使用 Lean 当前可执行的值 `1`；不写入其脚本不识别的其他值 |
+| `irqbalance` | R4S 排除、N5105 纳入 | R4S 避免覆盖 native affinity；N5105 用它分布 4 队列 MSI-X IRQ |
+| `autocore-arm` | 保留 UI | 为 R4S 提供状态信息，不把它描述成 CPU/IRQ 加速 daemon |
+| `default-settings` | 整包排除 | 其软件源、密码、签名、防火墙和 steering 副作用越过本项目边界；只用窄 overlay 表达确有需要的默认值 |
+| R8168 | 原生纳入 | 使用 Lean 当前带依赖、provider、LED 和内核适配的实现；没有已复现缺陷时不只为版本号替换 |
+| R8152 vendor/USB NIC | 排除 | 两个板载网口不依赖 RTL8152，当前产品也不包含外接 USB 网卡 |
+| U-Boot/ATF/rkbin | 原生纳入 | 使用 Lean 当前 R4S boot chain；不导入更旧或私有替换链 |
+| RK3399 2.208/1.8 GHz OPP | 原生纳入并披露风险 | 保留 selected Lean target 的公开语义、schedutil 和 PWM fan；不继续升频或加压 |
+| ARM CRC/crypto | 纳入 | userland 使用 `armv8-a+crc+crypto`，内核合同检查 ARM64 AES/GHASH/CRC |
+| A72+A53 调度 | 纳入 | `-mtune=cortex-a72.cortex-a53`，符合 RK3399 big.LITTLE；不使用 A72-only kernel flags |
+| N5105 调度 | 纳入 | `-march=x86-64-v2 -mtune=tremont`；不错误使用需要 AVX/AVX2 的 x86-64-v3 |
+| GCC15 | 纳入并固定代际 | 使用 Lean 原生 GCC15 源码构建，不下载外部预编译工具链，也不自动回退 GCC13 |
+| OpenSSL ASM/speed、zlib speed | 纳入 | 对两平台共同有意义且由公开 Kconfig 表达 |
+| LTO、GC sections、Mold | production 排除 | 前两者扩大滚动 master 的兼容面；Mold 主要改善链接耗时，不是固件运行性能 |
+| Clang ThinLTO、LRNG、BPF/XDP、DPDK、PREEMPT_RT | 排除 | 当前路由/代理产品没有对应需求或可自动验收的收益 |
+| ALL_KMODS/ALL_NONSHARED | 排除 | 与只构建当前功能闭包的目标直接冲突 |
+| DRM/Panfrost、iGPU、音频 | 排除 | 两个平台都是无显示路由器/虚拟路由器 |
+| zram | 仅 R4S 纳入 | 512 MiB LZ4、低 swappiness，作为 OOM 保险；固定内存的 N5105 guest 不启用 |
+| BBRv3 | common 纳入 | 按 selected series 动态解析公开 port，保留 Lean package/module/runtime 名称，并验证 ELF version `3` |
+| software flow offload | common 纳入 | 由 TurboACC/UCI 唯一管理；hardware flow offload 固定关闭 |
+| SFE/shortcut-fe/natflow | 排除 | 不和 iptables fullcone、PassWall、Lean software flow offload 叠加多条 fast path |
+| firewall4/nftables | 排除 | 与冻结的 firewall3/iptables 产品合同冲突 |
+| MPTCP、PSI | 排除 | 当前没有 consumer 或产品用例，不把观测/多路径能力误称为转发优化 |
+| 固定 root 密码、关闭签名、公开私钥 | 排除 | 不用安全边界换取首次使用便利或虚假真实性 |
+
+从 `sbwml/builder` 借鉴的是执行思想，而不是照搬 workflow：
+
+| 执行思想 | 本项目实现 |
+|---|---|
+| GitHub 托管 runner | `ubuntu-latest`，记录当轮 runner 事实并设置磁盘门槛和 timeout |
+| 双设备并行 | 自动发现 profile，`fail-fast: false`、`max-parallel: 2` |
+| ccache 与下载缓存 | 分层保存，key 绑定 profile、GCC、声明 digest、patch digest 和 source-lock digest |
+| 并行失败后串行诊断 | 只重放第一个安全的 `package/.../compile` 目标，保留原 job 失败 |
+| 固件、manifest、buildinfo、hash | 扩展为 SBOM、source-lock、单一 provenance 和 Release 回下载复验 |
+| draft Release | 两个平台聚合后创建，全部资产回下载验证后才公开 |
+| 远程脚本、第三方清盘 action、外部发布 | 不采用；runner 清理、构建和发布都由仓库内有边界的代码完成 |
+
+### 2.3 设备假设
+
+R4S profile 的设备合同是 NanoPi R4S 4GB：
+
+- RK3399，四个 Cortex-A53 与两个 Cortex-A72。
+- SD 卡启动，使用 Lean 的 squashfs sysupgrade image。
+- 板载 LAN 为 RTL8211E，经 RK3399 GMAC；板载 WAN 为 R8111H，经 PCIe 使用 `r8168`。
+- 使用两个板载网口；USB 网卡、Wi-Fi、显示、音频和存储服务不在当前产品范围。
+- 保留 cpufreq、PWM fan 和 zram。
+- 接口角色沿用 Lean target：`eth1=LAN`、`eth0=WAN`；common 不在全局生成脚本中改写 ethX。
+
+N5105 profile 的设备合同是运行在 PVE 中的专用 OpenWrt guest，而不是泛化 x86 固件：
+
+- 宿主 CPU 为四核四线程 Jasper Lake/Tremont N5105。
+- guest 使用 q35、OVMF、单 socket/4 vCPU、`cpu: host`、固定内存且关闭 balloon。
+- VirtIO SCSI 作为虚拟磁盘；唯一 VirtIO NIC 为 LAN，并配置 4 queues。
+- 唯一 I225/igc 网卡通过 PCIe passthrough 作为 WAN。
+- Intel microcode、物理 cpufreq 和 IOMMU ownership 属于 PVE host，不重复放进 guest。
+- 接口角色由 driver 动态发现，不依赖 `eth0`/`eth1` 枚举顺序。
+
+若实际硬件拓扑不同，例如 N5105 改成裸机、出现多个 VirtIO/igc 接口或 R4S 改用 USB 网卡，应先修改设备 profile 及语义合同；不能为了让未知设备“也许能启动”扩大当前精简固件。
+
+### 2.4 最终形态速览
+
+| 层 | 最终方案 |
+|---|---|
+| Common | Lean master；testing selected-kernel channel；firewall3/iptables；GCC15；共享精简 package 闭包；OpenSSL ASM/speed、zlib speed；BBRv3 + `fq`；software flow offload；签名、SBOM、source lock 与 provenance |
+| R4S | Lean 原生 Rockchip/R4S target；ARMv8 CRC/crypto + A72/A53 tune；r8168；native CPU4/5 IRQ；packet steering；schedutil/PWM fan；512 MiB LZ4 zram；无 irqbalance、RTL8152、DRM/Panfrost |
+| N5105 PVE | x86_64 generic EFI squashfs；x86-64-v2 + Tremont tune；VirtIO built-in + I225/igc；4 queues + irqbalance、RPS off；无 autocore、zram、microcode、USB/GPU/音频 |
+| Actions | prepare 一次解析 source lock；双 profile matrix；四个高价值门禁；失败定向诊断；聚合、draft、回下载复验、公开、保留六个 Release |
+
 ## 3. 唯一事实源
 
 每类事实只允许一个声明所有者：
@@ -86,6 +168,59 @@ Linux 6.12 当前交付证据为 [GitHub Actions run 30740478414](https://github
 | 当轮动态版本、commit、hash | 运行时生成的 `source-lock.json` |
 
 文档、workflow 和测试只引用这些声明，不复制设备名、包清单、版本或 hash。
+
+### 3.1 目录与配置所有权
+
+```text
+.github/workflows/
+  openwrt-builder.yml             # 双平台构建与 Release 事务
+  update-checker.yml              # 定时解析完整上游指纹
+
+profiles/
+  common/
+    profile.env                   # 所有设备共享的环境接口
+    config.seed                   # shared non-package Kconfig
+    required-packages.txt         # shared positive package/config contract
+    forbidden-packages.txt        # shared final package blacklist
+    providers.tsv                 # 重名 package 的唯一 provider
+    geodata-sources.json          # GeoIP/Geosite 静态供应链接口
+    source-overlays.json          # 官方 OpenWrt core 的窄同步映射
+    source-compatibility.json     # 当前闭包的声明式源码兼容规则
+    semantics.json                # shared rootfs/locked-source 行为
+    files/                        # shared factory defaults
+  r4s/                            # R4S target/image/hardware 声明与 rootfs
+  x86-n5105-pve/                  # N5105 PVE target/image/hardware 声明与 rootfs
+
+patchsets/
+  common/kernel/
+    bbr3-sources.json             # provider/ref/path/算法身份策略
+    bbr3-module-version.patch     # module stripping 的窄兼容补丁
+  common/series                   # 仓库 common patch 顺序
+  r4s/series                      # R4S patch 顺序
+  x86-n5105-pve/series            # N5105 patch 顺序
+
+scripts/
+  profile_model.py                # profile 领域模型
+  kernel_selection.py             # selected-kernel 领域模型
+  kernel_patch.py                 # kernel patch 安全解析
+  source_lock.py                  # 动态输入解析与 schema
+  profile_contract.py             # 最终 profile 合同
+  profile_semantics.py            # 声明式行为解释器
+  apply_source_lock_artifacts.py  # 锁定 release metadata 写入
+  apply-source-compatibility.py   # 声明式兼容执行器
+  collect-build-provenance.sh     # 单一 provenance 收集
+  firmware_image.py               # gzip/fwtool 镜像容器解释器
+  release_assets.py               # Release 聚合、命名与重建
+  *.sh                            # 薄 CLI 与流程编排
+
+tests/
+  test-*                          # 与上述共享模块一一对应的 fixtures
+
+docs/build-architecture.md        # 本架构与决策依据
+lessons.md                        # 跨问题的根因模式和预防规则
+```
+
+目录设计遵循两个复用约束：同一事实出现在两个消费者时，消费者必须调用共享模块或读取同一声明；只有设备真正不同的 target、image、driver、CPU flags 和 rootfs 行为才进入设备目录。新增 profile 应只增加 `profiles/<device>` 的声明与相应语义，不应修改 matrix、checker 或 update checker 的设备枚举。
 
 ## 4. 总体数据流
 
@@ -156,6 +291,77 @@ repository declarations + rendered common/device intent + floating upstreams
 - report schema 使用明确整数版本；不为旧内部 schema 保留平行解释器。
 - 路径安全检查位于真正执行 clone、copy、remove、archive reconstruction 的边界。
 - 新设备只增加 `profiles/<device>` 声明，不修改 checker 或 matrix 分支。
+
+### 5.4 稳定接口
+
+共享模块通过少量稳定 CLI 暴露能力，workflow 只编排它们：
+
+```text
+render-profile.sh list
+render-profile.sh bundle <profile> <output-directory>
+render-profile.sh env|config|required|forbidden <profile> [output]
+render-profile.sh files <profile> <output-directory>
+
+resolve-source-lock.sh resolve <profile-list> <output-json>
+resolve-source-lock.sh materialize <source-lock.json> <output-directory>
+resolve-source-lock.sh digest <source-lock.json>
+resolve-source-lock.sh compare <old-json> <new-json>
+resolve-source-lock.sh profile-kernel-plan <source-lock.json> <profile>
+resolve-source-lock.sh bbr-patch-plan <source-lock.json> <series>
+
+check-profile-contract.sh <profile>
+check-profile-contract.sh <profile> <openwrt-root> <source-lock.json> [report] [diagnostics]
+
+apply-source-lock-artifacts.sh <openwrt-root> <source-lock.json> <report-json>
+assemble-release.sh <source-lock.json> <output-dir> <release-id> <profile-deliveries...>
+verify-release-assets.sh <downloaded-release-directory>
+```
+
+`render-profile.sh bundle` 一次产生不可变的 common+device 快照，CI 不分别渲染后再自行拼装。静态 `check-profile-contract.sh <profile>` 验证仓库声明；带 OpenWrt tree 的形式在 kernel prepare 后一次验证最终 config、package、provider、selected kernel 和源码语义。二者调用同一个 `ProfileRepository`/`RenderedProfile` 模型，不是两套规则。
+
+### 5.5 依赖图与运行时所有权
+
+```mermaid
+flowchart LR
+    U["浮动 refs 与 release 元数据"] --> SL["source_lock.py"]
+    KP["common kernel channel"] --> KS["kernel_selection.py"]
+    LT["锁定 Lean target metadata"] --> KS
+    KS --> SL
+    GP["Geo/provider/overlay/BBRv3 声明"] --> SL
+    SL --> L["source-lock.json + materialized patches"]
+    C["profiles/common"] --> PM["profile_model.py"]
+    D["profiles/device"] --> PM
+    L --> PREP["locked source + feeds + overlays + compatibility + patches"]
+    PM --> CFG["rendered config/files/contracts"]
+    PREP --> DEF["defconfig + selected kernel prepare"]
+    CFG --> DEF
+    DEF --> PC["profile_contract.py"]
+    PC --> BUILD["make world"]
+    BUILD --> PROV["build-provenance.json"]
+    PROV --> FV["firmware verifier"]
+    FV --> RA["release_assets.py"]
+    RA --> DRAFT["draft Release"]
+    DRAFT --> REDOWNLOAD["回下载、重建、复用 verifier"]
+    REDOWNLOAD --> PUBLIC["公开并保留六个版本"]
+```
+
+运行时设置同样只能有一个所有者：
+
+| 设置 | 唯一所有者 |
+|---|---|
+| GeoIP/Geosite 的角色、可信仓库和 recipe 字段 | `geodata-sources.json`；当轮 tag/hash 进入 source lock |
+| BBRv3 provider 与算法身份策略 | `bbr3-sources.json` |
+| selected kernel channel/series/version/hash | common Kconfig intent + `kernel_selection.py` + source lock |
+| BBRv3/`fq` 是否进入固件 | common required Kconfig/package contract |
+| 初次 CCA 选择 | `zz-common-turboacc`，仅在 module version `3` 和 `sch_fq` 成立后执行一次 |
+| 后续 CCA 与 software flow offload | TurboACC UCI/init；项目不建立第二个 sysctl 所有者 |
+| common qdisc/socket buffer | `90-router-performance.conf` |
+| DHCP `.32/232` 与 IPv6 relay | `90-common-network` |
+| R4S IRQ affinity/接口映射 | Lean Rockchip target；项目语义合同只验证 |
+| R4S zram/packet steering | `91-r4s-performance` 与 `91-r4s-memory.conf` |
+| N5105 接口角色、4 queues、RPS | `91-x86-n5105-performance` 与 `91-n5105-multiqueue` |
+| N5105 IRQ 分布 | `irqbalance` |
+| DNS listener、upstream、cache、规则和凭据 | 设备运行时 UCI/YAML，不属于固件构建 |
 
 ## 6. 最新追踪与 source lock
 
@@ -298,6 +504,83 @@ renderer 按以下规则合并：
 
 GeoIP 与 Geosite 的角色只在 `geodata-sources.json` 定义。resolver、validator 和 applicator 共用该合同；`v2ray-geodata` package 最终打包 Loyalsoldier 的两个当轮精确资产。
 
+### 8.1 Feed 与 provider 分工
+
+| Feed | 产品职责 |
+|---|---|
+| `packages` | 以同名 custom feed 明确替换 Lean 默认 packages，追踪 `openwrt/packages@master`，为当前闭包提供维护更活跃的通用包 |
+| Lean `luci`/`routing`/`telephony` | 基座自带 feed；只安装当前 required 依赖展开到的源码 |
+| `small` | 当前选择的 `dns2socks`、`tcping`、`v2dat` 等 PassWall 依赖 |
+| `kenzo` | AdGuardHome、SmartDNS、ddns-go 及对应 LuCI 应用 |
+| `sbwml` | MosDNS 与 `luci-app-mosdns` |
+| `xiaorouji` | `Openwrt-Passwall/openwrt-passwall-packages` 中的代理核心与依赖 |
+| `passwall` | `Openwrt-Passwall/openwrt-passwall` 的 LuCI 应用 |
+
+历史 owner `xiaorouji/*` 已迁移时，合同使用 GitHub 返回的 canonical `Openwrt-Passwall/*` 仓库；不依赖重定向或已经删除的旧入口。feed 名仍保持 `xiaorouji`，因为它是仓库内部稳定标识，不等于远端 owner。
+
+关键 provider 由 `providers.tsv` 单点声明，例如：
+
+| Package/组件 | 唯一 provider |
+|---|---|
+| HAProxy | `feeds/packages/net/haproxy` |
+| AdGuardHome 与 LuCI | `feeds/kenzo` |
+| SmartDNS 与 LuCI | `feeds/kenzo` |
+| ddns-go 与 LuCI | `feeds/kenzo` |
+| PassWall LuCI | `feeds/passwall` |
+| MosDNS 与 LuCI | `feeds/sbwml` |
+| Xray、Hysteria、Geoview、ipt2socks | `feeds/xiaorouji` |
+| GeoIP/Geosite package | `feeds/xiaorouji/v2ray-geodata` |
+| tcping、dns2socks、v2dat | `feeds/small` |
+| TurboACC | locked Lean LuCI feed |
+
+selector 只删除合同明确列出的同名源码冲突目录，随后从 source lock 枚举全部 feed 并重建索引。provider 选择决定“哪个 recipe 提供某 package”，required 文件决定“是否安装该 package”；两者不能混成一份表。
+
+### 8.2 只维护真实构建闭包
+
+`feeds install -a` 会把所有 feed recipe 注入 Kconfig，即使某应用没有选中，其缺失依赖和陈旧 Makefile 也可能产生大量 warning 或让 `defconfig` 失败。这些 warning 不等于固件真的需要对应软件，逐个修复会把维护范围扩张到整个 Lean/package 世界。
+
+本项目采用更窄且可证明的边界：
+
+1. 由 rendered required contract 得到直接安装入口。
+2. 让 OpenWrt feeds installer 递归展开这些入口的真实 source/build/runtime dependency。
+3. 只把该闭包注入 Kconfig。
+4. 最终 `.config` 与 image manifest 同时验证 required 存在、forbidden 不存在。
+
+因此，未选择的 Samba、telephony、数据库、Wi-Fi 或其他 recipe 的缺依赖 warning 不进入修复范围；一旦它通过真实依赖进入当前闭包，就必须修根因，不能删掉 required package 逃避编译。
+
+连续暴露的 `tcping`、`wol`、`lsof` 等失败证明了另一条根因：Lean packages 的部分通用 recipe 对 GCC15/C23 的维护滞后，逐包在仓库永久写版本/hash 会不断追赶下一个包。本项目于是用 `openwrt/packages@master` 统一提供当前通用 package 闭包，并从同一轮锁定的 `openwrt/openwrt@master` 窄同步 Lean core 缺少或落后的部分：
+
+| 官方 core overlay | 原因 |
+|---|---|
+| `package/libs/gmp` | 使用官方已经适配 GCC15/C23 的 canonical 子树 |
+| `package/libs/pcre2` | 当前 HAProxy/wget 等依赖需要，而官方 packages 不再内置该 core 库 |
+| `package/system/mtd` | 使用官方已解决当前 GCC15/C23 问题的实现 |
+| 隔离的 SBOM generator 文件 | Lean 保留 SBOM Kconfig 却缺少完整 image 生产链；只补官方生成器及其依赖，不覆盖整个 `include/image.mk` |
+
+只有 canonical 来源也不能解决当前闭包时，才允许进入 `source-compatibility.json`。当前窄规则是：
+
+- `libsepol` 和用户明确保留的旧 `wol` CLI 使用 package-local GNU17 语义，不降低全局 GCC15。
+- `small/tcping` 的自定义 `Build/Compile` 恢复 `$(TARGET_CONFIGURE_OPTS)`/`$(MAKE_FLAGS)` 语义，使 `CC`、`STRIP` 等仍来自 target toolchain。
+- R4S zram backend 的 kernel-series guard 由 selected series 动态扩展；上游原生支持时 no-op。
+- CycloneDX image SBOM 生产规则只在 Lean 缺失时补齐，并验证官方生成器文件和 executable mode。
+
+这些规则都不保存 package version、`PKG_HASH` 或 release URL；recipe 漂移到无法证明时直接失败并重新审计。
+
+### 8.3 受控最新产物
+
+| 组件 | 每轮策略 | 完整性来源 |
+|---|---|---|
+| HAProxy | 官方仍受支持的最高 LTS 分支最新 patch release | HAProxy 官方 release metadata 与 SHA256 |
+| AdGuardHome | GitHub 最新非 prerelease stable | 精确 tag/commit、源码与 frontend 资产 hash |
+| GeoIP | `Loyalsoldier/geoip` 最新非 prerelease | `geoip.dat` asset digest 与发布 checksum |
+| Geosite | `Loyalsoldier/v2ray-rules-dat` 最新非 prerelease | `geosite.dat` asset digest 与发布 checksum |
+
+resolver 在 prepare 中解析一次，applicator 只把 lock 中的精确版本、不可变 URL 和 64 位 SHA256 写进当前 worktree；它不访问网络，也不解析 `latest`。若 feed recipe 已是同一版本就只核验，若落后就更新本轮工作目录。`make download` 再使用 OpenWrt 自身的 hash 校验全部 source。
+
+因此仓库中看见的某个上游 recipe `PKG_HASH` 是该 recipe 自身的 metadata，不代表项目永久锁死；项目新增的普通上游版本/hash不得写死。允许稳定固定的是用户明确选择的功能/ABI 代际，例如 GCC15、BBRv3 module version 3 和 N5105 x86-64-v2 基线。
+
+AdGuardHome 保持 package 的 `--no-check-update`：最新版本由 Actions 生成新的、可回滚的双平台固件，设备内二进制不绕过 OPKG、非特权 jail、provenance 和 Release 自行替换。
+
 ## 9. 共同固件策略
 
 完整 package 集以 `profiles/common/required-packages.txt` 和各设备 required 文件为准。稳定功能意图包括：
@@ -318,6 +601,106 @@ common 的内核/构建策略同样遵循精简原则：
 - `CONFIG_KERNEL_MPTCP` 与 `CONFIG_KERNEL_MPTCP_IPV6` 显式关闭。MPTCP 不加速普通 NAT 转发，也不是当前 PassWall 运行合同。
 - 继续使用 `-O2`、GCC15、OpenSSL ASM/runtime dispatch；生产路径不启用全局 LTO、GC sections、Mold 或 Clang ThinLTO。
 - 新的编译器/链接器选项必须分别证明运行性能、镜像体积或构建耗时收益，不能混称为“固件优化”。
+
+### 9.1 Common 功能集合
+
+精确清单以 `profiles/common/required-packages.txt` 为准，稳定功能分组如下：
+
+| 分组 | 保留内容 |
+|---|---|
+| 管理与语言 | LuCI、firewall/package manager、IPv6/PPP protocol、简体中文 |
+| 路由基础 | dnsmasq-full、firewall3、iptables/ip6tables、ipset、fullcone、TProxy/socket/iprange、PPPoE、odhcp6c/odhcpd、iptables UPnP |
+| 代理 | PassWall iptables transparent proxy、Xray、Hysteria、HAProxy、ipt2socks |
+| Geo | `v2ray-geoip`、`v2ray-geosite` 与 `geoview`；数据分别来自 Loyalsoldier 两个可信 release |
+| DNS | MosDNS、SmartDNS、AdGuardHome；只保证 package/provider/接口，不固化用户端口链 |
+| 运维 | ddns-go、nlbwmon、ARP bind、autoreboot、ramfree、ttyd、TurboACC、WOL |
+| 工具 | CoreMark、htop、lsof、OpenSSH SFTP server |
+| 内核网络 | `kmod-tun`、`kmod-tcp-bbr`、`kmod-sched`、`kmod-ipt-fullconenat` |
+| 交付 | build log、config/image metadata、CycloneDX SBOM、签名与 TLS certificate check |
+
+firewall/PassWall 的关键代际合同是：
+
+```text
+firewall + iptables + ip6tables + ipset
+iptables-mod-extra/fullconenat/iprange/socket/tproxy
+kmod-ipt-fullconenat + kmod-tun
+luci-app-passwall_Iptables_Transparent_Proxy=y
+luci-app-passwall_Nftables_Transparent_Proxy=n
+```
+
+`kmod-tcp-bbr` 是 Lean/TurboACC 依赖的 package symbol，`tcp_bbr.ko` 是模块名，`bbr` 是运行名；它们保持不变。代际由 source lock、prepared source 和 ELF `.modinfo version=3` 证明，不用另一个 `kmod-tcp-bbr3` package 名制造平行 provider。
+
+`net.core.default_qdisc=fq` 必须有真实 provider。Lean 的 `fq_codel` 与 `fq` 不是同一 qdisc，因此 common 显式选择 `kmod-sched`，firmware verifier 同时检查 `sch_fq.ko` 和 selected kernel vermagic。
+
+### 9.2 明确排除的功能面
+
+精确黑名单以 `profiles/common/forbidden-packages.txt` 为准，长期产品边界包括：
+
+- Docker/containerd/runc、Samba/ksmbd、qBittorrent、OpenList、Rclone、FTP 和文件/磁盘管理。
+- HomeProxy、Nikki、Mihomo/Clash、SSR Plus、Shadowsocks/Sing-box 等第二套代理栈。
+- firewall4、nftables、nft UPnP、natflow、shortcut-fe/SFE 等替代防火墙或 fast-path。
+- 第二套 DDNS scripts；只保留 ddns-go。
+- WireGuard、ZeroTier、bonding 等当前未使用的 VPN/接口栈。
+- `default-settings` 及其软件源、签名、密码、防火墙和 OTA 副作用。
+- ALL_KMODS、ALL_NONSHARED 以及没有当前硬件/功能所有者的内核模块。
+
+禁用父 LuCI 应用不保证所有 `INCLUDE_*` 子 symbol 自动关闭。renderer 从 `exact:` forbidden 规则派生负选择，首次 `defconfig` 后 normalizer 只收敛该父包遗留的正选子项，再次 `defconfig`；最终 manifest 仍独立阻止 `3proxy` 等非产品依赖被 selector 重新带入。
+
+### 9.3 工具链、构建与安全合同
+
+生产配置明确要求：
+
+```text
+CONFIG_DEVEL=y
+CONFIG_TOOLCHAINOPTS=y
+CONFIG_GCC_USE_VERSION_15=y
+CONFIG_CCACHE=y
+CONFIG_BUILD_LOG=y
+CONFIG_JSON_OVERVIEW_IMAGE_INFO=y
+CONFIG_JSON_CYCLONEDX_SBOM=y
+CONFIG_INCLUDE_CONFIG=y
+CONFIG_REPRODUCIBLE_DEBUG_INFO=y
+CONFIG_SIGNED_PACKAGES=y
+CONFIG_SIGNATURE_CHECK=y
+CONFIG_DOWNLOAD_CHECK_CERTIFICATE=y
+CONFIG_OPENSSL_OPTIMIZE_SPEED=y
+CONFIG_OPENSSL_WITH_ASM=y
+CONFIG_ZLIB_OPTIMIZE_SPEED=y
+CONFIG_USE_APK=n
+CONFIG_USE_GC_SECTIONS=n
+CONFIG_USE_LTO=n
+CONFIG_USE_MOLD=n
+CONFIG_ALL_KMODS=n
+CONFIG_ALL_NONSHARED=n
+```
+
+GCC15 是用户明确冻结的代际，不跟随 Lean 默认 GCC13，也不自动选择“可用的最高 major”。构建始终由本轮锁定的 Lean 源码生成工具链；不下载 sbwml 或其他第三方预编译 toolchain。package-local GNU17 兼容不会改变编译器身份、优化级别、hardening 或其他包的 C 标准。
+
+OpenSSL ASM/runtime dispatch 分别利用 R4S ARMv8 crypto 和 N5105 AES/PCLMUL/SHA；不能把 target CFLAGS 的效果错误外推到 Go 程序或所有内核数据路径。CoreMark 自身使用 O3 与多线程是独立 benchmark package 选择，不等于全局固件 O3：R4S 线程数为 6，N5105 为 4。
+
+OPKG、package 签名和 TLS certificate check 保持启用。固件不嵌入公开固定 root 密码、不追加私有可变软件源、不关闭 WAN firewall，也不把 Actions secret 烘焙成可复用设备凭据。
+
+### 9.4 Runtime sysctl 与 TurboACC
+
+项目不复制 Lean `/etc/sysctl.d/10-default.conf`。common 只拥有三项窄设置：
+
+```text
+net.core.default_qdisc=fq
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+```
+
+16 MiB 是 Hysteria/QUIC 等本机高吞吐 UDP socket 的上限，不会为每条连接预分配 16 MiB。未经当前产品语义证明的 conntrack timeout、backlog、dirty ratio 等“万能调优”不进入固件。
+
+`zz-common-turboacc` 只在上游 TurboACC factory 初始化之后运行一次：
+
+1. 加载并确认 `tcp_bbr` module version 为 `3`，`sch_fq` 存在且 available CCA 包含 `bbr`。
+2. 要求上游已探测为 software `flow_offloading`，同时 `fastpath_fo_hw=0`。
+3. 只设置 `turboacc.config.tcpcca=bbr` 和保护上游配置的 `global.set=1`，不改写 fullcone 或其他探测值。
+4. reload 后确认实际 `tcp_congestion_control=bbr`，成功才写 `project_factory_applied=1`。
+5. sysupgrade 保留 UCI 时不再覆盖用户后来选择的 CCA。
+
+TCP CCA 此后只由 TurboACC/UCI 管理，不在 sysctl 文件维护第二份值。BBRv3用于路由器本机建立或终止的 IPv4/IPv6 TCP；UDP/QUIC 和普通 NAT 转发连接不由路由器本机 CCA 接管。普通转发性能仍主要取决于规则复杂度、software flow offload、IRQ、RPS/XPS 与网卡队列。
 
 ## 10. 出厂配置与运行时边界
 
@@ -340,6 +723,43 @@ common 的内核/构建策略同样遵循精简原则：
 - PassWall 节点、订阅和凭据。
 
 dnsmasq-full、AdGuardHome、MosDNS、SmartDNS 和 PassWall 可以同时安装；监听端口、转发路径和缓存关系属于运行时配置，不进入跨设备固件默认。
+
+### 10.1 网络默认的最小所有权
+
+`90-common-network` 只表达用户已经确认且能跨两个设备复用的协议/地址默认：
+
+```text
+LAN static 192.168.2.1/24
+DHCP start=32, limit=232, leasetime=12h
+LAN ip6assign=64, delegate=0
+LAN ra=server, dhcpv6=relay, ndp=relay
+WAN proto=dhcp, WAN6 proto=dhcpv6
+WAN ra/dhcpv6/ndp=relay, master=1
+```
+
+IPv6 relay 是一个整体合同：LAN relay、WAN relay master、LAN `delegate=0` 与 `ip6assign=64` 必须一起存在，不能只改一个字段形成半配置状态。WAN 静态地址、网关、自定义 bridge/端口和转发规则没有被用户确认为跨设备默认，不能从历史设备配置扩大推断。
+
+common 只拥有协议与地址，R4S 的物理接口映射由 Lean target 拥有，N5105 的物理/虚拟接口角色由设备 overlay 按 driver 拥有。任何层都不使用宽泛 `sed` 修改 Lean `config_generate`。
+
+### 10.2 DNS 与私密配置边界
+
+同时编译五个 DNS/代理组件不等于让五个服务争抢 `:53`。构建阶段只负责 package、provider、iptables 依赖、安全 package default 和配置接口兼容；实际 listener、iptables redirect、upstream、cache、域名规则、PassWall DNS mode、节点和订阅由设备上的 UCI/YAML 决定。
+
+这种边界有三个目的：
+
+1. R4S 与 N5105 可以共享同一固件功能集合，而不共享某台设备的运行拓扑。
+2. sysupgrade 保留用户配置时，factory overlay 不重写已经调好的 DNS/代理链。
+3. 包含 UUID、密码、订阅、账户摘要、AdGuardHome 数据库和 query log 的文件不会进入 Git 或公开 Release。
+
+设备配置迁移时只选择性恢复 DNS/代理 UCI/YAML；不能跨 R4S/x86 整包覆盖 `network`、物理接口、软件源、二进制、数据库或日志。端口是否冲突和查询是否形成环路应从设备当时的 UCI/YAML、真实 socket 与 firewall redirect 联合判断，不把任何用户常用端口写成 build-time 常量。
+
+### 10.3 首次启动与升级语义
+
+- `90-common-*` 与 `91-<device>-*` 都必须幂等，只写本层拥有的字段。
+- OpenWrt uci-defaults 在成功后移除；需要等待硬件出现的 N5105 接口脚本在合同不成立时失败并保留，hotplug 后续继续恢复 4 queues。
+- `zz-common-turboacc` 有持久 marker，成功后只应用一次；模块或上游 fastpath 尚未准备好时不写完成标记。
+- sysupgrade 保留 `/etc/config` 后尊重用户修改；项目不通过源码 patch 强制覆盖运行值。
+- 全新安装保持防火墙和管理面安全基线，用户首次登录后自行设置 root 密码。
 
 ## 11. R4S 专属优化
 
@@ -367,6 +787,61 @@ R4S 使用 Lean 当前原生 target 能力，并把可验证的 sbwml 优化意�
 Lean 原生 R4S hotplug 把 eth0/eth1 IRQ 分配给 CPU4/CPU5，通用 packet steering 把物理设备的 RPS/XPS mask 写为全部六核 `0x3f`。production 固定复用这一套原生所有权，不叠加 irqbalance 或其他 steering 覆盖。
 
 R4S 源码验收关注 target/prepared-kernel 的真实语义，不永久绑定 kernel point release 或某个 patch 文件名。
+
+### 11.3 Target、镜像与启动链
+
+R4S 直接使用 Lean `rockchip/armv8/friendlyarm_nanopi-r4s`：
+
+```text
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+CONFIG_TARGET_ROOTFS_EXT4FS=n
+CONFIG_TARGET_ROOTFS_TARGZ=n
+CONFIG_TARGET_KERNEL_PARTSIZE=32
+CONFIG_TARGET_ROOTFS_PARTSIZE=944
+IMAGE_PATTERN=*friendlyarm_nanopi-r4s*squashfs*sysupgrade.img.gz
+```
+
+944 MiB rootfs partition 为 overlay 留出空间，不代表允许把额外应用塞进 manifest。镜像使用 Lean target 当前的 squashfs/image pipeline，不维护一份 R4S 私有 image Makefile。
+
+selected kernel 由 common testing channel 和本轮 Lean Rockchip metadata 共同决定。设备 seed 不写 `CONFIG_LINUX_6_18` 或 point release，source lock 记录真实 series/version/hash。若 Lean testing channel 前进，R4S 必须同时具备 target config/patch 语义和对应 BBRv3 port，否则整轮停止。
+
+U-Boot、ATF、rkbin、BL31、DTS、SD signaling 与 LED 都使用本轮 Lean 原生定义。sbwml 的某个 boot component 版本号更新或降低都不能单独证明应该替换；只有当前 Lean target 的真实启动缺陷才允许评审窄修复，禁止删除整个 target 后拉取私有 tree。
+
+### 11.4 CPU、驱动与 package 边界
+
+```text
+CONFIG_TARGET_OPTIMIZATION="-O2 -pipe -march=armv8-a+crc+crypto -mtune=cortex-a72.cortex-a53"
+CONFIG_COREMARK_NUMBER_OF_THREADS=6
+CONFIG_KERNEL_ZRAM_BACKEND_LZ4=y
+CONFIG_KERNEL_ZRAM_DEF_COMP_LZ4=y
+```
+
+设备 required 合同包含 `autocore-arm`、`kmod-r8168`、`luci-app-cpufreq`、`kmod-hwmon-pwmfan`、`kmod-zram`、`kmod-lib-lz4` 与 `zram-swap`。LZ4 backend/default 两个 Kconfig 和真实 library package 缺一不可；selected-kernel guard 只修声明可见性，不替换整份 kernel module 定义。
+
+`autocore-arm` 仅作为 LuCI 状态/端口信息来源。R4S 的 CPU governor、IRQ 与 packet steering 已由 Lean target 处理，不把它误认为第二个调优 daemon。
+
+R4S 明确排除：
+
+- x86/VirtualIO 驱动、Intel/AMD microcode 与无关物理 NIC。
+- `irqbalance`，避免重新分配 Lean 已放到 CPU4/CPU5 的板载网口 IRQ。
+- RTL8152/USB-net、USB mode switch、UAS、自动挂载和额外存储工具。
+- DRM/Panfrost、GPU firmware、音频、显示。
+- ext4/f2fs 制作与分区维护工具。
+
+Lean Rockchip target 可能把基础 USB host/storage 能力 built-in。精简合同阻止外接 NIC、UAS、自动挂载、文件系统和存储服务 package，不为删除一个 target 内建且无用户态服务的能力维护整套私有 kernel config。
+
+### 11.5 运行时所有权
+
+R4S 设备 overlay 只做三件事：设置 512 MiB/LZ4 zram、`vm.swappiness=5`，并确认 `network.globals.packet_steering=1`。它不写 IRQ 号、不固定最高频率、不设置 `mitigations=off`，也不覆盖 Lean hotplug。
+
+Lean target 的动态语义是：
+
+- board network 将 `eth1` 设为 LAN、`eth0` 设为 WAN。
+- hotplug 按 interface/driver 找 IRQ，把两个网口分别送到 CPU4/CPU5。
+- packet steering 使用全六核 RPS/XPS mask；项目不再叠加 A72-only mask 或 irqbalance。
+- kernel 默认 governor 为 schedutil，PWM fan 与温度保护保持启用。
+
+这些行为由 `profiles/r4s/semantics.json` 在锁定 Lean tree 中验证，配置和源码共同证明优化存在且所有权唯一。
 
 ## 12. N5105 PVE 专属优化
 
@@ -402,6 +877,66 @@ serial0: socket
 N5105 属于 Jasper Lake/Tremont，四核四线程、无 AVX/AVX2。production 固定使用 `-march=x86-64-v2 -mtune=tremont`：针对 Tremont 调度，同时保留 guest/迁移兼容性；不使用 `-march=tremont`，也禁止需要 AVX 的 `x86-64-v3`。
 
 PVE host 是 N5105 数据路径的一部分，但不属于固件可配置范围。方案只给出 OVMF/q35、`cpu: host`、vhost、VirtIO multiqueue=4、IOMMU、I225 passthrough 和无 balloon 的部署参数；guest 内不添加无法控制物理 CPU 的重复 cpufreq 策略。
+
+### 12.1 Target、镜像与 ISA
+
+N5105 profile 使用 Lean `x86/64/generic`，只生成 PVE 直接可导入的 squashfs combined EFI gzip image：
+
+```text
+CONFIG_TARGET_ROOTFS_SQUASHFS=y
+CONFIG_TARGET_ROOTFS_EXT4FS=n
+CONFIG_TARGET_ROOTFS_TARGZ=n
+CONFIG_GRUB_EFI_IMAGES=y
+CONFIG_GRUB_IMAGES=n
+CONFIG_GRUB_CONSOLE=y
+CONFIG_GRUB_TIMEOUT="0"
+CONFIG_TARGET_IMAGES_GZIP=y
+CONFIG_TARGET_KERNEL_PARTSIZE=32
+CONFIG_TARGET_ROOTFS_PARTSIZE=365
+CONFIG_ISO_IMAGES=n
+CONFIG_QCOW2_IMAGES=n
+CONFIG_VDI_IMAGES=n
+CONFIG_VMDK_IMAGES=n
+CONFIG_VHDX_IMAGES=n
+IMAGE_PATTERN=*x86-64-generic-squashfs-combined-efi.img.gz
+```
+
+不为同一 guest 同时生成 ext4、legacy GRUB、ISO 或五种虚拟磁盘格式；减少的不是可启动性，而是没有实际消费者的产物和驱动组合。
+
+```text
+CONFIG_TARGET_OPTIMIZATION="-O2 -pipe -march=x86-64-v2 -mtune=tremont"
+CONFIG_COREMARK_NUMBER_OF_THREADS=4
+```
+
+`-mtune=tremont` 只改变调度模型，`-march=x86-64-v2` 定义 guest 必须暴露的 ISA。严格 `-march=tremont` 会让编译器按微架构集合启用 N5105 SKU 不一定拥有的扩展，x86-64-v3 又要求 N5105 没有的 AVX/AVX2，因此两者都不是 production 合同。
+
+target CFLAGS 主要影响 C/C++/CGO userland；Xray、Hysteria、MosDNS、AdGuardHome 等纯 Go 主程序受 Go feed 的 GOAMD64 选择控制，OpenSSL 自身又有 runtime dispatch。文档不把一组 CFLAGS 宣传成所有组件的统一加速。
+
+### 12.2 VirtIO、I225 与队列模型
+
+设备 required 只增加 `kmod-scsi-core`、`kmod-igc` 和 `irqbalance`。`CONFIG_VIRTIO_SUPPORT` 不是可由用户 seed 选择的公开 symbol；Lean x86_64 selected kernel config 直接 built-in `CONFIG_VIRTIO_NET=y` 与 `CONFIG_SCSI_VIRTIO=y`，语义合同检查这两个真实能力。
+
+首次启动脚本要求恰好一个 `virtio_net` 和一个 `igc`：
+
+1. `virtio_net` 加入 `br-lan`，`igc` 同时成为 WAN/WAN6 device。
+2. 对两个接口执行 `ethtool -L <iface> combined 4`，并读取 current settings 证明值为 4。
+3. 关闭 `network.globals.packet_steering`，避免硬件/虚拟多队列之后再由 RPS 重复转向并制造 IPI。
+4. 启用 `irqbalance` 分布队列 MSI-X IRQ，不再维护手工 affinity。
+5. hotplug 在接口重建时恢复 4 queues；接口缺失、重复或不支持 4 queues 时记录失败，不猜测角色或切换到另一套 fallback。
+
+selected Lean 的 I225/I226 EEE disable 必须存在于 x86 target patch stack。igc VLAN tag insertion/stripping 既可来自 target backport，也可来自 prepared Linux upstream；合同验证源码语义，不永久要求某个 `backport-*` 文件名。
+
+### 12.3 Guest 精简边界
+
+N5105 guest 明确排除：
+
+- guest 内 Intel/AMD microcode、cpufreq 和 zram；这些分别属于 host 或固定内存策略。
+- `autocore-x86`；它会写另一套 RPS/RFS，并可能把 CPU 数量误当位掩码，与 4-queue ownership 冲突。
+- 除 igc 外的通用物理 NIC，以及 USB/HID/removable storage、MMC/SDHCI。
+- GPU/display/audio、lm-sensors 和磁盘维护工具。
+- VirtIO console helper；恢复入口由 PVE `serial0: socket` 提供。
+
+PVE 部署必须配套 q35/OVMF、`cpu: host`、4 vCPU、VirtIO multiqueue=4、IOMMU passthrough 和固定内存。固件可以验证 guest 中的 config、driver 和脚本，但不能替宿主机开启 IOMMU、vhost 或改变 PVE CPU model，因此这些参数作为部署前置条件而不是 guest 内的伪配置。
 
 ## 13. BBRv3 合同
 
@@ -534,6 +1069,46 @@ diagnostics 只在失败时上传。成功路径只上传 verified firmware arti
 
 任何 build、aggregate 或回下载失败都不会公开半套固件，也不会清理已有生产 Release。
 
+### 15.4 Runner、并发与权限
+
+- `runs-on: ubuntu-latest` 按用户的低维护要求跟随 GitHub 当前稳定 runner 映射；`runner` OS、CPU、内存、磁盘和 compiler 事实进入 provenance，而不是把浮动标签描述成可复现环境。
+- prepare/aggregate/release-verify 为 30 分钟，build 为 360 分钟，publish/cleanup 为 10 分钟。
+- concurrency 按 Git ref 分组，`cancel-in-progress: false`，避免较新的 run 取消一个正在形成完整双平台 Release 的旧 run。
+- build matrix `fail-fast: false`、`max-parallel: 2`；一个平台失败时另一个平台仍能留下独立根因，但 aggregate 不会启动。
+- build 只有 `contents: read`；Release jobs 才获得写权限。非默认分支只有在 workflow 变更导致内置 token 无法创建指向真实 build commit 的 Release 时，才在 Release job 边界使用仓库已配置的 `ACTIONS_TRIGGER_PAT`。
+- 所有复用 Action 必须是官方 `actions/*@main`。workflow 不维护 tag、major、SHA 或平行 action lock；这是用户选择的“直接追最新”合同，其漂移由真实构建与四层交付门禁暴露。
+
+`prepare-runner.sh` 只在预期系统前缀内做白名单磁盘整理，先解析真实路径并记录前后空间；不下载第三方 free-disk 脚本，也不对 `$HOME`、workspace 根或不确定路径执行递归删除。构建前可用空间低于门槛时立即失败。
+
+### 15.5 缓存合同
+
+下载缓存与 ccache 分离：
+
+| 缓存 | 路径与身份 | 信任边界 |
+|---|---|---|
+| OpenWrt source downloads | `$OPENWRT_ROOT/dl`；key 绑定 source digest | 恢复后仍由每个 upstream recipe hash 与 `make download` 复验 |
+| ccache | `/builder/.ccache`，上限 5 GiB；key 绑定 runner OS、GCC15、profile、profile digest、patch digest、source-lock digest | R4S/x86 不交叉；restore prefix 也不跨架构、工具链或 profile |
+
+不使用外部预编译 toolchain cache。cache 只减少重复计算，不提供源码真实性；source lock、package hash、最终 config 和成品 verifier 才是发布信任边界。
+
+### 15.6 失败诊断与成功资产
+
+并行 `make world` 失败后，workflow 从 `build.parallel.log` 提取第一个经过严格路径校验的 `package/...` target，只运行：
+
+```text
+make -j1 V=sc package/.../compile
+```
+
+用于收集真实编译器/链接器诊断，并保持原 job 失败。日志没有可安全解析的目标时才允许 whole-world 详细 fallback。不得使用 `make -j || make -j1`、`IGNORE_ERRORS`、`continue-on-error` 或删除 required package，让第二次成功掩盖第一次失败。
+
+失败时上传 30 天 diagnostics，包括并行/串行日志、OpenWrt logs、最终 config、provider/compatibility 信息、ccache 与模块候选。成功路径只上传已经通过 verifier 的 delivery artifact，`compression-level: 0` 避免再次压缩固件镜像。
+
+### 15.7 Update checker
+
+定时 workflow 调用同一个 resolver 生成完整双 profile source lock，以规范化 digest 作为上游指纹。Lean、任一 feed、官方 source overlay、受控 release、selected kernel、Google BBR HEAD、port provider 或 patch 字节变化，都会形成新 digest 并派发携带精确 lock 的 `profile=all` 构建；只有 `resolved_at` 变化不会触发无意义重建。
+
+update checker 不另写版本解析器，也不只检查 Lean commit。它把本次精确 source lock 交给 builder，builder 验证 lock 属于当前 repository commit 和 dispatch digest，再让两个 profile 共同消费。因此“几个月不维护仍追最新”依赖自动解析和真实双平台验收，而不是使用 `latest/download`、`PKG_HASH:=skip` 或设备内自更新。
+
 ## 16. 交付内容与 provenance
 
 每个平台 delivery 包含：
@@ -555,6 +1130,49 @@ diagnostics 只在失败时上传。成功路径只上传 verified firmware arti
 - 每一份 `tcp_bbr.ko` 与 `sch_fq.ko` 的路径、SHA256、vermagic；BBR 另含 module version。
 
 正式 Release 不依赖工作流内临时日志。失败诊断仍保留 provider、patch、config、build log、ccache 和 module candidate 原始信息。
+
+### 16.1 专业命名与资产集合
+
+Release tag：
+
+```text
+openwrt-YYYY.MM.DD-r<run-number>[.<run-attempt>]
+```
+
+一个正式 Release 只平铺七个用户资产：
+
+```text
+openwrt-r4s-<release-id>-sysupgrade.img.gz
+openwrt-r4s-<release-id>-full.tar.gz
+openwrt-x86-n5105-pve-<release-id>-combined-efi.img.gz
+openwrt-x86-n5105-pve-<release-id>-full.tar.gz
+release-index.json
+source-lock.json
+SHA256SUMS
+```
+
+实际直接镜像角色从各 profile 的 `IMAGE_PATTERN` 和 release assembler 规则确定；Release 不展示 `<profile>--<internal-file>` 形式的内部映射，也不把几十个 build metadata 文件平铺给用户。每个平台的 `-full.tar.gz` 保留原始 delivery 目录，供复核、故障定位和完整回滚。
+
+OpenWrt 原始 `sha256sums` 在 delivery 边界规范化为 `openwrt-sha256sums`，避免与项目顶层 `SHA256SUMS` 混淆，也避免 Windows 大小写不敏感文件系统解压冲突。
+
+`release-index.json` 将 profile、直接镜像资产、包内原名、完整包名、大小和 SHA256 连接起来。回下载 verifier 要证明：
+
+- index 精确覆盖实际资产，没有重名、遗漏或额外文件。
+- tar 成员没有绝对路径、`..`、symlink/hardlink 逃逸或平台碰撞。
+- 从 full package 重建的 delivery 仍通过同一个 firmware verifier。
+- 直接下载镜像与 full package 内原件字节一致。
+
+### 16.2 Release 展示、回滚与保留
+
+公开 Release notes 只展示用户需要的产品信息：R4S + N5105 PVE、Linux kernel version、source-lock digest、GCC15、firewall3/iptables、刷写提示和校验方式。BBRv3 provider、module metadata 与版本断言属于 full package/provenance 内的技术验收证据，不在公开说明中宣传。
+
+回滚规则：
+
+1. 新 Release 未成功公开前不删除旧 Release。
+2. 任一 profile 缺失、构建失败或回下载验证失败时，整个生产发布失败。
+3. 回滚使用上一个完整双设备 Release，不混用不同 source lock 的两套固件。
+4. 成功公开后才清理超额版本，并始终保留最近六个已验证的 `openwrt-*` Release。
+5. draft 验证失败时保留故障上下文，不把它伪装成正式版本，也不影响现有生产资产。
 
 ## 17. 验证方法
 
@@ -602,6 +1220,56 @@ bash scripts/resolve-source-lock.sh digest \
 
 该步骤访问真实上游并验证受控 release、selected channel/series/version/hash、两 profile 同代和对应 BBRv3 port。Linux 6.18 首次迁移必须在 resolver 输出中同时看到 R4S/x86 的 `kernel_channel=testing`、同一 `kernel_series=6.18`，精确 point release 由当轮 Lean 决定。
 
+### 17.3 最终配置与完整构建
+
+每个 matrix job 的配置闭环固定为：
+
+```sh
+make defconfig
+python3 "$GITHUB_WORKSPACE/scripts/normalize-forbidden-suboptions.py" apply \
+  .config "$PROFILE_FORBIDDEN" "$GITHUB_WORKSPACE/forbidden-suboptions-report.txt" \
+  tmp/.config-package.in
+make defconfig
+python3 "$GITHUB_WORKSPACE/scripts/normalize-forbidden-suboptions.py" check \
+  .config "$PROFILE_FORBIDDEN" "$GITHUB_WORKSPACE/forbidden-suboptions-check.txt"
+make download -j8
+make target/linux/prepare
+bash "$GITHUB_WORKSPACE/scripts/check-profile-contract.sh" \
+  "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" \
+  "$GITHUB_WORKSPACE/profile-contract-report.txt" "$GITHUB_WORKSPACE"
+make -j"$BUILD_JOBS" world
+```
+
+最终 profile contract 必须证明：
+
+- seed 的正/负选择经过两次 defconfig 没有漂移。
+- required package/config 全部存在，forbidden 和父应用残留子选项全部关闭。
+- package provider 与 `providers.tsv` 一致，当前 feeds/source overlays 全部来自 source lock。
+- firewall3/iptables、GCC15、OPKG/签名/TLS、SBOM、OpenSSL/zlib 优化成立；LTO/GC/Mold、MPTCP、ALL_KMODS/ALL_NONSHARED 关闭。
+- 两个平台都使用 common testing channel，实际 target/series/version/hash 与 lock 完全一致。
+- R4S target、A72+A53 flags、LZ4 zram backend/default/library、native interface/IRQ、schedutil、crypto/CRC 和 OPP 语义存在。
+- N5105 target、x86-64-v2/Tremont flags、VirtIO built-in、igc、EEE disable、VLAN upstream/backport 等价语义存在。
+- common prepared source 具备 PPP TX scatter-gather 与 PPPoE IPv4/IPv6 GRO/GSO 语义。
+- BBRv3 patch stack 对本轮精确 kernel 已 clean-apply，source compatibility 没有半应用或不明漂移。
+
+`make world` 必须一次并行成功。失败诊断只用于找到根因，不能改变 config、换 provider、降级 GCC、跳过 hash 或产生可发布固件。
+
+### 17.4 固件、容器与 Release 验收
+
+平台 firmware verifier 检查：
+
+- profile 唯一主镜像符合 `IMAGE_PATTERN` 且非空。
+- `.img.gz` 的完整 gzip member 与可选 OpenWrt fwtool trailer 均按真实 ABI 解析；trailer 存在时验证 magic、顺序、长度、CRC、metadata JSON，任何未解释尾字节失败。
+- manifest、config/version/feeds buildinfo、profiles.json、CycloneDX SBOM、`openwrt-sha256sums`、source lock、最终 config 和 provenance 齐全。
+- manifest 满足同一个 required/forbidden 合同，没有 `default-settings` 或不需要的替代栈。
+- `config.buildinfo`/provenance 的 target、CPU flags、GCC15 和 selected kernel 与 profile/lock 一致。
+- build tree 中每一份 `tcp_bbr.ko` 与 `sch_fq.ko` 具有同一 selected kernel vermagic；BBR module version 为 `3`。
+- delivery 级 `SHA256SUMS` 覆盖全部文件并可重新校验。
+
+OpenWrt `.img.gz` 可能在 gzip member 后附加合法 fwtool INFO/SIGNATURE chunk；GNU `gzip -t` 会把这类合法容器报告为 trailing garbage。项目不以 `|| true` 放宽，也不只检查解压 payload，而由 `firmware_image.py` 统一定位 gzip EOF 并解释全部 trailer。build 与 Release 回下载复用这一个容器解释器。
+
+Release 级验收在 GitHub 上完成完整闭环：aggregate 先复验两个 delivery，draft 上传后重新下载七个资产，验证顶层 `SHA256SUMS` 和 index，安全展开两个 full package，重建原始 delivery，再调用相同 firmware verifier。只有整个事务成功，draft 才公开。
+
 ## 18. 实施顺序与完成条件
 
 ### 18.1 一次性实施顺序
@@ -646,6 +1314,31 @@ bash scripts/resolve-source-lock.sh digest \
 - `actions/*@main`、Lean master 和 feeds master 都会带来上游行为变化；本项目选择直接跟踪最新，因此依靠四层交付门禁阻止不兼容结果发布。
 - source-lock schema 5 是 6.18 架构目标内部接口；迁移时同步升级所有消费者、fixture 和本文，不保留 schema 4 兼容分支。
 
+### 19.1 风险与处理表
+
+| 风险 | 处理 |
+|---|---|
+| Lean/feed/release 在构建期间变化 | prepare 只解析一次，build 只消费 commit-addressed URL、精确版本和 SHA256 |
+| 最新 HAProxy/AdGuardHome/Geo 数据与当前 recipe 不兼容 | 严格失败并修 recipe/接口；手动回滚也必须指定精确版本后重新生成完整 lock，不使用 `skip` |
+| release metadata/checksum 缺失或不一致 | resolver 拒绝该输入，不进入 matrix |
+| selected testing series 暂无可信 BBRv3 port | prepare 在双 build 前失败；provider 后续发布兼容 port 时下一轮自动吸收，不降级普通 BBR 或另一内核通道 |
+| BBR patch 应用但模块身份不符 | pristine clean-apply、prepared source 断言、cross-built ELF version/vermagic 与 firmware provenance 共同失败 |
+| 配置写了 `fq` 但固件缺 provider | common 必选 `kmod-sched`，成品检查 `sch_fq.ko` 及 vermagic |
+| GCC15 暴露旧 package 错误 | 只在真实闭包内优先使用 canonical OpenWrt packages/core；仍未解决才加窄语义规则，不回退 GCC、不关闭告警、不删 required package |
+| 未选 feed recipe 报依赖 warning | 不使用 `feeds install -a`；只安装 required dependency closure，不为非产品 package 扩大维护面 |
+| 同名 feed/package 抢错 provider | custom feed lock + `providers.tsv` + 冲突目录白名单 + 全 feed reindex；最终 contract 再验证 |
+| 已禁父应用子项夹带 package | exact-forbidden 派生负选择、defconfig 后统一 normalizer、第二次 defconfig 与 manifest 复验 |
+| R4S zram symbol 随 kernel series 漂移 | selected-series guard 最小扩展；backend/default/library 三项合同同时保留，上游原生支持时 no-op |
+| N5105 VLAN backport 文件消失 | 接受 target backport 或 prepared upstream 等价语义，拒绝按版本号猜测 |
+| Action `@main` 或 `ubuntu-latest` 漂移 | 这是明确的最新跟踪策略；只允许官方 action，记录 runner 事实，并由真实构建/交付门禁阻止坏版本发布 |
+| runner 磁盘不足或清理越界 | 白名单 realpath 验证、空间门槛和 timeout；不运行第三方清盘脚本 |
+| ccache/dl 污染 | profile/GCC/digest 分层 identity，下载始终经过 OpenWrt hash，cache 不作为真实性依据 |
+| 并行失败被串行重试掩盖 | 原 job 保持失败，只重放安全 package target 收集 `V=sc` 诊断 |
+| 非默认分支 Release 返回 403 | tag 始终指真实 build commit；只在 Release job 边界选择具备 workflows 权限的已配置 token |
+| 第二个平台失败或资产不完整 | aggregate 严格依赖完整 matrix；draft 回下载失败不公开、不清理旧版本 |
+| gzip 后有合法 fwtool trailer | 共享容器解释器验证 gzip 与全部 trailer，不使用 `gzip -t || true` |
+| SBOM Kconfig 存在但上游生产规则缺失 | 从同一锁定官方 core 窄同步生成器，并以声明式规则补齐完整调用；拒绝空文件或伪造产物 |
+
 ## 20. 上游致谢
 
 - `coolsnowwolf/lede`
@@ -670,3 +1363,44 @@ bash scripts/resolve-source-lock.sh digest \
 - [kernel.org](https://www.kernel.org/category/releases.html)：Linux 6.18 是预计维护到 2028-12 的 longterm；与 Lean 的 testing/stable channel 身份分开判断。
 - [Intel N5105](https://www.intel.com/content/www/us/en/products/sku/212328/intel-celeron-processor-n5105-4m-cache-up-to-2-90-ghz/specifications.html)、[Jasper Lake 数据手册](https://edc.intel.com/content/www/us/en/design/ipla/software-development-platforms/servers/platforms/intel-pentium-silver-and-intel-celeron-processors-datasheet-volume-1-of-2/001/features-supported_1/) 与 [GCC x86 options](https://gcc.gnu.org/onlinedocs/gcc-16.1.0/gcc/x86-Options.html)：N5105 是 Jasper Lake/Tremont，production 固定使用 `x86-64-v2` + Tremont tune，不使用严格 Tremont 或需要 AVX/AVX2 的 `x86-64-v3`。
 - [Linux v6.18.38 upstream igc](https://github.com/gregkh/linux/blob/v6.18.38/drivers/net/ethernet/intel/igc/igc_main.c#L7238-L7242) 已包含 VLAN tag insertion/stripping 默认语义，证明语义合同必须支持 backport/upstream 二选一。
+
+## 21. 原始需求与历史设计覆盖
+
+### 21.1 文档沿革
+
+| 修订节点 | 架构贡献 | 当前承接位置 |
+|---|---|---|
+| `1a2e7e3` 初始方案 | 冻结 Lean master、iptables、双 profile、common/device、精简包、上游锁、CI 事务、发布回滚和风险框架 | 第 2～19 节 |
+| `168e6d9` 至 `52cf8eb` | 补齐 LuCI/Kconfig、forbidden 子项、动态 BBR、官方 packages/core overlay、provider、源码兼容与统一 profile 模型 | 第 3、5、6、7、8、13、14 节 |
+| `36eb356`、`13a370c`、`2c48f67` | 将 BBR ELF identity、OpenWrt fwtool trailer、CycloneDX SBOM 提升为真实产物合同 | 第 13、14、16、17 节 |
+| `0747655` | 把正式验证路径收敛为 source lock、final config、firmware、Release 四个边界 | 第 4、15、17 节 |
+| `50fd9b6`、`a26a7de` | 修正 Release 授权、专业命名、资产收敛和回下载重建 | 第 15、16 节 |
+| `a7c225b`、`e09c085` | selected-kernel/schema 5、Linux 6.18、Git/quilt BBR、upstream/backport 等价语义、zram series guard | 第 6、11、12、13、14、18 节 |
+
+修订 6 的原则是：实现可以减少重复 checker、重复 report 和并行解释器，但架构文档必须继续保留产品决策、设计理由、模块接口、设备边界、取舍与风险。代码精简不能等价为知识删除。
+
+### 21.2 用户需求对齐
+
+| 原始要求 | 当前方案 |
+|---|---|
+| GitHub Actions 自动编译 | update checker + builder 完成解析、双平台 build、聚合、draft 回下载和公开 |
+| 长期无人维护仍跟随最新 | Lean/feeds/core overlays/受控 release/BBRv3 每轮解析最新，轮内锁定；官方 Actions 使用 `@main` |
+| 继续 Lean master | 两个 profile 的 `REPO_REF=master`，本轮 commit 写入 source lock |
+| 继续 firewall3/iptables | common 必选 iptables/fullcone/PassWall iptables，forbidden 阻止 firewall4/nftables |
+| GCC15 固定 | common 明确 `CONFIG_GCC_USE_VERSION_15=y`，不自动降级或切最高 major |
+| R4S 与 N5105 共用该共用的 | 应用、网络协议、上游锁、工具链、安全、发布和 verifier 都在 common/共享模块 |
+| 两个平台该优化的分别优化 | R4S ARMv8/A72+A53/r8168/IRQ/OPP/zram；N5105 x86-64-v2/Tremont/VirtIO/igc/4 queues/irqbalance |
+| Linux 6.18 | common 选择 testing channel，精确 6.18 point release/hash 从本轮 Lean 动态解析 |
+| 默认 BBRv3，兼容 IPv4/IPv6 TCP | selected-series public port + module version `3`；运行名/包名保持 `bbr`/`kmod-tcp-bbr` |
+| 只编译实际需要的插件 | required dependency closure + exact/regex forbidden + final manifest；不维护未选择 package |
+| Geodata 与 Geoview | GeoIP/Geosite 均来自 Loyalsoldier 动态 release，`v2ray-geodata` 打包，Geoview 由 PassWall packages provider 编译 |
+| HAProxy/AdGuardHome/Geo 始终新 | prepare 解析最新 LTS/stable，写入真实 hash；设备内不绕过 package manager 自更新 |
+| 使用指定上游 feed | `kenzok8/small`、`kenzok8/openwrt-packages`、`sbwml/luci-app-mosdns`、canonical Openwrt-Passwall 两个仓库 |
+| 网络共同偏好 | LAN `192.168.2.1/24`、DHCP `.32/232`、IPv6 relay；其他 WAN/桥接/端口不扩大推断 |
+| DNS 链不要固化进编译 | 只编译组件与接口，端口、upstream、cache、规则、节点、订阅和凭据留在设备运行时 |
+| 学习 sbwml 但保持公开可维护 | 逐项纳入或用 Lean 原生等价实现；不运行远程脚本、不引入私有 target/授权输入/宽功能集 |
+| 避免多头维护和过量校验 | 声明单一所有者、共享领域模块、四个高价值边界；workflow/shell 不复制 schema 或设备枚举 |
+| 一次性双平台交付 | 同一 source lock 下的完整 matrix，缺一不可；一个 Release 同时包含两套专业命名固件 |
+| Release 可用、可校验、可回滚 | 两个直接镜像 + 两个 full package + index/lock/SHA；draft 回下载复验后公开，保留最近六个完整版本 |
+
+至此，最初方案中仍然成立的目标、设备前提、common/device 分层、包与驱动取舍、sbwml 审计、上游策略、模块接口、CI/cache/发布事务、自动验收、回滚和风险均在本文件中有明确归属；后续实现变更必须同步修改对应章节与机器可读事实源。
