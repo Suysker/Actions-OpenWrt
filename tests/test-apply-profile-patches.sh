@@ -13,6 +13,8 @@ mkdir -p "$lock_dir/bbr3/6.12" \
   "$openwrt/package/libs/libsepol" \
   "$openwrt/package/lean/wol" \
   "$openwrt/feeds/small/tcping" \
+  "$openwrt/include" \
+  "$openwrt/scripts/openwrt-sbom" \
   "$openwrt/package/kernel/linux/modules"
 
 cat > "$lock_dir/bbr3/6.12/0001-bbrv3.patch" <<'PATCH'
@@ -180,6 +182,24 @@ define Build/Compile
 	$(MAKE) -C $(PKG_BUILD_DIR) CC="$(TARGET_CC)" CFLAGS="$(TARGET_CFLAGS) -Wall" LDFLAGS="$(TARGET_LDFLAGS)"
 endef
 EOF
+cat > "$openwrt/include/image.mk" <<'EOF'
+define Image/Manifest
+	@echo fixture-manifest
+endef
+EOF
+python3 - "$repo_root/profiles/common/source-compatibility.json" "$openwrt" <<'PY'
+import json
+import pathlib
+import sys
+
+policy = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+root = pathlib.Path(sys.argv[2])
+rule = next(item for item in policy["rules"] if item["id"] == "image-cyclonedx-sbom")
+for required_file in rule["required_files"]:
+    path = root / required_file["path"]
+    path.write_text("\n".join(required_file["contains"]) + "\n", encoding="utf-8")
+    path.chmod(0o755 if required_file["executable"] else 0o644)
+PY
 cat > "$openwrt/package/kernel/linux/modules/netsupport.mk" <<'EOF'
 define KernelPackage/tcp-bbr
 FILES:=$(LINUX_DIR)/net/ipv4/tcp_bbr.ko
@@ -214,12 +234,26 @@ if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/feeds/small/tcping/Makefile"; then
   echo "tcping compatibility fixture unexpectedly depends on version/hash fields" >&2
   exit 1
 fi
-grep -qx 'compatibility_libsepol_gnu17_status=inserted' "$report"
-grep -qx 'compatibility_libsepol_gnu17_detail=gnu17' "$report"
-grep -qx 'compatibility_wol_gnu17_status=inserted' "$report"
-grep -qx 'compatibility_wol_gnu17_detail=gnu17' "$report"
-grep -qx 'compatibility_tcping_target_make_environment_status=inserted' "$report"
-grep -qx 'compatibility_tcping_target_make_environment_detail=$(TARGET_CONFIGURE_OPTS)' "$report"
+grep -qx 'source_compatibility_libsepol_gnu17_status=inserted' "$report"
+grep -qx 'source_compatibility_libsepol_gnu17_detail=gnu17' "$report"
+grep -qx 'source_compatibility_wol_gnu17_status=inserted' "$report"
+grep -qx 'source_compatibility_wol_gnu17_detail=gnu17' "$report"
+grep -qx 'source_compatibility_tcping_target_make_environment_status=inserted' "$report"
+grep -qx 'source_compatibility_tcping_target_make_environment_detail=$(TARGET_CONFIGURE_OPTS)' "$report"
+grep -qx 'source_compatibility_image_cyclonedx_sbom_status=inserted' "$report"
+grep -qx 'source_compatibility_image_cyclonedx_sbom_detail=Image/Manifest' "$report"
+python3 - "$repo_root/profiles/common/source-compatibility.json" \
+  "$openwrt/include/image.mk" <<'PY'
+import json
+import pathlib
+import sys
+
+policy = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+rule = next(item for item in policy["rules"] if item["id"] == "image-cyclonedx-sbom")
+text = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+assert text.count("\n".join(rule["block"])) == 1
+assert all(marker in text for marker in rule["accepted_semantics"][0])
+PY
 grep -qx 'bbrv3_provider=fixture-single' "$report"
 grep -qx 'bbrv3_patch_count=1' "$report"
 grep -qx 'patch-report-v2' "$report"
@@ -234,9 +268,10 @@ bash "$repo_root/scripts/apply-profile-patches.sh" \
 [ "$(grep -Fxc 'TARGET_CFLAGS += -std=gnu17' "$openwrt/package/libs/libsepol/Makefile")" -eq 1 ]
 [ "$(grep -Fxc 'TARGET_CFLAGS += -std=gnu17' "$openwrt/package/lean/wol/Makefile")" -eq 1 ]
 [ "$(grep -Fo '$(TARGET_CONFIGURE_OPTS)' "$openwrt/feeds/small/tcping/Makefile" | wc -l)" -eq 1 ]
-grep -qx 'compatibility_libsepol_gnu17_status=upstream' "$second_report"
-grep -qx 'compatibility_wol_gnu17_status=upstream' "$second_report"
-grep -qx 'compatibility_tcping_target_make_environment_status=upstream' "$second_report"
+grep -qx 'source_compatibility_libsepol_gnu17_status=upstream' "$second_report"
+grep -qx 'source_compatibility_wol_gnu17_status=upstream' "$second_report"
+grep -qx 'source_compatibility_tcping_target_make_environment_status=upstream' "$second_report"
+grep -qx 'source_compatibility_image_cyclonedx_sbom_status=upstream' "$second_report"
 grep -qx 'bbrv3_module_version_status=compatibility-present' "$second_report"
 
 # Prove that a future provider retaining the field itself does not require a
@@ -277,11 +312,40 @@ define Build/Compile
 	$(MAKE) -C $(PKG_BUILD_DIR) $(MAKE_FLAGS)
 endef
 EOF
-third_report="$tmpdir/package-compatibility-upstream.txt"
-python3 "$repo_root/scripts/apply-package-compatibility.py" \
-  "$repo_root/profiles/common/package-compatibility.json" "$openwrt" "$third_report"
-grep -qx 'compatibility_tcping_target_make_environment_status=upstream' "$third_report"
-grep -qx 'compatibility_tcping_target_make_environment_detail=$(MAKE_FLAGS)' "$third_report"
+third_report="$tmpdir/source-compatibility-upstream.txt"
+python3 "$repo_root/scripts/apply-source-compatibility.py" \
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" "$third_report"
+grep -qx 'source_compatibility_tcping_target_make_environment_status=upstream' "$third_report"
+grep -qx 'source_compatibility_tcping_target_make_environment_detail=$(MAKE_FLAGS)' "$third_report"
+
+# A future Lean-native generator is an equivalent complete semantic set and
+# does not depend on the isolated overlay files.
+python3 - "$repo_root/profiles/common/source-compatibility.json" \
+  "$openwrt/include/image.mk" <<'PY'
+import json
+import pathlib
+import sys
+
+policy = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+rule = next(item for item in policy["rules"] if item["id"] == "image-cyclonedx-sbom")
+block = "\n".join(rule["block"])
+isolated_generator = "$(TOPDIR)/" + rule["accepted_semantics"][0][1]
+native_generator = rule["accepted_semantics"][1][1]
+native_block = block.replace(isolated_generator, native_generator)
+assert native_block != block
+pathlib.Path(sys.argv[2]).write_text(
+    "define Image/Manifest\n\t@echo fixture-manifest\n\n"
+    + native_block
+    + "\nendef\n",
+    encoding="utf-8",
+)
+PY
+rm "$openwrt/scripts/openwrt-sbom/package-metadata.pl" \
+  "$openwrt/scripts/openwrt-sbom/metadata.pm"
+native_report="$tmpdir/source-compatibility-native.txt"
+python3 "$repo_root/scripts/apply-source-compatibility.py" \
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" "$native_report"
+grep -qx 'source_compatibility_image_cyclonedx_sbom_status=upstream' "$native_report"
 
 cat > "$openwrt/feeds/small/tcping/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk
@@ -292,12 +356,63 @@ define Build/Compile
 	$(MAKE) -C $(PKG_BUILD_DIR) CC="$(TARGET_CC)"
 endef
 EOF
-if python3 "$repo_root/scripts/apply-package-compatibility.py" \
-  "$repo_root/profiles/common/package-compatibility.json" "$openwrt" \
-  "$tmpdir/package-compatibility-drift.txt" >"$tmpdir/package-compatibility-drift.out" 2>&1; then
+if python3 "$repo_root/scripts/apply-source-compatibility.py" \
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" \
+  "$tmpdir/source-compatibility-drift.txt" >"$tmpdir/source-compatibility-drift.out" 2>&1; then
   echo "tcping compatibility unexpectedly accepted a changed custom recipe" >&2
   exit 1
 fi
-grep -Fq 'recipe no longer contains required fragments' "$tmpdir/package-compatibility-drift.out"
+grep -Fq 'recipe no longer contains required fragments' "$tmpdir/source-compatibility-drift.out"
+
+# A partially copied upstream SBOM block is ambiguous and must fail instead of
+# being duplicated or accepted. The fixture derives its marker from the policy.
+cat > "$openwrt/feeds/small/tcping/Makefile" <<'EOF'
+include $(TOPDIR)/rules.mk
+PKG_NAME:=tcping
+include $(INCLUDE_DIR)/package.mk
+EOF
+python3 - "$repo_root/profiles/common/source-compatibility.json" \
+  "$openwrt/include/image.mk" <<'PY'
+import json
+import pathlib
+import sys
+
+policy = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+rule = next(item for item in policy["rules"] if item["id"] == "image-cyclonedx-sbom")
+path = pathlib.Path(sys.argv[2])
+path.write_text(
+    "define Image/Manifest\n\t@echo fixture-manifest\n\n"
+    + rule["block"][0]
+    + "\n"
+    + rule["block"][-1]
+    + "\nendef\n",
+    encoding="utf-8",
+)
+PY
+if python3 "$repo_root/scripts/apply-source-compatibility.py" \
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" \
+  "$tmpdir/source-compatibility-partial.txt" \
+  >"$tmpdir/source-compatibility-partial.out" 2>&1; then
+  echo "image SBOM compatibility unexpectedly accepted a partial semantic block" >&2
+  exit 1
+fi
+grep -Fq 'has a partial semantic block' "$tmpdir/source-compatibility-partial.out"
+
+# With no native block, insertion must prove that both isolated generator
+# files exist; it may not leave a Make rule pointing at a missing tool.
+cat > "$openwrt/include/image.mk" <<'EOF'
+define Image/Manifest
+	@echo fixture-manifest
+endef
+EOF
+if python3 "$repo_root/scripts/apply-source-compatibility.py" \
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt" \
+  "$tmpdir/source-compatibility-missing-generator.txt" \
+  >"$tmpdir/source-compatibility-missing-generator.out" 2>&1; then
+  echo "image SBOM compatibility accepted a missing generator" >&2
+  exit 1
+fi
+grep -Fq 'required file is missing' \
+  "$tmpdir/source-compatibility-missing-generator.out"
 
 echo "Dynamic BBRv3 patch applicator tests passed."

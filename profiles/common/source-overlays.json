@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "repositories": [
     {
       "id": "openwrt-core",
@@ -7,16 +7,29 @@
       "ref": "master",
       "mappings": [
         {
+          "kind": "tree",
           "source": "package/libs/gmp",
           "target": "package/libs/gmp"
         },
         {
+          "kind": "tree",
           "source": "package/libs/pcre2",
           "target": "package/libs/pcre2"
         },
         {
+          "kind": "tree",
           "source": "package/system/mtd",
           "target": "package/system/mtd"
+        },
+        {
+          "kind": "file",
+          "source": "scripts/package-metadata.pl",
+          "target": "scripts/openwrt-sbom/package-metadata.pl"
+        },
+        {
+          "kind": "file",
+          "source": "scripts/metadata.pm",
+          "target": "scripts/openwrt-sbom/metadata.pm"
         }
       ]
     }

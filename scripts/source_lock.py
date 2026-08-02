@@ -234,7 +234,13 @@ def merge_feed_specs(
     ]
 
 
-def require_overlay_path(value: Any, label: str, *, target: bool = False) -> str:
+def require_overlay_path(
+    value: Any,
+    label: str,
+    *,
+    target: bool = False,
+    target_kind: str = "tree",
+) -> str:
     if not isinstance(value, str):
         raise ResolutionError(f"{label} must be a string")
     path = pathlib.PurePosixPath(value)
@@ -247,13 +253,20 @@ def require_overlay_path(value: Any, label: str, *, target: bool = False) -> str
     ):
         raise ResolutionError(f"unsafe {label}: {value!r}")
     if target:
-        is_core_package_subtree = (
-            path.parts[0] == "package" and len(path.parts) >= 3
-        )
-        is_feed_package_subtree = (
-            path.parts[0] == "feeds" and len(path.parts) >= 4
-        )
-        if not (is_core_package_subtree or is_feed_package_subtree):
+        if target_kind == "tree":
+            supported = (
+                path.parts[0] == "package" and len(path.parts) >= 3
+            ) or (
+                path.parts[0] == "feeds" and len(path.parts) >= 4
+            )
+        elif target_kind == "file":
+            supported = (
+                len(path.parts) == 3
+                and path.parts[:2] == ("scripts", "openwrt-sbom")
+            )
+        else:
+            raise ResolutionError(f"unsupported source overlay kind: {target_kind!r}")
+        if not supported:
             raise ResolutionError(f"unsupported source overlay target: {value!r}")
     return value
 
@@ -271,7 +284,7 @@ def load_source_overlay_contracts(
             "source overlay contract must contain schema and repositories"
         )
     repositories = document["repositories"]
-    if document["schema"] != 1 or not isinstance(repositories, list):
+    if document["schema"] != 2 or not isinstance(repositories, list):
         raise ResolutionError("unsupported source overlay contract schema")
     if not repositories:
         raise ResolutionError("source overlay contract declares no repositories")
@@ -332,21 +345,38 @@ def load_source_overlay_contracts(
         mappings: list[dict[str, str]] = []
         for mapping_index, mapping in enumerate(raw_mappings, start=1):
             mapping_label = f"{label} mapping {mapping_index}"
-            if not isinstance(mapping, dict) or set(mapping) != {"source", "target"}:
+            if not isinstance(mapping, dict) or set(mapping) != {
+                "kind",
+                "source",
+                "target",
+            }:
                 raise ResolutionError(f"{mapping_label} has invalid fields")
+            kind = mapping["kind"]
+            if kind not in {"tree", "file"}:
+                raise ResolutionError(f"{mapping_label} has an invalid kind")
             source = require_overlay_path(mapping["source"], f"{mapping_label} source")
             target_path = require_overlay_path(
-                mapping["target"], f"{mapping_label} target", target=True
+                mapping["target"],
+                f"{mapping_label} target",
+                target=True,
+                target_kind=kind,
             )
             if source in sources:
-                raise ResolutionError(f"{label} repeats source subtree {source!r}")
-            if target_path in targets:
+                raise ResolutionError(f"{label} repeats source path {source!r}")
+            if any(
+                target_path == existing
+                or target_path.startswith(existing + "/")
+                or existing.startswith(target_path + "/")
+                for existing in targets
+            ):
                 raise ResolutionError(
-                    f"source overlay target is declared more than once: {target_path}"
+                    f"source overlay target overlaps another mapping: {target_path}"
                 )
             sources.add(source)
             targets.add(target_path)
-            mappings.append({"source": source, "target": target_path})
+            mappings.append(
+                {"kind": kind, "source": source, "target": target_path}
+            )
         result.append(
             {
                 "id": identifier,
@@ -1271,18 +1301,18 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         identifier = contract["id"]
         resolved = resolve_git_ref(contract["url"], contract["requested_ref"])
         overlay_files = github_tree_files(resolved["url"], resolved["commit"])
-        missing_sources = [
-            mapping["source"]
-            for mapping in contract["mappings"]
-            if not any(
-                path == mapping["source"]
-                or path.startswith(mapping["source"] + "/")
-                for path in overlay_files
-            )
-        ]
+        missing_sources = []
+        for mapping in contract["mappings"]:
+            source = mapping["source"]
+            if mapping["kind"] == "file":
+                exists = source in overlay_files
+            else:
+                exists = any(path.startswith(source + "/") for path in overlay_files)
+            if not exists:
+                missing_sources.append(source)
         if missing_sources:
             raise ResolutionError(
-                f"source overlay {identifier} misses declared subtrees: "
+                f"source overlay {identifier} misses declared paths: "
                 + ", ".join(missing_sources)
             )
         resolved["mappings"] = contract["mappings"]

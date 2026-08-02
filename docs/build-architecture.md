@@ -129,7 +129,7 @@ source-lock.json + cache key + Release provenance
 4. HAProxy 选择官方仍受支持的最高 LTS 分支及该分支最新 patch release；AdGuardHome 选择 GitHub 最新非 prerelease；GeoIP/Geosite 分别选择 Loyalsoldier 对应仓库的最新非 prerelease。
 5. 每个 release 立即展开成精确版本、不可变 tag/URL 和 SHA256。HAProxy 使用官方 `releases.json` 的 SHA256；AdGuardHome 使用精确 tag/commit、GitHub asset digest 和计算后锁定的源码归档 hash；GeoIP/Geosite 同时核对 release asset digest 与发布的 `.sha256sum`。
 6. 从锁定 Lean commit 解析每个 profile 的稳定 kernel series；再按 `patchsets/common/kernel/bbr3-sources.json` 的 provider 顺序查找当前 series 的最新兼容 BBRv3 port。resolver 解析 Google `v3` HEAD 与选中 provider HEAD，下载全部 patch、计算 SHA256，并给每个文件分配 source-lock artifact 内的安全相对路径。
-7. 将 OpenWrt、所有 feeds、声明式官方 core 覆盖、上游产物、每个 profile 的稳定内核系列、BBRv3 当前算法 HEAD/适配 commit/patch hash、补丁摘要、workflow 中 `actions/*@main` 的观测 HEAD 和仓库实现 SHA 写入 `source-lock.json`。当前通用 package 由锁定的 `openwrt/packages@master` 整体提供；`profiles/common/source-overlays.json` 只声明 `openwrt/openwrt@master` 中的 GMP、PCRE2 与 MTD core 子树。resolver 按仓库只解析一次 commit，执行层不枚举 package 版本或 hash。
+7. 将 OpenWrt、所有 feeds、声明式官方 core 覆盖、上游产物、每个 profile 的稳定内核系列、BBRv3 当前算法 HEAD/适配 commit/patch hash、补丁摘要、workflow 中 `actions/*@main` 的观测 HEAD 和仓库实现 SHA 写入 `source-lock.json`。当前通用 package 由锁定的 `openwrt/packages@master` 整体提供；`profiles/common/source-overlays.json` 声明 `openwrt/openwrt@master` 中的 GMP、PCRE2、MTD core 子树和两个隔离的 CycloneDX generator 文件。resolver 按仓库只解析一次 commit，执行层不枚举 package 版本或 hash。
 8. prepare 随即执行 `materialize`：只从 lock 中的 commit-addressed immutable raw URL 下载 BBRv3 patch，逐文件复验 SHA256，并与 JSON 一起上传为同一个 `source-lock` artifact；精确 Linux 源码上的顺序 clean-apply 在 matrix 前完成。
 9. build job 只 checkout 和下载 source-lock 中的精确输入，不读取远程 branch HEAD、release `latest` 或 API。
 10. `source-lock.json` 及其物化 patch 作为每次构建的产物和 Release 附件，不提交为永久版本锁；仓库只保存 provider/ref/path 规则和算法身份断言。
@@ -260,7 +260,7 @@ profiles/
     geodata-sources.json
     providers.tsv
     source-overlays.json
-    package-compatibility.json
+    source-compatibility.json
     config.seed
     required-packages.txt
     forbidden-packages.txt
@@ -309,6 +309,7 @@ scripts/
   profile_semantics.py
   resolve-source-lock.sh
   apply-source-lock-artifacts.sh
+  apply-source-compatibility.py
   prepare-runner.sh
   apply-profile-patches.sh
   manage-custom-feeds.sh
@@ -350,7 +351,7 @@ lessons.md
 
 补丁目录不放置“优化合集”。设备 `series` 和通用非内核 `series` 初始为空；`bbr3-sources.json` 只定义受信任 provider、浮动 ref、按 kernel series 展开的路径规则、安装栈和算法身份断言，不保存某一轮的 commit、hash 或 patch 内容。prepare 将选中的 patch 物化进 source-lock artifact，每个文件都必须有 SHA256、前置/后置断言和定向 clean-apply。R4S 和 x86 均继续使用 Lean 已有 target/device 定义，不维护私有 target 分叉；master 切换稳定内核系列时 resolver 自动尝试受信任 provider，若没有可 clean-apply 的 port 则在 matrix 前明确失败。
 
-普通 package 兼容变换不得把上游 `PKG_VERSION`、`PKG_HASH` 或 release URL 当作 patch 上下文。所有确实无法由当前 canonical provider 解决的规则集中在 `profiles/common/package-compatibility.json`，由单一通用执行器按唯一语义锚点幂等应用并作后置断言；manifest 只声明相对路径、锚点、所需构建语义和稳定 rule id，不保存版本、hash 或 release URL。当前仅保留三项经实际构建证明仍需要的窄规则：`libsepol` 与用户选择的旧 `wol` CLI 各自在包级保持 GNU17 语义；`small/tcping` 恢复自定义 `Build/Compile` 遗漏的 `$(TARGET_CONFIGURE_OPTS)`，使 `CC`、`STRIP` 等始终来自目标工具链。其余当前构建闭包中的通用 package 直接消费本轮锁定的 OpenWrt 官方 packages feed；这既固定 GCC 15 产品代际，也避免在仓库永久复制版本/hash 或短期源码补丁。
+非内核源码兼容变换不得把上游 `PKG_VERSION`、`PKG_HASH`、release URL 或某次 commit 当作 patch 上下文。所有确实无法由当前 canonical provider/Lean tree 直接满足的规则集中在 `profiles/common/source-compatibility.json`，由单一通用执行器按唯一语义锚点幂等应用并作后置断言；manifest 只声明安全相对路径、可复用 operation、锚点/语义标记、需要插入的稳定构建语义和 rule id，不保存版本、hash 或 release URL。当前 package 规则仍是 `libsepol`/旧 `wol` 的 GNU17 与 `small/tcping` 的目标工具链环境；共享构建规则增加 Lean 缺失的官方 CycloneDX image-manifest block。它们是同一声明/执行接口的规则实例，不在 workflow、profile 或测试中复制实现。
 
 Geo 数据只保留一份声明式静态合同 `profiles/common/geodata-sources.json`。每个条目声明数据角色、可信 GitHub 仓库、release asset、手工回退环境变量，以及 `v2ray-geodata` recipe 的版本字段/download block；它不保存 release tag、版本或 hash。resolver、source-lock validator 与 artifact applicator 必须通过同一个 loader 消费该合同，不得各自复制 `GeoIP`/`Geosite` tuple。release/tag/URL/SHA256 每轮动态解析后进入 source-lock；可信 owner、asset 身份和 package schema 属于供应链/接口合同，变更时只修改这一处并触发 profile digest 变化。
 
@@ -400,13 +401,13 @@ Feed 合并规则同样由 resolver 唯一实现：`feeds.conf.default` 与 `fee
 
 ### 7.3 Source overlay synchronizer
 
-`scripts/sync-source-overlays.sh` 是唯一 core 源码覆盖同步器；当前只处理官方 OpenWrt core 中的 GMP、PCRE2 与 MTD，不承担整个 packages feed 已能表达的工作。模块划分为：
+`scripts/sync-source-overlays.sh` 是唯一 core 源码覆盖同步器；当前处理官方 OpenWrt core 中的 GMP、PCRE2、MTD，以及不能与 Lean 旧元数据模块混用的两个 CycloneDX generator 文件，不承担整个 packages feed 已能表达的工作。模块划分为：
 
-1. `profiles/common/source-overlays.json` 是唯一声明接口。repository `id` 使用小写 kebab-case；每条映射只包含上游 `source` 与 Lean tree 内 `target`，两者都使用 POSIX 相对路径并保持上游目录命名。
-2. `resolve-source-lock.sh` 按 repository `id` 各解析一次浮动 ref，验证每个 source 子树存在、所有 target 全局唯一，并把完整 commit 与原序映射冻结进 `source_overlays`。
-3. `sync-source-overlays.sh` 只接受 schema 3 lock；每个 repository 只做一次稀疏 checkout，再按映射完整替换目标子树。它不知道版本、hash 或编译错误类型。
-4. target 只允许位于 `package/<category-or-subtree>/<component>` 或 `feeds/<feed>/<category-or-subtree>/<component>`；不枚举 `libs`、`system` 等具体分类。同步前解析真实父目录并证明仍在 OpenWrt root 下，拒绝绝对路径、`..`、重复 target、控制字符与 symlink 越界。
-5. `test-sync-source-overlays.sh` 直接读取同一份 manifest，为其中全部 repository/mapping 动态生成本地 Git origin、lock、旧目标和期望 marker，证明按仓库复用 checkout、旧目录完整替换及未声明目录不复制；增加或删除映射无需再修改测试清单。重复 target、非 canonical 路径和越界 root 由 resolver fixture 继续验证。
+1. `profiles/common/source-overlays.json` 是唯一声明接口。repository `id` 使用小写 kebab-case；每条映射只包含 `kind`（`tree` 或 `file`）、上游 `source` 与 Lean tree 内 `target`，后两者都使用 POSIX 相对路径。类型是复制边界，不由文件扩展名或运行时猜测。
+2. `resolve-source-lock.sh` 按 repository `id` 各解析一次浮动 ref，按 `kind` 验证 source 是精确 blob 或至少含一个 blob 的 tree、所有 target 全局唯一，并把完整 commit 与原序映射冻结进 `source_overlays`。
+3. `sync-source-overlays.sh` 只接受 schema 3 lock；每个 repository 只做一次稀疏 checkout，tree 使用自身作为 cone，file 使用父目录作为 cone，再按声明类型完整替换精确目标。它不知道版本、hash 或编译错误类型。
+4. tree target 只允许位于 `package/<category-or-subtree>/<component>` 或 `feeds/<feed>/<category-or-subtree>/<component>`；不枚举 `libs`、`system` 等具体分类。file target 只开放静态合同中的隔离目录 `scripts/openwrt-sbom/`，不允许覆盖 Lean 原 `scripts/package-metadata.pl`/`metadata.pm`。同步前解析真实父目录并证明仍在 OpenWrt root 下，拒绝绝对路径、`..`、重复/嵌套冲突 target、控制字符与 symlink 越界。
+5. `test-sync-source-overlays.sh` 直接读取同一份 manifest，为其中全部 repository/mapping 按 `kind` 动态生成本地 Git origin、lock、旧目标和期望 marker，证明按仓库复用 checkout、tree/file 精确替换、file executable mode 保留及未声明路径不复制；增加或删除映射无需再修改测试清单。重复 target、非 canonical 路径和越界 root 由 resolver fixture 继续验证。
 6. profile digest 覆盖 common overlay 合同，所以映射变化同时失效两个平台缓存；每个 overlay commit 进入 source-lock digest，任一官方仓库变化都会触发双平台重建。
 
 依赖接口固定为：
@@ -417,10 +418,11 @@ profiles/common/source-overlays.json
   -> source-lock.json:source_overlays
   -> sync-source-overlays.sh
   -> package/libs/gmp | package/libs/pcre2 | package/system/mtd
+  -> scripts/openwrt-sbom/{package-metadata.pl,metadata.pm}
   -> defconfig/download/build/provenance
 ```
 
-这个边界只用于 Lean core 缺失且官方 core 已有可复用实现的窄子树。通用 packages 由同名 feed 覆盖解决；官方也未解决的问题才进入窄语义兼容或 repository patch 评审。不得在 workflow 中添加包名特判、降级 GCC 或全局关闭 `-Werror`。
+这个边界只用于 Lean core 缺失且官方 core 已有可复用实现的窄 tree/file。通用 packages 由同名 feed 覆盖解决；官方也未解决的问题才进入窄语义兼容或 repository patch 评审。不得在 workflow 中添加包名特判、降级 GCC 或全局关闭 `-Werror`。
 
 #### 7.3.1 Locked feed 与 package provider pipeline
 
@@ -470,30 +472,32 @@ apply-source-lock-artifacts.sh <openwrt-root> <source-lock.json> <report-json>
 
 保留 `scripts/apply-profile-patches.sh` 这个统一入口，但改变其职责：
 
-1. 读取 common package compatibility manifest、仓库内 `patchsets/common/series`、设备 `series`，以及 source-lock artifact 已物化的 BBRv3 patch 清单。
+1. 读取 common source compatibility manifest、仓库内 `patchsets/common/series`、设备 `series`，以及 source-lock artifact 已物化的 BBRv3 patch 清单。
 2. source-lock 的 profile/kernel series、artifact path、安装目录、安装名与逐文件 SHA256 必须自洽；所有 artifact path 必须位于 source-lock 目录内，拒绝绝对路径和 `..`。
 3. 禁止运行第三方 build script，也禁止在 apply 阶段 clone 远程仓库。
 4. 仓库 common/device patch 先对 OpenWrt tree 执行 `git apply --check`；BBRv3 patch 已在 prepare 对精确 kernel 顺序 clean-apply，build 再验证物化字节的 SHA 后安装进锁定的 OpenWrt kernel patch stack。
 5. patch 应用失败立即终止；不存在 `skipped-conflict`。
 6. BBRv3 后置断言至少确认 `BBR_VERSION=3`、拥塞控制运行名为 `bbr`、最终源码以不受 Lean module-strip 影响的 `MODULE_INFO(version, ...)` 保留代际，并确认 Lean 的 `KernelPackage/tcp-bbr` 定义未被整体替换；成品仍须直接读取 `.modinfo` 证明 `version=3`。
 7. 每个其他 patch 也必须声明后置检查，证明预期行为确实存在。
-8. `profiles/common/package-compatibility.json` 和 `scripts/apply-package-compatibility.py` 构成唯一的非内核 recipe 兼容接口。manifest 负责稳定声明，执行器负责路径安全、唯一锚点、幂等变换、上游等价语义识别和后置断言；`apply-profile-patches.sh` 只编排它，不为具体 package 写分支。`libsepol`/`wol` 复用同一种语言标准操作，`tcping` 使用 target make 环境操作；它们只是规则实例，不是三套实现。
+8. `profiles/common/source-compatibility.json` 和 `scripts/apply-source-compatibility.py` 构成唯一的非内核源码兼容接口。manifest 负责稳定声明，执行器负责路径安全、唯一锚点、幂等变换、上游等价语义识别和后置断言；`apply-profile-patches.sh` 只编排它，不为具体 package 或 profile 写分支。`language-standard`、`make-environment` 与 `make-define-block` 是可复用 operation；`libsepol`/`wol`、`tcping` 与 image SBOM 分别只是规则实例。
 9. `small/tcping` 是 PassWall 的硬依赖，不能从精简 allowlist 中删除。其 current recipe 自定义了 `Build/Compile`，却未继承 OpenWrt 默认 `MAKE_FLAGS` 中的 `$(TARGET_CONFIGURE_OPTS)`；规则只在该唯一 make invocation 后插入这一稳定工具链契约，保留最新 feed 的 source URL、版本与 hash。它不切换到旧 tcping provider，也不直接写入 target triple。
-10. 最终生成 `patch-report.txt`，记录 profile、kernel series、provider/origin commit、每个物化 patch 的 SHA256/安装顺序和所有后置断言，以及每条 package compatibility rule 的状态。
+10. `make-define-block` 只在唯一命名的 Make define 内工作，并允许 manifest 声明多组完整等价语义。本轮隔离 generator 与未来 Lean 原生 `$(SCRIPT_DIR)/package-metadata.pl` 任一组完整命中时报告 `upstream`；所有组全部缺失时先验证声明的 generator/模块文件、执行权限和 `imgcyclonedxsbom`/ABI/CPE 关键语义，再在该 define 的唯一 `endef` 前插入 manifest 持有的 block；只命中任一组的部分标记时视为上游漂移并失败。测试从同一 manifest 读取生产 block/标记构造预期，不再维护第二份 SBOM 规则文本。
+11. 最终生成 `patch-report.txt`，记录 profile、kernel series、provider/origin commit、每个物化 patch 的 SHA256/安装顺序和所有后置断言，以及每条 source compatibility rule 的状态。
 
 生产补丁路径只有这个小型、可审计的 applicator 与仓库内 series。
 
 非内核兼容模块的依赖图与复用边界固定为：
 
 ```text
-profiles/common/package-compatibility.json
-  -> scripts/apply-package-compatibility.py
+profiles/common/source-compatibility.json
+  -> scripts/apply-source-compatibility.py
   -> scripts/apply-profile-patches.sh
   -> locked Lean tree / locked feed recipe
+      -> language-standard / make-environment / make-define-block
   -> patch-report.txt -> provenance / artifact verifier
 ```
 
-这条路径与 source overlay 并列：官方已吸收的修复优先走 overlay；没有可复用 canonical 上游 recipe 时才使用兼容 manifest。两者都发生在 `make defconfig` 之前，规则文件位于 `profiles/common`，所以两个 profile digest、缓存身份和本轮 source-lock digest 都会随之变化。
+这条路径与 source overlay 并列：可完整替换的 canonical 子树优先走 overlay；只缺少一个稳定语义块、不能安全替换整份 Lean 核心文件时才使用兼容 manifest。两者都发生在 `make defconfig` 之前，规则文件位于 `profiles/common`，所以两个 profile digest、缓存身份和本轮 source-lock digest 都会随之变化。路径白名单仍以 package/feed Makefile 和显式共享构建文件为边界，不开放任意仓库写入。
 
 ### 7.6 Contract checks
 
@@ -561,6 +565,21 @@ verify-firmware-artifacts.sh <profile> <target-directory> <source-lock.json>
 - target/kernel/compiler/CPU flags 与 profile contract 一致
 - BBRv3 algorithm commit、kernel port hash 与实际 `tcp_bbr.ko` 的 module version `3` 一致
 - manifest 包含 `kmod-sched`，构建树包含 `sch_fq.ko`
+
+`run 30731730034` 已使 R4S 与 N5105 的 `make world`、GCC15、全部 BBRv3 module metadata，以及新的 gzip/fwtool byte contract 同时通过；R4S 被正确识别为 INFO→SIGNATURE，x86 被正确识别为 SIGNATURE-only。两个 job 随后都在同一条 `CycloneDX SBOM is missing` 门禁失败。最终 `.config` 均明确含 `CONFIG_JSON_CYCLONEDX_SBOM=y`，但本轮锁定 Lean 的 `include/image.mk` 只在 `Image/Manifest` 生成 `.manifest`；同轮锁定的 OpenWrt 官方 core 在相同 define 中还调用 `package-metadata.pl imgcyclonedxsbom` 生成 `*.bom.cdx.json`。因此不是 collector glob 或配置漂移，而是 Lean 保留了 Kconfig 开关却漏掉对应 image rule。
+
+SBOM 修复不覆盖整份 `include/image.mk`，因为它同时承载 Lean 的 target image 行为，整文件替换会扩大风险。进一步核验还确认 Lean 的旧 `scripts/package-metadata.pl` 没有 `imgcyclonedxsbom`，其 `metadata.pm` 也缺少官方生成器使用的 ABI/CPE 解析字段；不能把官方调用接到 Lean 旧模块上。source overlay 因此从同一轮锁定的 OpenWrt core 把官方 `package-metadata.pl` 与 `metadata.pm` 作为两个 `file` 映射复制到独立的 `scripts/openwrt-sbom/`，不覆盖 Lean 工具、不在仓库永久保存版本。`source-compatibility` 的 `make-define-block` operation 再以 `Image/Manifest` 作为唯一边界，声明“隔离 generator”与“未来 Lean 原生 generator”两组等价完整语义；任一组完整存在即 no-op，全部不存在时验证隔离文件/执行权限并插入 block，部分存在时失败。这样模块划分为：overlay 拥有本轮官方 generator 字节，common declaration 拥有稳定调用语义，通用 executor 拥有解析/幂等/漂移判定，patch applicator 只编排，collector 仍只复制 target output，verifier 仍坚持成品 SBOM 必须存在。R4S、x86 及未来 profile 不增加任何分支。
+
+```text
+profiles/common/source-compatibility.json
+  <- source-lock openwrt-core files -> scripts/openwrt-sbom/
+  -> apply-source-compatibility.py
+      -> locked Lean include/image.mk::Image/Manifest
+      -> patch-report source_compatibility_* status
+  -> make world -> bin/targets/.../*.bom.cdx.json
+  -> collect-build-provenance.sh -> verify-firmware-artifacts.sh
+  -> draft re-download -> publish
+```
 
 `run 30728862881` 的 R4S `make world` 成功，provenance 也已经逐一证明全部 `tcp_bbr.ko` 为 `version=3`、vermagic 为锁定的 6.12.100，随后旧 verifier 在 `gzip -t` 报 `decompression OK, trailing garbage ignored` 并以 code 2 失败。这里的尾部不是可忽略垃圾：本轮锁定 Lean 通过 OpenWrt `fwtool` 在 gzip payload 后追加 image metadata（以及启用签名时的 signature），其 trailer 是带累计 CRC 的正式 sysupgrade 格式。既不能继续把整文件当纯 gzip，也不能用 `gzip -t ... || true` 吞掉真实损坏。
 
@@ -1581,7 +1600,7 @@ release-verify job 从 draft Release 重新下载所有资产，执行 `sha256su
 | 2 | 配置模型无隐式冲突 | `scripts/render-profile.sh`, `normalize-forbidden-suboptions.py`, `check-profile-contract.sh` | 增加 symbol、provider、required/forbidden 冲突检查；统一清理已禁父应用残留子选项，阻止 `3proxy` 等非产品依赖进入选择图 | 人工制造冲突或第二次 defconfig 恢复子选项时检查必须失败；最终 manifest 无 `3proxy` |
 | 3 | 最新源码与产物可追溯 | `resolve-source-lock.sh`, `update-checker.yml`, builder workflow | 解析所有 master/main SHA，以及 HAProxy LTS、AdGuardHome stable、GeoIP/Geosite 最新 release、Google BBRv3 HEAD 与兼容 port provider 的精确 commit/URL/hash | 同一 lock 重读结果不变；任一 ref/release/action-observed-head/BBRv3 patch 变化产生新 digest 并触发双平台 |
 | 4 | 最新 package metadata 与 BBRv3 内核输入可审计 | `profiles/common/geodata-sources.json`, `apply-source-lock-artifacts.sh`, `apply-profile-patches.sh`, `diy-part2.sh`, `patchsets/common/kernel/bbr3-sources.json` | Geo 静态来源/字段只声明一次，resolver/validator/applicator 共用；由 source-lock 写入并验证动态 package metadata；按 profile 稳定内核系列动态解析、物化并 clean-apply 最新兼容 BBRv3 port | 执行代码无重复 Geo tuple，无 `PKG_HASH:=skip`/`latest/download`；BBRv3 每文件 immutable URL/hash/顺序完整；定向 download、override report、patch report 完整 |
-| 5 | common 工具链和实际 package 闭包统一 | `feeds.custom.conf`, `profiles/common/providers.tsv`, `source-overlays.json`, `package-compatibility.json`, `manage-custom-feeds.sh`, `select-package-providers.sh`, `sync-source-overlays.sh` | 固定 GCC15；同名 `packages` feed 每轮锁定 OpenWrt 官方 master；GMP/PCRE2/MTD 来自同一官方 core lock；只为 `libsepol`/`wol`/current `small/tcping` 保留已证明必要的语义规则；按 canonical feed 选择 PassWall/MosDNS/SmartDNS 等当前 provider；显式关闭全局 LTO/GC/Mold | source-lock 中 `packages` URL/ref/origin 精确，全部锁定 feed 已重建索引；无仓库内普通 package 版本/hash；当前闭包全部下载并用 GCC 15.x 完整编译通过 |
+| 5 | common 工具链和实际源码闭包统一 | `feeds.custom.conf`, `profiles/common/providers.tsv`, `source-overlays.json`, `source-compatibility.json`, `manage-custom-feeds.sh`, `select-package-providers.sh`, `sync-source-overlays.sh` | 固定 GCC15；同名 `packages` feed 每轮锁定 OpenWrt 官方 master；GMP/PCRE2/MTD 来自同一官方 core lock；共享 source compatibility 只保留已证明必要的 package 与 image-SBOM 语义；按 canonical feed 选择 PassWall/MosDNS/SmartDNS 等当前 provider；显式关闭全局 LTO/GC/Mold | source-lock 中 provider 身份精确，全部锁定 feed 已重建索引；无普通 package 版本/hash；compatibility 缺失时幂等插入、上游存在时 no-op、半漂移时失败；当前闭包全部下载并用 GCC 15.x 完整编译通过 |
 | 6 | 不再继承危险默认设置 | `profiles/*/forbidden-packages.txt`, `profiles/*/files` | 禁用 `default-settings`，以窄 UCI overlay 实现时区/NTP、DHCP `.32/232`、IPv6 relay 与设备设置 | manifest 无 default-settings，网络默认 fixture 精确，防火墙 input 未被改成 ACCEPT，无固定 root 密码 |
 | 7 | BBRv3 成为可回退的 common 默认 | `patchsets/common/kernel/**`, `profiles/common/required-packages.txt`, `profiles/common/semantics.json` | 两个平台应用同一内核系列的 BBRv3 port，显式编译 `kmod-tcp-bbr` 和 `kmod-sched`；上游 TurboACC 探测完成后、确认 module version `3` 与 `sch_fq` provider 再一次性选择 `bbr`，并保护后续用户设置；software flow on、hardware flow off | 双平台 build module version 为 `3` 且含 `sch_fq.ko`；三次冷启动 UCI/sysctl/firewall 一致，完成 BBRv3/cubic A/B 与 PassWall/nlbwmon 真机测试 |
 | 8 | DNS 组件齐全且不覆盖用户运行时配置 | `profiles/common/required-packages.txt`, package contracts, `README.md` | 编译所需包，端口、上游、规则和凭据由设备 UCI/YAML 管理；确认上游 factory defaults 不争抢 53 | manifest 检查；新装默认服务检查；应用用户常用配置后按实际 UCI/YAML 做 `ss`、iptables redirect、逐跳查询和断环测试 |
@@ -1940,6 +1959,7 @@ openwrt-<YYYY.MM.DD-HHMMSS>-<lede-short-sha>
 | master 提升稳定内核后 provider 尚无对应 BBRv3 port | resolver 按策略查询受信任单文件/多文件 provider，并在 matrix 前明确失败；provider 发布兼容 port 后下一轮自动吸收并执行 clean-apply，不切 testing kernel、不回退算法代际 |
 | BBRv3 patch 已应用但模块身份不符 | 保留 Lean 全局 module-strip，只按唯一合同为需要的 provider 后置一行 direct `MODULE_INFO` companion；再以源码后置断言、build 读取每个 ELF `.modinfo` 的 `version=3`/`vermagic`、真机 `/sys/module/tcp_bbr/version=3` 三重门禁，读取失败保留原始诊断与模块样本 |
 | `.img.gz` 被误判为 trailing garbage 或真的尾部损坏 | 不放宽 gzip 错误；共享解释器接受纯 gzip 或官方 fwtool 合法序列，并验证所有尾部 magic、size、累计 CRC、header/JSON，任意未解释字节仍失败 |
+| `CONFIG_JSON_CYCLONEDX_SBOM=y` 但 Lean 漏掉生成规则 | 不删除 SBOM 门禁、不伪造空文件、不替换整份 `include/image.mk`；共享 source compatibility 在 `Image/Manifest` 恢复官方 block，上游补齐后自动 no-op，部分实现则明确失败 |
 | `default_qdisc=fq` 但固件缺少 provider | common 显式选择 `kmod-sched`；build 检查 `sch_fq.ko`，真机检查 `/sys/module/sch_fq` 与实际 qdisc |
 | GCC 15 对 package 暴露新错误 | 当前实际通用 package 闭包整体消费锁定的 OpenWrt 官方 packages master；官方 core 缺口走窄 overlay，只有 canonical 来源也未解决时才评审语义变换；不下载外部 toolchain、不用 GCC13 自动 fallback |
 | N5105 guest 未暴露 CPU flags | PVE CPU 必须为 `host`，启动前检查 `/proc/cpuinfo` |

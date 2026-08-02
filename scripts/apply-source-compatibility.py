@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Apply declarative, semantic package-recipe compatibility rules."""
+"""Apply declarative, semantic non-kernel source compatibility rules."""
 
 from __future__ import annotations
 
@@ -12,11 +12,13 @@ from typing import Any
 
 
 RULE_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+MAKE_DEFINE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_./-]*$")
 STANDARD_RE = re.compile(r"(?:^|\s)-std=([A-Za-z0-9+_.-]+)")
 ASSIGNMENT_RE = re.compile(
     r"^(?:TARGET_(?:C|CPP)FLAGS|PKG_(?:C|CPP)FLAGS)\s*(?::|\+|\?)?=\s*(.*)$"
 )
-ALLOWED_PREFIXES = ("package/", "feeds/")
+PACKAGE_PREFIXES = ("package/", "feeds/")
+SHARED_BUILD_FILES = frozenset({"include/image.mk"})
 
 
 class CompatibilityError(RuntimeError):
@@ -36,10 +38,30 @@ def require_relative_path(value: Any, label: str) -> str:
         candidate.is_absolute()
         or ".." in candidate.parts
         or path != candidate.as_posix()
-        or not path.endswith("/Makefile")
-        or not path.startswith(ALLOWED_PREFIXES)
+        or not (
+            (path.endswith("/Makefile") and path.startswith(PACKAGE_PREFIXES))
+            or path in SHARED_BUILD_FILES
+        )
     ):
-        raise CompatibilityError(f"{label} is not a safe package Makefile path: {path!r}")
+        raise CompatibilityError(f"{label} is not an allowed source path: {path!r}")
+    return path
+
+
+def is_package_makefile(path: str) -> bool:
+    return path.endswith("/Makefile") and path.startswith(PACKAGE_PREFIXES)
+
+
+def require_dependency_path(value: Any, label: str) -> str:
+    path = require_text(value, label)
+    candidate = pathlib.PurePosixPath(path)
+    if (
+        candidate.is_absolute()
+        or ".." in candidate.parts
+        or path != candidate.as_posix()
+        or len(candidate.parts) != 3
+        or candidate.parts[:2] != ("scripts", "openwrt-sbom")
+    ):
+        raise CompatibilityError(f"{label} is not an isolated generator path: {path!r}")
     return path
 
 
@@ -55,18 +77,18 @@ def load_rules(policy_path: pathlib.Path) -> list[dict[str, Any]]:
     try:
         policy = json.loads(policy_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise CompatibilityError(f"cannot read package compatibility policy: {exc}") from exc
+        raise CompatibilityError(f"cannot read source compatibility policy: {exc}") from exc
 
     if not isinstance(policy, dict) or set(policy) != {"schema", "rules"}:
-        raise CompatibilityError("package compatibility policy must contain schema and rules")
-    if policy["schema"] != 1 or not isinstance(policy["rules"], list) or not policy["rules"]:
-        raise CompatibilityError("package compatibility policy schema or rules are invalid")
+        raise CompatibilityError("source compatibility policy must contain schema and rules")
+    if policy["schema"] != 2 or not isinstance(policy["rules"], list) or not policy["rules"]:
+        raise CompatibilityError("source compatibility policy schema or rules are invalid")
 
     identifiers: set[str] = set()
     paths: set[str] = set()
     validated: list[dict[str, Any]] = []
     for index, raw_rule in enumerate(policy["rules"], start=1):
-        label = f"package compatibility rule #{index}"
+        label = f"source compatibility rule #{index}"
         if not isinstance(raw_rule, dict):
             raise CompatibilityError(f"{label} must be an object")
         identifier = require_text(raw_rule.get("id"), f"{label} id")
@@ -81,6 +103,8 @@ def load_rules(policy_path: pathlib.Path) -> list[dict[str, Any]]:
         paths.add(path)
 
         if operation == "language-standard":
+            if not is_package_makefile(path):
+                raise CompatibilityError(f"{label} language-standard requires a package Makefile")
             expect_keys(
                 raw_rule,
                 {"id", "operation", "path", "anchor", "line", "standard"},
@@ -94,6 +118,8 @@ def load_rules(policy_path: pathlib.Path) -> list[dict[str, Any]]:
                     f"{label} line must declare exactly its requested language standard"
                 )
         elif operation == "make-environment":
+            if not is_package_makefile(path):
+                raise CompatibilityError(f"{label} make-environment requires a package Makefile")
             expect_keys(
                 raw_rule,
                 {
@@ -130,6 +156,96 @@ def load_rules(policy_path: pathlib.Path) -> list[dict[str, Any]]:
                 )
             if not fragments or len(fragments) != len(set(fragments)):
                 raise CompatibilityError(f"{label} required_fragments are invalid")
+        elif operation == "make-define-block":
+            expect_keys(
+                raw_rule,
+                {
+                    "id",
+                    "operation",
+                    "path",
+                    "define",
+                    "block",
+                    "accepted_semantics",
+                    "required_files",
+                },
+                label,
+            )
+            define = require_text(raw_rule["define"], f"{label} define")
+            if not MAKE_DEFINE_RE.fullmatch(define):
+                raise CompatibilityError(f"{label} has an invalid Make define name")
+            block_raw = raw_rule["block"]
+            semantics_raw = raw_rule["accepted_semantics"]
+            required_files_raw = raw_rule["required_files"]
+            if (
+                not isinstance(block_raw, list)
+                or not isinstance(semantics_raw, list)
+                or not isinstance(required_files_raw, list)
+            ):
+                raise CompatibilityError(
+                    f"{label} block, accepted_semantics and required_files must be arrays"
+                )
+            block = [require_text(item, f"{label} block line") for item in block_raw]
+            semantic_sets: list[tuple[str, ...]] = []
+            for semantics_index, raw_semantics in enumerate(semantics_raw, start=1):
+                if not isinstance(raw_semantics, list):
+                    raise CompatibilityError(
+                        f"{label} accepted semantics #{semantics_index} must be an array"
+                    )
+                markers = tuple(
+                    require_text(
+                        item,
+                        f"{label} accepted semantics #{semantics_index} marker",
+                    )
+                    for item in raw_semantics
+                )
+                if len(markers) < 3 or len(markers) != len(set(markers)):
+                    raise CompatibilityError(
+                        f"{label} accepted semantics #{semantics_index} are invalid"
+                    )
+                semantic_sets.append(markers)
+            if not block or not semantic_sets or len(semantic_sets) != len(set(semantic_sets)):
+                raise CompatibilityError(f"{label} block or accepted semantics are invalid")
+            if any(
+                line.strip() == "endef" or line.strip().startswith("define ")
+                for line in block
+            ):
+                raise CompatibilityError(f"{label} block cannot contain Make define boundaries")
+            joined_block = "\n".join(block)
+            missing_markers = [
+                marker for marker in semantic_sets[0] if marker not in joined_block
+            ]
+            if missing_markers:
+                raise CompatibilityError(
+                    f"{label} block misses semantic markers: {', '.join(missing_markers)}"
+                )
+            required_paths: set[str] = set()
+            for file_index, required_file in enumerate(required_files_raw, start=1):
+                file_label = f"{label} required file #{file_index}"
+                if not isinstance(required_file, dict) or set(required_file) != {
+                    "path",
+                    "executable",
+                    "contains",
+                }:
+                    raise CompatibilityError(f"{file_label} has invalid fields")
+                required_path = require_dependency_path(
+                    required_file["path"], f"{file_label} path"
+                )
+                if required_path in required_paths:
+                    raise CompatibilityError(f"{label} repeats required file {required_path}")
+                required_paths.add(required_path)
+                if not isinstance(required_file["executable"], bool):
+                    raise CompatibilityError(f"{file_label} executable must be boolean")
+                contains_raw = required_file["contains"]
+                if not isinstance(contains_raw, list):
+                    raise CompatibilityError(f"{file_label} contains must be an array")
+                contains = [
+                    require_text(item, f"{file_label} content marker")
+                    for item in contains_raw
+                ]
+                if not contains or len(contains) != len(set(contains)):
+                    raise CompatibilityError(f"{file_label} content markers are invalid")
+            if not required_paths:
+                raise CompatibilityError(f"{label} declares no required files")
         else:
             raise CompatibilityError(f"{label} has unsupported operation {operation!r}")
 
@@ -145,7 +261,7 @@ def target_path(openwrt_root: pathlib.Path, relative: str) -> pathlib.Path:
     except ValueError as exc:
         raise CompatibilityError(f"compatibility target escapes OpenWrt root: {relative}") from exc
     if not candidate.is_file():
-        raise CompatibilityError(f"compatibility package Makefile is missing: {relative}")
+        raise CompatibilityError(f"compatibility source file is missing: {relative}")
     return candidate
 
 
@@ -252,6 +368,90 @@ def apply_make_environment(rule: dict[str, Any], path: pathlib.Path) -> tuple[st
     return "inserted", rule["token"]
 
 
+def find_make_define(lines: list[str], name: str, label: str) -> tuple[int, int]:
+    header = f"define {name}"
+    starts = [index for index, line in enumerate(lines) if line.strip() == header]
+    if len(starts) != 1:
+        raise CompatibilityError(f"{label} must contain exactly one {header!r}")
+
+    depth = 0
+    for index in range(starts[0] + 1, len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("define "):
+            depth += 1
+        elif stripped == "endef":
+            if depth == 0:
+                return starts[0], index
+            depth -= 1
+    raise CompatibilityError(f"{label} has no matching endef for {header!r}")
+
+
+def apply_make_define_block(
+    rule: dict[str, Any], path: pathlib.Path, openwrt_root: pathlib.Path
+) -> tuple[str, str]:
+    original = path.read_text(encoding="utf-8")
+    lines = original.splitlines()
+    start, end = find_make_define(lines, rule["define"], rule["id"])
+    body = "\n".join(lines[start + 1 : end])
+    semantic_sets = rule["accepted_semantics"]
+    if any(all(marker in body for marker in markers) for markers in semantic_sets):
+        return "upstream", rule["define"]
+    all_markers = {marker for markers in semantic_sets for marker in markers}
+    if any(marker in body for marker in all_markers):
+        raise CompatibilityError(
+            f"{rule['id']} has a partial semantic block; no accepted semantic set is complete"
+        )
+
+    root = openwrt_root.resolve()
+    for required_file in rule["required_files"]:
+        raw_candidate = root / required_file["path"]
+        candidate = raw_candidate.resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise CompatibilityError(
+                f"{rule['id']} required file escapes OpenWrt root"
+            ) from exc
+        if not candidate.is_file() or raw_candidate.is_symlink():
+            raise CompatibilityError(
+                f"{rule['id']} required file is missing: {required_file['path']}"
+            )
+        if required_file["executable"] and not os.access(candidate, os.X_OK):
+            raise CompatibilityError(
+                f"{rule['id']} required file is not executable: {required_file['path']}"
+            )
+        try:
+            required_text = candidate.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise CompatibilityError(
+                f"{rule['id']} required file cannot be read: {required_file['path']}"
+            ) from exc
+        missing_content = [
+            marker for marker in required_file["contains"] if marker not in required_text
+        ]
+        if missing_content:
+            raise CompatibilityError(
+                f"{rule['id']} required file misses declared semantics: "
+                f"{required_file['path']}"
+            )
+
+    insertion = list(rule["block"])
+    if end > start + 1 and lines[end - 1].strip():
+        insertion.insert(0, "")
+    lines[end:end] = insertion
+    changed = "\n".join(lines) + "\n"
+    write_if_changed(path, original, changed)
+
+    final_lines = path.read_text(encoding="utf-8").splitlines()
+    final_start, final_end = find_make_define(
+        final_lines, rule["define"], rule["id"]
+    )
+    final_body = "\n".join(final_lines[final_start + 1 : final_end])
+    if not all(marker in final_body for marker in semantic_sets[0]):
+        raise CompatibilityError(f"{rule['id']} make-define-block postcondition failed")
+    return "inserted", rule["define"]
+
+
 def report_key(identifier: str) -> str:
     return identifier.replace("-", "_")
 
@@ -262,13 +462,15 @@ def apply_rule(rule: dict[str, Any], openwrt_root: pathlib.Path) -> tuple[str, s
         return apply_language_standard(rule, path)
     if rule["operation"] == "make-environment":
         return apply_make_environment(rule, path)
+    if rule["operation"] == "make-define-block":
+        return apply_make_define_block(rule, path, openwrt_root)
     raise CompatibilityError(f"unsupported validated operation: {rule['operation']}")
 
 
 def main(argv: list[str]) -> int:
     if len(argv) != 4:
         print(
-            "Usage: apply-package-compatibility.py <policy.json> <openwrt-root> <report>",
+            "Usage: apply-source-compatibility.py <policy.json> <openwrt-root> <report>",
             file=sys.stderr,
         )
         return 2
@@ -289,9 +491,9 @@ def main(argv: list[str]) -> int:
     with report_path.open("a", encoding="utf-8") as report:
         for identifier, status, detail in results:
             key = report_key(identifier)
-            report.write(f"compatibility_{key}_status={status}\n")
-            report.write(f"compatibility_{key}_detail={detail}\n")
-    print("Applied package compatibility rules: " + ", ".join(identifier for identifier, *_ in results))
+            report.write(f"source_compatibility_{key}_status={status}\n")
+            report.write(f"source_compatibility_{key}_detail={detail}\n")
+    print("Applied source compatibility rules: " + ", ".join(identifier for identifier, *_ in results))
     return 0
 
 

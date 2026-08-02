@@ -81,6 +81,13 @@ for supported_target in (
         )
         == supported_target
     )
+supported_file_target = "scripts/openwrt-sbom/metadata.pm"
+assert module.require_overlay_path(
+    supported_file_target,
+    "fixture file target",
+    target=True,
+    target_kind="file",
+) == supported_file_target
 for unsafe_path in (
     "package/libs/./gmp",
     "package//libs/gmp",
@@ -103,6 +110,24 @@ for unsupported_target in ("package/libs", "feeds/packages/net", "tools/example"
         raise AssertionError(
             f"unsupported overlay root was accepted: {unsupported_target}"
         )
+for unsupported_file_target in (
+    "scripts/metadata.pm",
+    "scripts/openwrt-sbom/nested/metadata.pm",
+    "package/libs/metadata.pm",
+):
+    try:
+        module.require_overlay_path(
+            unsupported_file_target,
+            "fixture file target",
+            target=True,
+            target_kind="file",
+        )
+    except module.ResolutionError as exc:
+        assert "unsupported source overlay target" in str(exc)
+    else:
+        raise AssertionError(
+            f"unsupported overlay file target was accepted: {unsupported_file_target}"
+        )
 with tempfile.TemporaryDirectory() as directory:
     temporary_root = pathlib.Path(directory)
     contract_path = temporary_root / "profiles/common/source-overlays.json"
@@ -117,9 +142,25 @@ with tempfile.TemporaryDirectory() as directory:
     try:
         module.load_source_overlay_contracts(temporary_root)
     except module.ResolutionError as exc:
-        assert "declared more than once" in str(exc)
+        assert "overlaps another mapping" in str(exc)
     else:
         raise AssertionError("duplicate source overlay target was accepted")
+
+with tempfile.TemporaryDirectory() as directory:
+    temporary_root = pathlib.Path(directory)
+    contract_path = temporary_root / "profiles/common/source-overlays.json"
+    contract_path.parent.mkdir(parents=True)
+    invalid_contract = json.loads(
+        (root / "profiles/common/source-overlays.json").read_text(encoding="utf-8")
+    )
+    invalid_contract["repositories"][0]["mappings"][0]["kind"] = "guess"
+    contract_path.write_text(json.dumps(invalid_contract), encoding="utf-8")
+    try:
+        module.load_source_overlay_contracts(temporary_root)
+    except module.ResolutionError as exc:
+        assert "invalid kind" in str(exc)
+    else:
+        raise AssertionError("unknown source overlay kind was accepted")
 
 with tempfile.TemporaryDirectory() as directory:
     digest_root = pathlib.Path(directory)

@@ -24,11 +24,23 @@ for repository in contract["repositories"]:
     for mapping in repository["mappings"]:
         source = origin / mapping["source"]
         target = openwrt / mapping["target"]
-        source.mkdir(parents=True, exist_ok=True)
-        target.mkdir(parents=True, exist_ok=True)
         marker = f'{identifier}:{mapping["source"]}->{mapping["target"]}\n'
-        (source / "overlay-fixture.txt").write_text(marker, encoding="utf-8")
-        (target / "old-fixture.txt").write_text("must-be-removed\n", encoding="utf-8")
+        if mapping["kind"] == "tree":
+            source.mkdir(parents=True, exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
+            (source / "overlay-fixture.txt").write_text(marker, encoding="utf-8")
+            (target / "old-fixture.txt").write_text(
+                "must-be-removed\n", encoding="utf-8"
+            )
+        elif mapping["kind"] == "file":
+            source.parent.mkdir(parents=True, exist_ok=True)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text(marker, encoding="utf-8")
+            source.chmod(0o755)
+            target.write_text("must-be-replaced\n", encoding="utf-8")
+            target.chmod(0o600)
+        else:
+            raise AssertionError(f'unsupported fixture kind: {mapping["kind"]}')
     unrelated = origin / "fixture-unrelated" / identifier
     unrelated.mkdir(parents=True, exist_ok=True)
     (unrelated / "must-not-copy.txt").write_text("unrelated\n", encoding="utf-8")
@@ -109,6 +121,7 @@ GIT_CONFIG_GLOBAL="$git_config" GIT_CONFIG_NOSYSTEM=1 \
 python3 - "$contract" "$openwrt" <<'PY'
 import json
 import pathlib
+import stat
 import sys
 
 contract = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -118,11 +131,14 @@ for repository in contract["repositories"]:
     for mapping in repository["mappings"]:
         target = openwrt / mapping["target"]
         expected = f'{identifier}:{mapping["source"]}->{mapping["target"]}\n'
-        actual = (target / "overlay-fixture.txt").read_text(encoding="utf-8")
+        observed = target / "overlay-fixture.txt" if mapping["kind"] == "tree" else target
+        actual = observed.read_text(encoding="utf-8")
         if actual != expected:
             raise AssertionError(f"incorrect overlay marker for {mapping['target']}")
-        if (target / "old-fixture.txt").exists():
+        if mapping["kind"] == "tree" and (target / "old-fixture.txt").exists():
             raise AssertionError(f"old overlay target survived: {mapping['target']}")
+        if mapping["kind"] == "file" and stat.S_IMODE(target.stat().st_mode) != 0o755:
+            raise AssertionError(f"file mode was not preserved: {mapping['target']}")
     if (openwrt / "fixture-unrelated" / identifier).exists():
         raise AssertionError(f"unrelated source was copied: {identifier}")
 PY

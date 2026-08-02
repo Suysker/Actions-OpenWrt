@@ -46,7 +46,17 @@ for identifier in sorted(lock["source_overlays"]):
     entry = lock["source_overlays"][identifier]
     print("\t".join(("R", identifier, entry["url"], entry["commit"])))
     for mapping in entry["mappings"]:
-        print("\t".join(("M", identifier, mapping["source"], mapping["target"])))
+        print(
+            "\t".join(
+                (
+                    "M",
+                    identifier,
+                    mapping["kind"],
+                    mapping["source"],
+                    mapping["target"],
+                )
+            )
+        )
 PY
 )" || exit
 
@@ -54,17 +64,19 @@ declare -a overlay_ids=()
 declare -A overlay_urls=()
 declare -A overlay_commits=()
 declare -A overlay_sources=()
+declare -A overlay_kinds=()
 declare -A overlay_targets=()
-while IFS=$'\t' read -r kind identifier first second; do
-  case "$kind" in
+while IFS=$'\t' read -r record identifier first second third; do
+  case "$record" in
     R)
       overlay_ids+=("$identifier")
       overlay_urls["$identifier"]="$first"
       overlay_commits["$identifier"]="$second"
       ;;
     M)
-      overlay_sources["$identifier"]+="$first"$'\n'
-      overlay_targets["$identifier|$first"]="$second"
+      overlay_sources["$identifier"]+="$second"$'\n'
+      overlay_kinds["$identifier|$second"]="$first"
+      overlay_targets["$identifier|$second"]="$third"
       ;;
     *)
       echo "::error::Invalid source overlay manifest record" >&2
@@ -91,11 +103,27 @@ for identifier in "${overlay_ids[@]}"; do
   }
   sources_text="${sources_text%$'\n'}"
   readarray -t sources <<< "$sources_text"
+  sparse_paths=()
+  for source_relative in "${sources[@]}"; do
+    mapping_key="$identifier|$source_relative"
+    source_kind="${overlay_kinds[$mapping_key]:-}"
+    case "$source_kind" in
+      tree) sparse_path="$source_relative" ;;
+      file) sparse_path="${source_relative%/*}" ;;
+      *)
+        echo "::error::Source overlay mapping has an invalid kind: $identifier:$source_relative" >&2
+        exit 2
+        ;;
+    esac
+    if [[ " ${sparse_paths[*]} " != *" $sparse_path "* ]]; then
+      sparse_paths+=("$sparse_path")
+    fi
+  done
 
   git -C "$tmpdir" init -q "$identifier"
   git -C "$repo_dir" remote add origin "${overlay_urls[$identifier]}"
   git -C "$repo_dir" sparse-checkout init --cone
-  git -C "$repo_dir" sparse-checkout set "${sources[@]}"
+  git -C "$repo_dir" sparse-checkout set "${sparse_paths[@]}"
   git -C "$repo_dir" fetch --depth 1 --filter=blob:none \
     origin "${overlay_commits[$identifier]}"
   git -C "$repo_dir" checkout -q --detach FETCH_HEAD
@@ -106,11 +134,16 @@ for identifier in "${overlay_ids[@]}"; do
 
   for source_relative in "${sources[@]}"; do
     source="$repo_dir/$source_relative"
-    [ -d "$source" ] || {
-      echo "::error::Locked source overlay subtree is missing: $identifier:$source_relative" >&2
+    mapping_key="$identifier|$source_relative"
+    source_kind="${overlay_kinds[$mapping_key]:-}"
+    case "$source_kind" in
+      tree) [ -d "$source" ] ;;
+      file) [ -f "$source" ] && [ ! -L "$source" ] ;;
+      *) false ;;
+    esac || {
+      echo "::error::Locked source overlay $source_kind is missing: $identifier:$source_relative" >&2
       exit 2
     }
-    mapping_key="$identifier|$source_relative"
     target_relative="${overlay_targets[$mapping_key]:-}"
     [ -n "$target_relative" ] || {
       echo "::error::Source overlay mapping has no target: $identifier:$source_relative" >&2
@@ -129,7 +162,7 @@ for identifier in "${overlay_ids[@]}"; do
     target_resolved="$target_parent/$(basename "$target")"
     rm -rf -- "$target_resolved"
     cp -a "$source" "$target_resolved"
-    synced+=("$identifier:$source_relative->$target_relative")
+    synced+=("$identifier:$source_kind:$source_relative->$target_relative")
   done
 done
 

@@ -1,0 +1,90 @@
+{
+  "schema": 2,
+  "rules": [
+    {
+      "id": "libsepol-gnu17",
+      "operation": "language-standard",
+      "path": "package/libs/libsepol/Makefile",
+      "anchor": "include $(INCLUDE_DIR)/package.mk",
+      "line": "TARGET_CFLAGS += -std=gnu17",
+      "standard": "gnu17"
+    },
+    {
+      "id": "wol-gnu17",
+      "operation": "language-standard",
+      "path": "package/lean/wol/Makefile",
+      "anchor": "include $(INCLUDE_DIR)/package.mk",
+      "line": "TARGET_CFLAGS += -std=gnu17",
+      "standard": "gnu17"
+    },
+    {
+      "id": "tcping-target-make-environment",
+      "operation": "make-environment",
+      "path": "feeds/small/tcping/Makefile",
+      "anchor": "$(MAKE) -C $(PKG_BUILD_DIR)",
+      "token": "$(TARGET_CONFIGURE_OPTS)",
+      "accepted_tokens": [
+        "$(TARGET_CONFIGURE_OPTS)",
+        "$(MAKE_FLAGS)"
+      ],
+      "required_fragments": [
+        "CC=\"$(TARGET_CC)\"",
+        "CFLAGS=\"$(TARGET_CFLAGS) -Wall\"",
+        "LDFLAGS=\"$(TARGET_LDFLAGS)\""
+      ],
+      "upstream_default_marker": "define Build/Compile"
+    },
+    {
+      "id": "image-cyclonedx-sbom",
+      "operation": "make-define-block",
+      "path": "include/image.mk",
+      "define": "Image/Manifest",
+      "block": [
+        "ifneq ($(CONFIG_JSON_CYCLONEDX_SBOM),)",
+        "\t$(TOPDIR)/scripts/openwrt-sbom/package-metadata.pl imgcyclonedxsbom \\",
+        "\t\t$(if $(IB),$(TOPDIR)/.packageinfo, $(TMP_DIR)/.packageinfo) \\",
+        "\t\t$(BIN_DIR)/$(IMG_PREFIX)$(if $(PROFILE_SANITIZED),-$(PROFILE_SANITIZED)).manifest > \\",
+        "\t\t$(BIN_DIR)/$(IMG_PREFIX)$(if $(PROFILE_SANITIZED),-$(PROFILE_SANITIZED)).bom.cdx.json",
+        "endif"
+      ],
+      "accepted_semantics": [
+        [
+          "$(CONFIG_JSON_CYCLONEDX_SBOM)",
+          "scripts/openwrt-sbom/package-metadata.pl imgcyclonedxsbom",
+          "$(if $(IB),$(TOPDIR)/.packageinfo, $(TMP_DIR)/.packageinfo)",
+          ".manifest > \\",
+          ".bom.cdx.json"
+        ],
+        [
+          "$(CONFIG_JSON_CYCLONEDX_SBOM)",
+          "$(SCRIPT_DIR)/package-metadata.pl imgcyclonedxsbom",
+          "$(if $(IB),$(TOPDIR)/.packageinfo, $(TMP_DIR)/.packageinfo)",
+          ".manifest > \\",
+          ".bom.cdx.json"
+        ]
+      ],
+      "required_files": [
+        {
+          "path": "scripts/openwrt-sbom/package-metadata.pl",
+          "executable": true,
+          "contains": [
+            "use Time::Piece;",
+            "use JSON::PP;",
+            "sub gen_image_cyclonedxsbom()",
+            "/^imgcyclonedxsbom$/ and return gen_image_cyclonedxsbom();"
+          ]
+        },
+        {
+          "path": "scripts/openwrt-sbom/metadata.pm",
+          "executable": false,
+          "contains": [
+            "our @EXPORT = qw(%package",
+            "sub parse_package_metadata($)",
+            "/^ABI-Version:",
+            "/^CPE-ID:"
+          ]
+        }
+      ]
+    }
+  ]
+}

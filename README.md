@@ -5,7 +5,7 @@
 - NanoPi R4S：RK3399、原生 Lean 启动链与网口 IRQ 策略、ARMv8 CRC/crypto、R8168、PWM fan、512 MiB LZ4 zram。
 - N5105 PVE：`x86-64-v2 + mtune=tremont`、squashfs combined EFI、VirtIO NET/SCSI、I225/igc 直通、4 队列与 irqbalance。
 
-两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列动态解析的 BBRv3。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP、PCRE2 与 MTD 从同一轮锁定的 OpenWrt 官方 core 同步。只有 `libsepol`、旧 `wol` CLI 和 current `small/tcping` 保留经真实构建证明必要的窄语义兼容，不降低全局编译器。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
+两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、稳定 target kernel 和按内核系列动态解析的 BBRv3。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP、PCRE2、MTD 以及 Lean 缺失的官方 CycloneDX image generator 从同一轮锁定的 OpenWrt 官方 core 窄同步。`libsepol`、旧 `wol` CLI、current `small/tcping` 和共享 image manifest 只保留经真实构建证明必要的窄语义兼容，不降低全局编译器，也不覆盖整份 Lean 核心文件。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
 
 ## 构建模型
 

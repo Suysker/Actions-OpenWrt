@@ -186,8 +186,8 @@ source_lock_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$
   echo "kernel_version=$kernel_version"
 } > "$report"
 
-python3 "$repo_root/scripts/apply-package-compatibility.py" \
-  "$repo_root/profiles/common/package-compatibility.json" "$openwrt_dir" "$report"
+python3 "$repo_root/scripts/apply-source-compatibility.py" \
+  "$repo_root/profiles/common/source-compatibility.json" "$openwrt_dir" "$report"
 apply_series common "$repo_root/patchsets/common"
 apply_series device "$repo_root/patchsets/$profile"
 
