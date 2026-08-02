@@ -53,7 +53,7 @@ profiles/x86-n5105-pve/      N5105 PVE target、CPU flags、硬件包和运行�
 - 不允许进入 manifest 的包只写入 `forbidden-packages.txt`；其中 `exact:` 规则自动成为 Kconfig 负选择。首次 `make defconfig` 后还会统一清理已禁父包遗留的 `CONFIG_PACKAGE_<parent>_*` 正选择，再次 defconfig 并复验；普通精简不删除源码。
 - rootfs 文件放在对应 `files/`。common 与设备层同路径会直接失败，不允许静默覆盖。
 - 同一 Kconfig symbol 或 required/forbidden 规则不能同时归 common 与设备层所有。
-- 稳定行为语义与其所有者放在同一目录的 `semantics.json`：common 只影响共享意图，设备文件只影响对应 profile。规则使用动态 `{kernel_series}`/`{kernel_version}` 与语义 glob，不保存某轮 kernel 版本、commit、hash 或 patch 文件名；静态检查验证 rootfs，`target/linux/prepare` 后再验证本轮锁定 Lean tree、feeds 和已经应用 patch 的 kernel source。backport 消失但同等能力已经进入 upstream source 时，可以由同一条 alternatives 合同证明。
+- 会随 Lean 漂移的上游源码语义与对应 profile 放在同一目录的 `semantics.json`：common 只影响共享上游能力，设备文件只影响对应 profile。规则使用动态 `{kernel_series}`/`{kernel_version}` 与语义 glob，不保存某轮 kernel 版本、commit、hash 或 patch 文件名；`target/linux/prepare` 后验证本轮锁定 Lean tree、feeds 和已经应用 patch 的 kernel source。仓库内 rootfs 脚本自身是唯一事实源，不在 semantics 或测试中逐行复述；backport 消失但同等能力已经进入 upstream source 时，可以由同一条 alternatives 合同证明。
 - `scripts/profile_model.py` 是 profile 发现、common/device 合并、env、正负 Kconfig 派生和最终 package 集合判定的唯一实现；`render-profile.sh` 与 `check-profile-contract.sh` 只是薄 CLI。workflow、update checker 与测试都从 profile 目录自动发现集合，没有 R4S/N5105、包名、CPU flags 或网络值分支。
 
 `profiles/common/providers.tsv` 是当前产品重复 package provider 的唯一合同。HAProxy 来自官方 packages；PassWall app 来自 canonical `passwall` feed；MosDNS app/core 来自 `sbwml`；SmartDNS 与 AdGuardHome 来自 `kenzo`；PassWall 依赖按合同在 `xiaorouji` 与 `small` 中唯一选择。真实冲突目录会被精确移除，随后从 source-lock 枚举并重建全部 feed 索引。Geo 数据角色与来源映射只定义在 `profiles/common/geodata-sources.json`：`v2ray-geodata` 同时产出 `v2ray-geoip` 与 `v2ray-geosite`，resolver、validator 和 applicator 共用该合同，把两个 download block 改写成 Loyalsoldier 载荷的当轮精确 tag、URL 与 SHA256。
@@ -70,7 +70,8 @@ feed 索引覆盖全部锁定源，但安装阶段只提交当前 profile 的 re
 
 固件只拥有安全、可解释的出厂默认：
 
-- LAN `192.168.2.1/24`，DHCP 从 `.32` 开始、`limit=232`、租期 12 小时；WAN DHCP、WAN6 DHCPv6；LAN DHCPv6/NDP 使用 relay，WAN 为 relay master；不写死物理 `ethX`。
+- LAN `192.168.2.1/24`，DHCP 从 `.32` 开始、`limit=232`、租期 12 小时；WAN DHCP、WAN6 DHCPv6；LAN 与 WAN 均启用 RA/DHCPv6/NDP relay，WAN 是唯一 master；不写死物理 `ethX`。
+- R4S 与 N5105 的 squashfs block-root 镜像均保留启动必需的 `mkf2fs`，首次启动可创建持久 F2FS overlay；不因此引入完整磁盘管理套件。
 - `Asia/Shanghai` 和启用 NTP client，保留上游 NTP server 列表。
 - `fq`、16 MiB socket buffer 上限。
 - 只有确认 `/sys/module/tcp_bbr/version=3`、`sch_fq` 存在且 TurboACC 已探测到 software flow offload 后，才一次性把 factory CCA 设为 `bbr`；以后尊重用户在 TurboACC 中的选择。

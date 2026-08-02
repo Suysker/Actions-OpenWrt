@@ -1,31 +1,5 @@
 {
-  "schema": 2,
-  "rootfs": [
-    {
-      "name": "x86-n5105-pve.driver-owned-four-queues",
-      "path": "etc/uci-defaults/91-x86-n5105-performance",
-      "contains": [
-        "ethtool -i \"$1\"",
-        "[ \"$count\" = \"1\" ]",
-        "lan_interface=\"$(require_single_interface virtio_net)\"",
-        "wan_interface=\"$(require_single_interface igc)\"",
-        "ethtool -L \"$interface\" combined 4",
-        "[ \"$(current_combined_channels \"$interface\")\" = \"4\" ]",
-        "network.$lan_device_section.ports=$lan_interface",
-        "network.wan.device=$wan_interface",
-        "network.wan6.device=$wan_interface",
-        "set network.globals.packet_steering='0'"
-      ]
-    },
-    {
-      "name": "x86-n5105-pve.hotplug-four-queues",
-      "path": "etc/hotplug.d/net/91-n5105-multiqueue",
-      "contains": [
-        "virtio_net|igc)",
-        "ethtool -L \"$interface\" combined 4"
-      ]
-    }
-  ],
+  "schema": 3,
   "source": [
     {
       "name": "x86-n5105-pve.virtio-built-in",

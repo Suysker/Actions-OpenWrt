@@ -178,7 +178,7 @@ with tempfile.TemporaryDirectory() as directory:
 
     r4s_before = module.profile_digest(digest_root, "r4s")
     x86_before = module.profile_digest(digest_root, "x86-n5105-pve")
-    common_semantics.write_text('{"schema":2}\n', encoding="utf-8")
+    common_semantics.write_text('{"schema":3}\n', encoding="utf-8")
     r4s_after_contract = module.profile_digest(digest_root, "r4s")
     assert r4s_after_contract != r4s_before
     assert module.profile_digest(digest_root, "x86-n5105-pve") != x86_before

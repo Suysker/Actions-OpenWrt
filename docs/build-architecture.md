@@ -156,7 +156,7 @@ N5105 profile 的设备合同是运行在 PVE 中的专用 OpenWrt guest，而�
 | 禁止 package | 对应层的 `forbidden-packages.txt` |
 | 设备环境与目标 | 对应层的 `profile.env` |
 | rootfs 默认 | 对应层的 `files/` |
-| rootfs/锁定源码语义 | 对应层的 `semantics.json` |
+| 锁定上游源码语义 | 对应层的 `semantics.json` |
 | selected kernel channel | `profiles/common/config.seed` 中的 `CONFIG_TESTING_KERNEL` |
 | 自定义 feeds | `feeds.custom.conf` |
 | package provider | `profiles/common/providers.tsv` |
@@ -186,7 +186,7 @@ profiles/
     geodata-sources.json          # GeoIP/Geosite 静态供应链接口
     source-overlays.json          # 官方 OpenWrt core 的窄同步映射
     source-compatibility.json     # 当前闭包的声明式源码兼容规则
-    semantics.json                # shared rootfs/locked-source 行为
+    semantics.json                # shared locked-upstream source 行为
     files/                        # shared factory defaults
   r4s/                            # R4S target/image/hardware 声明与 rootfs
   x86-n5105-pve/                  # N5105 PVE target/image/hardware 声明与 rootfs
@@ -260,8 +260,8 @@ repository declarations + rendered common/device intent + floating upstreams
 | `scripts/kernel_selection.py` | 从渲染 Kconfig 与锁定 Lean target 唯一解析 channel、series、version 和 source hash；向所有消费者提供同一结构 |
 | `scripts/kernel_patch.py` | 识别 Git/OpenWrt quilt patch、规范化 touched paths、拒绝危险路径并供 resolver/clean-apply 复用 |
 | `scripts/profile_model.py` | profile 发现、common/device 合并、Kconfig 派生、package 合同计算 |
-| `scripts/profile_contract.py` | 最终 config、seed drift、package、provider、target、kernel、rootfs/source 语义验收 |
-| `scripts/profile_semantics.py` | 声明式验证 rootfs、Lean target patch 与 prepared kernel upstream 等价语义 |
+| `scripts/profile_contract.py` | 最终 config、seed drift、package、provider、target、kernel 与 locked-source 语义验收 |
+| `scripts/profile_semantics.py` | 声明式验证 Lean target patch 与 prepared kernel upstream 等价语义 |
 | `scripts/apply_source_lock_artifacts.py` | 把 lock 中的精确 release metadata 写入唯一 package provider |
 | `scripts/apply-source-compatibility.py` | 按声明式规则处理当前编译闭包内的非内核源码兼容，并以 selected kernel series 驱动系列相关 Kconfig 守卫 |
 | `scripts/apply-profile-patches.sh` | 应用仓库 patch、源码兼容规则和本轮 BBRv3 patch stack |
@@ -591,6 +591,7 @@ AdGuardHome 保持 package 的 `--no-check-update`：最新版本由 Actions 生
 - MosDNS、SmartDNS、AdGuardHome。
 - ddns-go、nlbwmon、ARP 绑定、自动重启、内存释放、ttyd、TurboACC、WOL。
 - CoreMark、htop、lsof、SFTP server。
+- squashfs block-root 首次启动所需的 `mkf2fs`。
 - signed packages、signature check、TLS certificate check、CycloneDX SBOM。
 
 不在产品范围内的应用和替代栈由 `forbidden-packages.txt` 统一约束。精简通过 Kconfig 与最终 manifest 完成，不删除无关源码目录。
@@ -615,6 +616,7 @@ common 的内核/构建策略同样遵循精简原则：
 | DNS | MosDNS、SmartDNS、AdGuardHome；只保证 package/provider/接口，不固化用户端口链 |
 | 运维 | ddns-go、nlbwmon、ARP bind、autoreboot、ramfree、ttyd、TurboACC、WOL |
 | 工具 | CoreMark、htop、lsof、OpenSSH SFTP server |
+| 启动基础 | `mkf2fs`；仅负责首次创建持久 F2FS overlay，不扩展为磁盘管理功能 |
 | 内核网络 | `kmod-tun`、`kmod-tcp-bbr`、`kmod-sched`、`kmod-ipt-fullconenat` |
 | 交付 | build log、config/image metadata、CycloneDX SBOM、签名与 TLS certificate check |
 
@@ -709,7 +711,7 @@ TCP CCA 此后只由 TurboACC/UCI 管理，不在 sysctl 文件维护第二份�
 - LAN `192.168.2.1/24`。
 - DHCP 从 `.32` 开始，`limit=232`，租期 12 小时。
 - WAN 使用 DHCP，WAN6 使用 DHCPv6。
-- LAN DHCPv6/NDP 为 relay，WAN 为 relay master；LAN 保持 RA server 以发布前缀。
+- LAN 的 RA/DHCPv6/NDP 全部为 relay，WAN 的 RA/DHCPv6/NDP 为 relay master。
 - 不写死跨设备的 `ethX`。
 - 时区 `Asia/Shanghai`，启用 NTP client，保留上游 server 列表。
 - 默认 qdisc 为 `fq`，socket receive/send buffer 上限 16 MiB。
@@ -732,12 +734,12 @@ dnsmasq-full、AdGuardHome、MosDNS、SmartDNS 和 PassWall 可以同时安装�
 LAN static 192.168.2.1/24
 DHCP start=32, limit=232, leasetime=12h
 LAN ip6assign=64, delegate=0
-LAN ra=server, dhcpv6=relay, ndp=relay
+LAN interface=lan, ra/dhcpv6/ndp=relay
 WAN proto=dhcp, WAN6 proto=dhcpv6
-WAN ra/dhcpv6/ndp=relay, master=1
+WAN interface=wan, ignore=1, ra/dhcpv6/ndp=relay, master=1
 ```
 
-IPv6 relay 是一个整体合同：LAN relay、WAN relay master、LAN `delegate=0` 与 `ip6assign=64` 必须一起存在，不能只改一个字段形成半配置状态。WAN 静态地址、网关、自定义 bridge/端口和转发规则没有被用户确认为跨设备默认，不能从历史设备配置扩大推断。
+IPv6 relay 是一个整体合同：LAN 是 relay slave，WAN 是唯一 relay master；两侧都显式配置 RA、DHCPv6 和 NDP，LAN 的 `delegate=0` 与 `ip6assign=64` 同时存在。`90-common-network` 还显式补齐两个 `dhcp` section 的类型、逻辑 interface，以及 WAN 的 `ignore=1`，不依赖某轮上游默认文件恰好已创建这些字段，不能只改其中一个字段形成半配置状态。WAN 静态地址、网关、自定义 bridge/端口和转发规则没有被用户确认为跨设备默认，不能从历史设备配置扩大推断。
 
 common 只拥有协议与地址，R4S 的物理接口映射由 Lean target 拥有，N5105 的物理/虚拟接口角色由设备 overlay 按 driver 拥有。任何层都不使用宽泛 `sed` 修改 Lean `config_generate`。
 
@@ -760,6 +762,35 @@ common 只拥有协议与地址，R4S 的物理接口映射由 Lean target 拥�
 - `zz-common-turboacc` 有持久 marker，成功后只应用一次；模块或上游 fastpath 尚未准备好时不写完成标记。
 - sysupgrade 保留 `/etc/config` 后尊重用户修改；项目不通过源码 patch 强制覆盖运行值。
 - 全新安装保持防火墙和管理面安全基线，用户首次登录后自行设置 root 密码。
+
+### 10.4 `mkf2fs` 与 IPv6 relay 的实现设计
+
+本节是这两项启动能力的实现设计，继续复用现有 profile 模型，不增加平行脚本或新的事实源：
+
+| 模块 | 唯一职责 | 复用接口 |
+|---|---|---|
+| `profiles/common/required-packages.txt` | 声明两个当前 squashfs/block-root profile 都需要 `mkf2fs` | `ProfileRepository` 自动合并 common/device required，渲染 `CONFIG_PACKAGE_mkf2fs=y` |
+| 设备 `forbidden-packages.txt` | 只保留真正的设备黑名单，不再否定 common 的启动依赖 | 现有 required/forbidden 冲突检查 |
+| `profiles/common/files/etc/uci-defaults/90-common-network` | 网络 UCI 值的唯一事实源，一次性写入 LAN relay slave 与 WAN relay master | OpenWrt `uci batch`；renderer 只复制并拒绝路径冲突，shell 语法检查不复述字段 |
+| `profiles/*/semantics.json` | 只描述仓库外、会随 Lean 漂移的 locked-source 语义 | 现有 `profile_semantics.py`；禁止镜像 rootfs 文件内容 |
+| 最终 package/firmware contract | 证明 `mkf2fs` 经过 `defconfig` 且进入 manifest | 现有 `profile_contract.py` 与 firmware verifier |
+
+```mermaid
+flowchart LR
+    SIZE["squashfs rootfs-part > 100 MiB"] --> FST["fstools rootdisk initialization"]
+    REQ["common required: mkf2fs"] --> RENDER["shared ProfileRepository"]
+    RENDER --> CONFIG["CONFIG_PACKAGE_mkf2fs=y"]
+    CONFIG --> IMAGE["R4S + N5105 firmware manifest"]
+    IMAGE --> FST
+    FST --> PERSIST["persistent F2FS overlay"]
+
+    NET["90-common-network"] --> LAN["LAN: RA + DHCPv6 + NDP relay"]
+    NET --> WAN["WAN: RA + DHCPv6 + NDP relay, master=1"]
+    LAN --> ODHCPD["odhcpd relay pair"]
+    WAN --> ODHCPD
+```
+
+命名继续沿用 OpenWrt UCI 域名：`network.lan`、`network.wan`、`network.wan6`、`dhcp.lan`、`dhcp.wan`；不发明设备别名或 helper abstraction。网络值只在 `90-common-network` 修改，`semantics.json`、测试和 checker 都不得维护第二份逐行清单。`mkf2fs` 是首次启动依赖，不扩展为 `block-mount`、完整磁盘管理套件或运行时存储服务。
 
 ## 11. R4S 专属优化
 
@@ -801,7 +832,7 @@ CONFIG_TARGET_ROOTFS_PARTSIZE=944
 IMAGE_PATTERN=*friendlyarm_nanopi-r4s*squashfs*sysupgrade.img.gz
 ```
 
-944 MiB rootfs partition 为 overlay 留出空间，不代表允许把额外应用塞进 manifest。镜像使用 Lean target 当前的 squashfs/image pipeline，不维护一份 R4S 私有 image Makefile。
+944 MiB rootfs partition 为 overlay 留出空间，不代表允许把额外应用塞进 manifest。该空间超过 `fstools` 的 100 MiB F2FS 阈值，因此 common 必须保留 `mkf2fs`，供首次启动格式化 loop-backed `rootfs_data`；镜像仍使用 Lean target 当前的 squashfs/image pipeline，不维护一份 R4S 私有 image Makefile。
 
 selected kernel 由 common testing channel 和本轮 Lean Rockchip metadata 共同决定。设备 seed 不写 `CONFIG_LINUX_6_18` 或 point release，source lock 记录真实 series/version/hash。若 Lean testing channel 前进，R4S 必须同时具备 target config/patch 语义和对应 BBRv3 port，否则整轮停止。
 
@@ -816,7 +847,7 @@ CONFIG_KERNEL_ZRAM_BACKEND_LZ4=y
 CONFIG_KERNEL_ZRAM_DEF_COMP_LZ4=y
 ```
 
-设备 required 合同包含 `autocore-arm`、`kmod-r8168`、`luci-app-cpufreq`、`kmod-hwmon-pwmfan`、`kmod-zram`、`kmod-lib-lz4` 与 `zram-swap`。LZ4 backend/default 两个 Kconfig 和真实 library package 缺一不可；selected-kernel guard 只修声明可见性，不替换整份 kernel module 定义。
+common required 合同提供启动必需的 `mkf2fs`；设备 required 合同包含 `autocore-arm`、`kmod-r8168`、`luci-app-cpufreq`、`kmod-hwmon-pwmfan`、`kmod-zram`、`kmod-lib-lz4` 与 `zram-swap`。LZ4 backend/default 两个 Kconfig 和真实 library package 缺一不可；selected-kernel guard 只修声明可见性，不替换整份 kernel module 定义。
 
 `autocore-arm` 仅作为 LuCI 状态/端口信息来源。R4S 的 CPU governor、IRQ 与 packet steering 已由 Lean target 处理，不把它误认为第二个调优 daemon。
 
@@ -826,7 +857,7 @@ R4S 明确排除：
 - `irqbalance`，避免重新分配 Lean 已放到 CPU4/CPU5 的板载网口 IRQ。
 - RTL8152/USB-net、USB mode switch、UAS、自动挂载和额外存储工具。
 - DRM/Panfrost、GPU firmware、音频、显示。
-- ext4/f2fs 制作与分区维护工具。
+- `e2fsprogs`、`partx-utils` 等非启动必需的分区维护工具；`mkf2fs` 不在此列。
 
 Lean Rockchip target 可能把基础 USB host/storage 能力 built-in。精简合同阻止外接 NIC、UAS、自动挂载、文件系统和存储服务 package，不为删除一个 target 内建且无用户态服务的能力维护整套私有 kernel config。
 
@@ -841,7 +872,7 @@ Lean target 的动态语义是：
 - packet steering 使用全六核 RPS/XPS mask；项目不再叠加 A72-only mask 或 irqbalance。
 - kernel 默认 governor 为 schedutil，PWM fan 与温度保护保持启用。
 
-这些行为由 `profiles/r4s/semantics.json` 在锁定 Lean tree 中验证，配置和源码共同证明优化存在且所有权唯一。
+R4S 自有 rootfs 脚本直接表达 zram 与 packet steering 默认；`profiles/r4s/semantics.json` 只在锁定 Lean tree 中验证 native interface/IRQ、governor、crypto/CRC 和 OPP 等上游源码能力，不复述仓库内脚本。
 
 ## 12. N5105 PVE 专属优化
 
@@ -902,6 +933,8 @@ IMAGE_PATTERN=*x86-64-generic-squashfs-combined-efi.img.gz
 ```
 
 不为同一 guest 同时生成 ext4、legacy GRUB、ISO 或五种虚拟磁盘格式；减少的不是可启动性，而是没有实际消费者的产物和驱动组合。
+
+365 MiB squashfs rootfs partition 同样超过 `fstools` 的 F2FS 阈值，因此 N5105 与 R4S 复用 common 的 `mkf2fs` 启动依赖。x86 selected kernel 已 built-in F2FS；这不要求重新引入 `kmod-fs-f2fs`、`block-mount` 或完整磁盘工具集。
 
 ```text
 CONFIG_TARGET_OPTIMIZATION="-O2 -pipe -march=x86-64-v2 -mtune=tremont"
@@ -1030,6 +1063,17 @@ rendered profile intent
 - Release jobs 由当前 ref 自动选择授权：默认分支使用内置 `GITHUB_TOKEN`；非默认分支使用仓库已有的 `ACTIONS_TRIGGER_PAT`，因为当目标 commit 相对默认分支修改 workflow 时，GitHub 不允许内置 token 创建或更新指向该 commit 的 Release。
 
 依赖图为 `profile 目录 -> prepare 矩阵 -> build artifacts -> aggregate -> draft -> re-download -> publish`。令牌选择只存在于 Release jobs 的 `GH_TOKEN` 环境边界，不新增第二套发布逻辑。tag 始终指向真实构建 commit，不得为规避权限而错挂到默认分支。
+
+Release job 的授权矩阵是该依赖图的一部分：
+
+| job | Release API 行为 | `GITHUB_TOKEN` 权限 | 原因 |
+|---|---|---|---|
+| `aggregate` | 创建 draft 并上传资产 | `contents: write` | 创建和上传本身需要写权限 |
+| `release-verify` | 按 tag 重新发现并下载 draft 资产 | `contents: write` | GitHub 只向具有 push 权限的调用者暴露 draft；只给 `contents: read` 会把已存在的 draft 表现为 `release not found` |
+| `publish-final` | 把同一个已验证 draft 公开 | `contents: write` | 修改 Release 状态 |
+| `cleanup` | 删除超过保留数量的已发布 Release | `contents: write` | 删除 Release 与 tag |
+
+这里不增加等待、重试或 Actions artifact fallback：权限不足不是最终一致性问题，而以 artifact 代替回下载会绕过需要验证的 GitHub Release 交付边界。四个 job 继续复用同一个默认分支/非默认分支 `GH_TOKEN` 选择表达式和同一个 release tag 输出，不引入第二套 token helper、资产下载器或发布状态机。
 
 ### 15.1 prepare / resolve-lock
 
@@ -1245,7 +1289,7 @@ make -j"$BUILD_JOBS" world
 - seed 的正/负选择经过两次 defconfig 没有漂移。
 - required package/config 全部存在，forbidden 和父应用残留子选项全部关闭。
 - package provider 与 `providers.tsv` 一致，当前 feeds/source overlays 全部来自 source lock。
-- firewall3/iptables、GCC15、OPKG/签名/TLS、SBOM、OpenSSL/zlib 优化成立；LTO/GC/Mold、MPTCP、ALL_KMODS/ALL_NONSHARED 关闭。
+- firewall3/iptables、GCC15、OPKG/签名/TLS、SBOM、OpenSSL/zlib 优化成立，两个 squashfs profile 的 `mkf2fs` 启动依赖进入最终 manifest；LTO/GC/Mold、MPTCP、ALL_KMODS/ALL_NONSHARED 关闭。
 - 两个平台都使用 common testing channel，实际 target/series/version/hash 与 lock 完全一致。
 - R4S target、A72+A53 flags、LZ4 zram backend/default/library、native interface/IRQ、schedutil、crypto/CRC 和 OPP 语义存在。
 - N5105 target、x86-64-v2/Tremont flags、VirtIO built-in、igc、EEE disable、VLAN upstream/backport 等价语义存在。
@@ -1396,7 +1440,7 @@ Release 级验收在 GitHub 上完成完整闭环：aggregate 先复验两个 de
 | Geodata 与 Geoview | GeoIP/Geosite 均来自 Loyalsoldier 动态 release，`v2ray-geodata` 打包，Geoview 由 PassWall packages provider 编译 |
 | HAProxy/AdGuardHome/Geo 始终新 | prepare 解析最新 LTS/stable，写入真实 hash；设备内不绕过 package manager 自更新 |
 | 使用指定上游 feed | `kenzok8/small`、`kenzok8/openwrt-packages`、`sbwml/luci-app-mosdns`、canonical Openwrt-Passwall 两个仓库 |
-| 网络共同偏好 | LAN `192.168.2.1/24`、DHCP `.32/232`、IPv6 relay；其他 WAN/桥接/端口不扩大推断 |
+| 网络共同偏好 | LAN `192.168.2.1/24`、DHCP `.32/232`、LAN RA/DHCPv6/NDP relay + WAN relay master；其他 WAN/桥接/端口不扩大推断 |
 | DNS 链不要固化进编译 | 只编译组件与接口，端口、upstream、cache、规则、节点、订阅和凭据留在设备运行时 |
 | 学习 sbwml 但保持公开可维护 | 逐项纳入或用 Lean 原生等价实现；不运行远程脚本、不引入私有 target/授权输入/宽功能集 |
 | 避免多头维护和过量校验 | 声明单一所有者、共享领域模块、四个高价值边界；workflow/shell 不复制 schema 或设备枚举 |

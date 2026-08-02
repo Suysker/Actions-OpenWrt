@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import copy
 import pathlib
-import subprocess
 import sys
 import tempfile
 
@@ -15,19 +14,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 from profile_semantics import check_contract, load_contract  # noqa: E402
 from profile_model import ProfileRepository  # noqa: E402
-
-
-def render_rootfs(profile: str, destination: pathlib.Path) -> None:
-    subprocess.run(
-        [
-            "bash",
-            str(REPO_ROOT / "scripts/render-profile.sh"),
-            "files",
-            profile,
-            str(destination),
-        ],
-        check=True,
-    )
 
 
 def fixture_path(
@@ -103,16 +89,6 @@ def main() -> int:
                                 f"patch rule pins a filename: {rule['name']}"
                             )
 
-            rootfs = root / f"{profile}-rootfs"
-            render_rootfs(profile, rootfs)
-
-            static_checks, static_problems = check_contract(
-                contract, profile, rootfs
-            )
-            assert_no_problems(f"{profile} static contract", static_problems)
-            if not static_checks:
-                raise AssertionError(f"{profile} static contract produced no evidence")
-
             source = root / f"{profile}-openwrt"
             materialize_source_fixture(
                 contract, profile, source, "9.99", "9.99.1"
@@ -120,16 +96,14 @@ def main() -> int:
             source_checks, source_problems = check_contract(
                 contract,
                 profile,
-                rootfs,
-                openwrt_root=source,
+                source,
                 kernel_series="9.99",
                 kernel_version="9.99.1",
             )
             assert_no_problems(f"{profile} source contract", source_problems)
             expected = sum(
-                len(contract["scopes"][scope][section])
+                len(contract["scopes"][scope]["source"])
                 for scope in ("common", profile)
-                for section in ("rootfs", "source")
             )
             if len(source_checks) != expected:
                 raise AssertionError(
@@ -160,8 +134,7 @@ def main() -> int:
                 _, alternative_problems = check_contract(
                     contract,
                     profile,
-                    rootfs,
-                    openwrt_root=source,
+                    source,
                     kernel_series="9.99",
                     kernel_version="9.99.1",
                 )
@@ -176,8 +149,7 @@ def main() -> int:
             _, broken_problems = check_contract(
                 broken,
                 profile,
-                rootfs,
-                openwrt_root=source,
+                source,
                 kernel_series="9.99",
                 kernel_version="9.99.1",
             )

@@ -504,7 +504,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Checkout implementation
         uses: actions/checkout@main

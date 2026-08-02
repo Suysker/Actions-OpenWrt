@@ -1,23 +1,5 @@
 {
-  "schema": 2,
-  "rootfs": [
-    {
-      "name": "r4s.zram-and-packet-steering",
-      "path": "etc/uci-defaults/91-r4s-performance",
-      "contains": [
-        "set system.@system[0].zram_size_mb='512'",
-        "set system.@system[0].zram_comp_algo='lz4'",
-        "set network.globals.packet_steering='1'"
-      ]
-    },
-    {
-      "name": "r4s.low-zram-swappiness",
-      "path": "etc/sysctl.d/91-r4s-memory.conf",
-      "line_set": [
-        "vm.swappiness=5"
-      ]
-    }
-  ],
+  "schema": 3,
   "source": [
     {
       "name": "r4s.irq-affinity",

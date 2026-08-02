@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate declared rootfs and locked-upstream profile semantics."""
+"""Validate declared locked-upstream profile source semantics."""
 
 from __future__ import annotations
 
@@ -47,9 +47,7 @@ def _validate_relative_template(value: Any, label: str) -> str:
     return value
 
 
-def _validate_matcher(
-    matcher: Any, label: str, section: str
-) -> dict[str, Any]:
+def _validate_matcher(matcher: Any, label: str) -> dict[str, Any]:
     if not isinstance(matcher, dict) or not set(matcher).issubset(MATCHER_FIELDS):
         raise ProfileSemanticError(f"{label} has unknown fields")
     selectors = [field for field in SELECTOR_FIELDS if field in matcher]
@@ -57,8 +55,6 @@ def _validate_matcher(
         raise ProfileSemanticError(
             f"{label} must define exactly one of path or glob"
         )
-    if section == "rootfs" and selectors[0] != "path":
-        raise ProfileSemanticError(f"{label} rootfs matcher must use path")
     _validate_relative_template(
         matcher[selectors[0]], f"{label}.{selectors[0]}"
     )
@@ -76,14 +72,14 @@ def _load_scope(path: pathlib.Path, scope: str) -> dict[str, list[dict[str, Any]
     except (OSError, json.JSONDecodeError) as exc:
         raise ProfileSemanticError(f"cannot read {scope} semantics: {exc}") from exc
 
-    if not isinstance(document, dict) or document.get("schema") != 2:
-        raise ProfileSemanticError(f"{scope} semantics schema must be 2")
-    if set(document) != {"schema", "rootfs", "source"}:
+    if not isinstance(document, dict) or document.get("schema") != 3:
+        raise ProfileSemanticError(f"{scope} semantics schema must be 3")
+    if set(document) != {"schema", "source"}:
         raise ProfileSemanticError(
-            f"{scope} semantics must define only schema, rootfs and source"
+            f"{scope} semantics must define only schema and source"
         )
 
-    sections = {field: document[field] for field in ("rootfs", "source")}
+    sections = {"source": document["source"]}
     names: set[str] = set()
     for section, rules in sections.items():
         if not isinstance(rules, list):
@@ -113,13 +109,11 @@ def _load_scope(path: pathlib.Path, scope: str) -> dict[str, list[dict[str, Any]
                     )
                 for alternative_index, matcher in enumerate(alternatives):
                     _validate_matcher(
-                        matcher,
-                        f"{name}.alternatives[{alternative_index}]",
-                        section,
+                        matcher, f"{name}.alternatives[{alternative_index}]"
                     )
             else:
                 direct = {key: value for key, value in rule.items() if key != "name"}
-                _validate_matcher(direct, name, section)
+                _validate_matcher(direct, name)
     return sections
 
 
@@ -135,12 +129,11 @@ def load_contract(profiles_root: pathlib.Path, profile: str) -> dict[str, Any]:
     names = [
         rule["name"]
         for sections in scopes.values()
-        for section in ("rootfs", "source")
-        for rule in sections[section]
+        for rule in sections["source"]
     ]
     if len(names) != len(set(names)):
         raise ProfileSemanticError("common/device semantics contain duplicate rule names")
-    return {"schema": 2, "scopes": scopes}
+    return {"schema": 3, "scopes": scopes}
 
 
 def _format_template(
@@ -283,11 +276,10 @@ def _check_rule(
 def check_contract(
     contract: dict[str, Any],
     profile: str,
-    rootfs_root: pathlib.Path,
+    openwrt_root: pathlib.Path,
     *,
-    openwrt_root: pathlib.Path | None = None,
-    kernel_series: str | None = None,
-    kernel_version: str | None = None,
+    kernel_series: str,
+    kernel_version: str,
 ) -> tuple[list[str], list[str]]:
     scopes = contract["scopes"]
     if profile == "common" or profile not in scopes:
@@ -296,26 +288,15 @@ def check_contract(
     checks: list[str] = []
     problems: list[str] = []
     for scope in ("common", profile):
-        for rule in scopes[scope]["rootfs"]:
+        for rule in scopes[scope]["source"]:
             try:
-                check, problem = _check_rule(rule, rootfs_root, None, None)
+                check, problem = _check_rule(
+                    rule, openwrt_root, kernel_series, kernel_version
+                )
             except ProfileSemanticError as exc:
                 check, problem = None, f"{rule['name']}: {exc}"
             if check:
                 checks.append(check)
             if problem:
                 problems.append(problem)
-
-        if openwrt_root is not None:
-            for rule in scopes[scope]["source"]:
-                try:
-                    check, problem = _check_rule(
-                        rule, openwrt_root, kernel_series, kernel_version
-                    )
-                except ProfileSemanticError as exc:
-                    check, problem = None, f"{rule['name']}: {exc}"
-                if check:
-                    checks.append(check)
-                if problem:
-                    problems.append(problem)
     return checks, problems

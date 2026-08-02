@@ -134,11 +134,6 @@ def run(args: argparse.Namespace) -> tuple[list[str], list[str]]:
 
         semantic_contract = load_contract(args.profiles_root, args.profile)
         if args.openwrt is None:
-            rootfs_checks, rootfs_problems = check_contract(
-                semantic_contract, args.profile, rendered.files
-            )
-            checks.extend(rootfs_checks)
-            problems.extend(rootfs_problems)
             return checks, problems
 
         openwrt = args.openwrt.resolve()
@@ -205,8 +200,7 @@ def run(args: argparse.Namespace) -> tuple[list[str], list[str]]:
         source_checks, source_problems = check_contract(
             semantic_contract,
             args.profile,
-            rendered.files,
-            openwrt_root=openwrt,
+            openwrt,
             kernel_series=selection.series,
             kernel_version=selection.version,
         )
