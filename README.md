@@ -27,7 +27,7 @@
 
 1. 在 GitHub Actions 中选择 `OpenWrt Builder`。
 2. 点击 `Run workflow`。
-3. 正式发布选择 `profile=all`；`r4s` 或 `x86-n5105-pve` 只构建可下载 artifact，不创建 Release。
+3. 正式发布在默认分支选择 `profile=all`。其他分支的 `all` 仍会构建两个平台，但只提供 Actions artifacts；`r4s` 或 `x86-n5105-pve` 也只构建对应 artifact。
 4. 通常把四个版本输入留空，resolver 会选择：
    - 仍受支持的最高 HAProxy LTS 分支最新 patch release；
    - 最新 AdGuardHome stable；
@@ -142,7 +142,7 @@ Breaking changes：
 - 生产 profile 跟随 Lean target 稳定内核；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析最新兼容 BBRv3 port、物化并锁定 commit/hash。
 - GitHub 官方复用 Actions 直接使用 `actions/*@main`，按用户选择追踪最新默认分支；任何上游 runtime/行为不兼容会使门禁直接失败。
 - `diy-part2.sh` 不再做可变 release 查询、`sed` 服务策略或 `PKG_HASH:=skip`；它只应用 source lock 中已经验证的 metadata。
-- 正式 Release 必须由同一 source lock 下两台设备同时通过；单 profile 仅提供 Actions artifact。
+- 正式 Release 必须由默认分支上同一 source lock 下两台设备同时通过；非默认分支和单 profile 仅提供 Actions artifact。
 
 ## Credits
 

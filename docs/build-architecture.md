@@ -337,6 +337,16 @@ BBRv3 适用于路由器本机 IPv4 与 IPv6 TCP socket。它不控制 UDP/QUIC�
 
 ## 15. GitHub Actions 事务
 
+### 15.0 分支与发布边界
+
+构建选择与 Release 授权是两个独立的职责：
+
+- `prepare / Select profiles` 是唯一决策点：它从 profile 目录发现构建矩阵，并由 GitHub 提供的当前 ref 和默认分支推导 `publish`，不在仓库中枚举分支名。
+- `build` 只依赖选中的 profile 矩阵和 source lock；分支是否允许发布不改变编译、校验或 firmware artifact。
+- `aggregate -> release-verify -> publish-final -> retention` 复用同一个 `publish` 输出，只在选择全部 profile 且当前 ref 是默认分支时运行。
+
+依赖图为 `profile 目录 -> prepare 矩阵 -> build artifacts`；只有 `all + default branch -> publish=true` 才从 prepare 分叉进入 Release 事务。因此，任意功能分支都能完整验证双平台编译并下载 Actions artifacts；生产 Release 始终由默认分支上的同一套 workflow 生成。这保证 tag 指向真实构建提交，不需要 PAT，也不会把分支固件错挂到默认分支的 commit。
+
 ### 15.1 prepare / resolve-lock
 
 - 从 profile 目录自动发现目标。
@@ -472,8 +482,8 @@ N5105 PVE：
 4. R4S 与 N5105 在同一新 source lock 下都完成 `make world`。
 5. 两个平台都通过最终 config、firmware、manifest、SBOM、GCC15、BBRv3/sch_fq 和 SHA256 验证。
 6. aggregate 只接受 lock 声明的完整 profile 集合。
-7. draft Release 的全部资产回下载后再次通过同一 verifier。
-8. 同一 draft 成功公开，cleanup 仅在发布成功后执行。
+7. 默认分支的 draft Release 全部资产回下载后再次通过同一 verifier。
+8. 默认分支上同一 draft 成功公开，cleanup 仅在发布成功后执行；非默认分支的 `all` 以双平台 verified artifacts 作为成功终点。
 
 ## 19. 维护规则与风险
 

@@ -56,6 +56,8 @@ jobs:
         env:
           MANUAL_PROFILE: ${{ inputs.profile }}
           DISPATCH_PROFILE: ${{ github.event.client_payload.profile }}
+          CURRENT_REF: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           requested="${MANUAL_PROFILE:-${DISPATCH_PROFILE:-all}}"
@@ -66,7 +68,6 @@ jobs:
           }
           if [ "$requested" = all ]; then
             selected=("${available[@]}")
-            publish=true
           else
             selected=()
             for profile in "${available[@]}"; do
@@ -76,7 +77,12 @@ jobs:
               echo "::error::Unknown profile: $requested"
               exit 2
             }
-            publish=false
+          fi
+          publish=false
+          if [ "$requested" = all ] && [ "$CURRENT_REF" = "$DEFAULT_BRANCH" ]; then
+            publish=true
+          elif [ "$requested" = all ]; then
+            echo "::notice::Selected all profiles on $CURRENT_REF; production Release is restricted to $DEFAULT_BRANCH"
           fi
           matrix="$(printf '%s\n' "${selected[@]}" | jq -R . | jq -sc '{profile: .}')"
           profiles="$(IFS=,; echo "${selected[*]}")"
