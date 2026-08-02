@@ -14,7 +14,9 @@ class ProfileSemanticError(RuntimeError):
 
 
 ASSERTION_FIELDS = ("contains", "exact_lines", "line_set", "forbidden")
-RULE_FIELDS = {"name", "path", "glob", *ASSERTION_FIELDS}
+SELECTOR_FIELDS = ("path", "glob")
+MATCHER_FIELDS = {*SELECTOR_FIELDS, *ASSERTION_FIELDS}
+RULE_FIELDS = {"name", "alternatives", *MATCHER_FIELDS}
 
 
 def _require_string_list(value: Any, label: str) -> list[str]:
@@ -32,7 +34,9 @@ def _validate_relative_template(value: Any, label: str) -> str:
         raise ProfileSemanticError(f"{label} must be a non-empty string")
     if "\\" in value:
         raise ProfileSemanticError(f"{label} must use POSIX path separators")
-    probe = value.replace("{kernel_series}", "kernel-series")
+    probe = value.replace("{kernel_series}", "kernel-series").replace(
+        "{kernel_version}", "kernel-version"
+    )
     if "{" in probe or "}" in probe:
         raise ProfileSemanticError(
             f"{label} contains an unsupported template placeholder"
@@ -43,14 +47,37 @@ def _validate_relative_template(value: Any, label: str) -> str:
     return value
 
 
+def _validate_matcher(
+    matcher: Any, label: str, section: str
+) -> dict[str, Any]:
+    if not isinstance(matcher, dict) or not set(matcher).issubset(MATCHER_FIELDS):
+        raise ProfileSemanticError(f"{label} has unknown fields")
+    selectors = [field for field in SELECTOR_FIELDS if field in matcher]
+    if len(selectors) != 1:
+        raise ProfileSemanticError(
+            f"{label} must define exactly one of path or glob"
+        )
+    if section == "rootfs" and selectors[0] != "path":
+        raise ProfileSemanticError(f"{label} rootfs matcher must use path")
+    _validate_relative_template(
+        matcher[selectors[0]], f"{label}.{selectors[0]}"
+    )
+    assertions = [field for field in ASSERTION_FIELDS if field in matcher]
+    if not assertions:
+        raise ProfileSemanticError(f"{label} has no content assertions")
+    for field in assertions:
+        _require_string_list(matcher[field], f"{label}.{field}")
+    return matcher
+
+
 def _load_scope(path: pathlib.Path, scope: str) -> dict[str, list[dict[str, Any]]]:
     try:
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise ProfileSemanticError(f"cannot read {scope} semantics: {exc}") from exc
 
-    if not isinstance(document, dict) or document.get("schema") != 1:
-        raise ProfileSemanticError(f"{scope} semantics schema must be 1")
+    if not isinstance(document, dict) or document.get("schema") != 2:
+        raise ProfileSemanticError(f"{scope} semantics schema must be 2")
     if set(document) != {"schema", "rootfs", "source"}:
         raise ProfileSemanticError(
             f"{scope} semantics must define only schema, rootfs and source"
@@ -74,20 +101,25 @@ def _load_scope(path: pathlib.Path, scope: str) -> dict[str, list[dict[str, Any]
                 raise ProfileSemanticError(f"duplicate profile semantic rule: {name}")
             names.add(name)
 
-            selectors = [field for field in ("path", "glob") if field in rule]
-            if len(selectors) != 1:
-                raise ProfileSemanticError(
-                    f"{name} must define exactly one of path or glob"
-                )
-            if section == "rootfs" and selectors[0] != "path":
-                raise ProfileSemanticError(f"{name} rootfs rule must use path")
-            _validate_relative_template(rule[selectors[0]], f"{name}.{selectors[0]}")
-
-            assertions = [field for field in ASSERTION_FIELDS if field in rule]
-            if not assertions:
-                raise ProfileSemanticError(f"{name} has no content assertions")
-            for field in assertions:
-                _require_string_list(rule[field], f"{name}.{field}")
+            if "alternatives" in rule:
+                if set(rule) != {"name", "alternatives"}:
+                    raise ProfileSemanticError(
+                        f"{name} alternatives rule cannot define direct match fields"
+                    )
+                alternatives = rule["alternatives"]
+                if not isinstance(alternatives, list) or len(alternatives) < 2:
+                    raise ProfileSemanticError(
+                        f"{name}.alternatives must contain at least two matchers"
+                    )
+                for alternative_index, matcher in enumerate(alternatives):
+                    _validate_matcher(
+                        matcher,
+                        f"{name}.alternatives[{alternative_index}]",
+                        section,
+                    )
+            else:
+                direct = {key: value for key, value in rule.items() if key != "name"}
+                _validate_matcher(direct, name, section)
     return sections
 
 
@@ -108,16 +140,29 @@ def load_contract(profiles_root: pathlib.Path, profile: str) -> dict[str, Any]:
     ]
     if len(names) != len(set(names)):
         raise ProfileSemanticError("common/device semantics contain duplicate rule names")
-    return {"schema": 1, "scopes": scopes}
+    return {"schema": 2, "scopes": scopes}
 
 
-def _format_template(template: str, kernel_series: str | None, name: str) -> str:
+def _format_template(
+    template: str,
+    kernel_series: str | None,
+    kernel_version: str | None,
+    name: str,
+) -> str:
     if "{kernel_series}" in template:
         if not kernel_series or not re.fullmatch(r"[0-9]+\.[0-9]+", kernel_series):
             raise ProfileSemanticError(
-                f"{name} requires a valid stable kernel series"
+                f"{name} requires a valid selected kernel series"
             )
-        return template.format(kernel_series=kernel_series)
+        template = template.replace("{kernel_series}", kernel_series)
+    if "{kernel_version}" in template:
+        if not kernel_version or not re.fullmatch(
+            r"[0-9]+\.[0-9]+\.[0-9]+", kernel_version
+        ):
+            raise ProfileSemanticError(
+                f"{name} requires a valid selected kernel version"
+            )
+        template = template.replace("{kernel_version}", kernel_version)
     return template
 
 
@@ -165,14 +210,19 @@ def _safe_candidate(root: pathlib.Path, relative: pathlib.Path) -> pathlib.Path:
     return candidate
 
 
-def _check_rule(
-    rule: dict[str, Any],
+def _check_matcher(
+    name: str,
+    matcher: dict[str, Any],
     root: pathlib.Path,
     kernel_series: str | None,
+    kernel_version: str | None,
 ) -> tuple[str | None, str | None]:
-    name = rule["name"]
-    if "path" in rule:
-        relative = pathlib.Path(_format_template(rule["path"], kernel_series, name))
+    if "path" in matcher:
+        relative = pathlib.Path(
+            _format_template(
+                matcher["path"], kernel_series, kernel_version, name
+            )
+        )
         candidate = _safe_candidate(root, relative)
         if not candidate.is_file():
             return None, f"{name}: required file is missing: {relative.as_posix()}"
@@ -180,12 +230,14 @@ def _check_rule(
             content = candidate.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             return None, f"{name}: cannot read {relative.as_posix()}: {exc}"
-        failures = _content_problems(rule, content)
+        failures = _content_problems(matcher, content)
         if failures:
             return None, f"{name}: {relative.as_posix()}: {'; '.join(failures)}"
         return f"semantic {name} ({relative.as_posix()})", None
 
-    pattern = _format_template(rule["glob"], kernel_series, name)
+    pattern = _format_template(
+        matcher["glob"], kernel_series, kernel_version, name
+    )
     candidates = sorted(path for path in root.glob(pattern) if path.is_file())
     if not candidates:
         return None, f"{name}: source glob matched no files: {pattern}"
@@ -195,12 +247,37 @@ def _check_rule(
             content = safe.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
-        if not _content_problems(rule, content):
+        if not _content_problems(matcher, content):
             relative = safe.relative_to(root.resolve()).as_posix()
             return f"semantic {name} ({relative})", None
     return None, (
         f"{name}: no single file matching {pattern} satisfies every content assertion"
     )
+
+
+def _check_rule(
+    rule: dict[str, Any],
+    root: pathlib.Path,
+    kernel_series: str | None,
+    kernel_version: str | None,
+) -> tuple[str | None, str | None]:
+    name = rule["name"]
+    alternatives = rule.get("alternatives")
+    if alternatives is None:
+        matcher = {key: value for key, value in rule.items() if key != "name"}
+        return _check_matcher(
+            name, matcher, root, kernel_series, kernel_version
+        )
+
+    failures: list[str] = []
+    for index, matcher in enumerate(alternatives, start=1):
+        check, problem = _check_matcher(
+            name, matcher, root, kernel_series, kernel_version
+        )
+        if check:
+            return check, None
+        failures.append(f"alternative {index}: {problem}")
+    return None, f"{name}: no semantic alternative matched: {' | '.join(failures)}"
 
 
 def check_contract(
@@ -210,6 +287,7 @@ def check_contract(
     *,
     openwrt_root: pathlib.Path | None = None,
     kernel_series: str | None = None,
+    kernel_version: str | None = None,
 ) -> tuple[list[str], list[str]]:
     scopes = contract["scopes"]
     if profile == "common" or profile not in scopes:
@@ -220,7 +298,7 @@ def check_contract(
     for scope in ("common", profile):
         for rule in scopes[scope]["rootfs"]:
             try:
-                check, problem = _check_rule(rule, rootfs_root, None)
+                check, problem = _check_rule(rule, rootfs_root, None, None)
             except ProfileSemanticError as exc:
                 check, problem = None, f"{rule['name']}: {exc}"
             if check:
@@ -232,7 +310,7 @@ def check_contract(
             for rule in scopes[scope]["source"]:
                 try:
                     check, problem = _check_rule(
-                        rule, openwrt_root, kernel_series
+                        rule, openwrt_root, kernel_series, kernel_version
                     )
                 except ProfileSemanticError as exc:
                     check, problem = None, f"{rule['name']}: {exc}"

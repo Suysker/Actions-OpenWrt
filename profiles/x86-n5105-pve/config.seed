@@ -1,7 +1,6 @@
-# N5105 PVE guest: stable x86_64 target, EFI image and hardware policy.
+# N5105 PVE guest: x86_64 target, EFI image and hardware policy.
 CONFIG_TARGET_x86=y
 CONFIG_TARGET_x86_64=y
-# CONFIG_TESTING_KERNEL is not set
 
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
 # CONFIG_TARGET_ROOTFS_EXT4FS is not set

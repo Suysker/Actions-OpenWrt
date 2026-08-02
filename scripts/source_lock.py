@@ -12,6 +12,7 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -19,8 +20,15 @@ import urllib.request
 from typing import Any, Iterable
 
 from bbr3_module_version import BBRModuleVersionError, validate_policy_compatibility
+from kernel_patch import KernelPatchError, inspect_patch
+from kernel_selection import (
+    KernelSelectionError,
+    exact_version_and_hash,
+    selected_channel,
+    selected_series,
+)
 
-from profile_model import ProfileModelError, ProfileRepository
+from profile_model import ProfileModelError, ProfileRepository, parse_config
 
 
 SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -28,7 +36,7 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 FEED_RE = re.compile(r"^(src-git(?:-full)?)\s+([A-Za-z0-9_.-]+)\s+(\S+)$")
 ACTION_USE_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^@\s]+)@([^\s#]+)")
-SOURCE_LOCK_SCHEMA = 4
+SOURCE_LOCK_SCHEMA = 5
 
 
 class ResolutionError(RuntimeError):
@@ -811,10 +819,12 @@ def resolve_bbr_port(policy: dict[str, Any], kernel_series: str) -> dict[str, An
         for index, origin_path in enumerate(origin_paths, start=1):
             raw_url = github_raw_url(repo_url, resolved["commit"], origin_path)
             payload = download_bytes(raw_url)
-            if b"diff --git a/" not in payload or b"\x00" in payload:
+            try:
+                inspect_patch(payload)
+            except KernelPatchError as exc:
                 raise ResolutionError(
-                    f"BBRv3 provider returned a non-patch payload: {origin_path}"
-                )
+                    f"BBRv3 provider returned an invalid patch {origin_path}: {exc}"
+                ) from exc
             origin_name = pathlib.PurePosixPath(origin_path).name
             if mode == "single":
                 artifact_name = expand_series_template(
@@ -905,6 +915,12 @@ def materialize_bbr_patches(lock: dict[str, Any], output: pathlib.Path) -> int:
                     f"BBRv3 patch hash mismatch for {patch.get('origin_path')}: "
                     f"expected {expected}, got {actual}"
                 )
+            try:
+                inspect_patch(payload)
+            except KernelPatchError as exc:
+                raise ResolutionError(
+                    f"materialized BBRv3 patch is invalid {patch.get('origin_path')}: {exc}"
+                ) from exc
             destination = output.joinpath(*relative.parts)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(payload)
@@ -1180,6 +1196,98 @@ def render_profile_identity(lock: dict[str, Any], profile: str) -> str:
     ) + "\n"
 
 
+def render_profile_kernel_plan(lock: dict[str, Any], profile: str) -> str:
+    """Render the fixed-order kernel/BBRv3 plan consumed by shell orchestration."""
+
+    entry = locked_profile(lock, profile)
+    series = locked_profile_string(lock, profile, "kernel_series")
+    bbr = lock["kernel_features"]["bbr3"]
+    if bbr["profile_kernel_series"].get(profile) != series:
+        raise ResolutionError(
+            f"profile and BBRv3 kernel series disagree in source-lock: {profile}"
+        )
+    port = bbr["ports"].get(series)
+    if not isinstance(port, dict):
+        raise ResolutionError(f"source-lock has no BBRv3 port for kernel {series}")
+    values = (
+        entry["kernel_channel"],
+        series,
+        entry["kernel_version"],
+        entry["kernel_source_sha256"],
+        entry["kernel_target"],
+        port["provider"],
+        port["origin_url"],
+        port["origin_ref"],
+        port["origin_commit"],
+        port["install_directory"],
+    )
+    if any(not isinstance(value, str) or "\n" in value for value in values):
+        raise ResolutionError(f"source-lock kernel plan is unsafe for profile {profile}")
+    return "\n".join(values) + "\n"
+
+
+def render_bbr_patch_plan(lock: dict[str, Any], profile: str) -> str:
+    series = locked_profile_string(lock, profile, "kernel_series")
+    port = lock["kernel_features"]["bbr3"]["ports"][series]
+    lines: list[str] = []
+    for patch in port["patches"]:
+        values = (
+            str(patch["order"]),
+            patch["artifact_path"],
+            patch["sha256"],
+            patch["origin_path"],
+            patch["raw_url"],
+            patch["install_name"],
+        )
+        if any("\t" in value or "\n" in value for value in values):
+            raise ResolutionError(
+                f"source-lock BBRv3 patch plan is unsafe for profile {profile}"
+            )
+        lines.append("\t".join(values))
+    return "\n".join(lines) + "\n"
+
+
+def materialized_bbr_patch_paths(
+    lock_path: pathlib.Path, kernel_version: str
+) -> tuple[pathlib.Path, ...]:
+    """Validate and return the frozen patch files for one exact Linux version."""
+
+    lock_path = lock_path.resolve()
+    lock = load_lock(lock_path)
+    matching = [
+        (series, port)
+        for series, port in lock["kernel_features"]["bbr3"]["ports"].items()
+        if port.get("version") == kernel_version
+    ]
+    if len(matching) != 1:
+        raise ResolutionError(
+            f"expected one BBRv3 port for Linux {kernel_version}, found {len(matching)}"
+        )
+    series, port = matching[0]
+    paths: list[pathlib.Path] = []
+    for patch in port["patches"]:
+        relative = safe_artifact_path(patch["artifact_path"], series)
+        path = lock_path.parent.joinpath(*relative.parts).resolve()
+        try:
+            path.relative_to(lock_path.parent)
+        except ValueError as exc:
+            raise ResolutionError(f"materialized BBRv3 path escapes lock: {relative}") from exc
+        if not path.is_file():
+            raise ResolutionError(f"materialized BBRv3 patch is missing: {relative}")
+        payload = path.read_bytes()
+        actual = hashlib.sha256(payload).hexdigest()
+        if actual != patch["sha256"]:
+            raise ResolutionError(f"materialized BBRv3 patch hash differs: {relative}")
+        try:
+            inspect_patch(payload)
+        except KernelPatchError as exc:
+            raise ResolutionError(
+                f"materialized BBRv3 patch is invalid {relative}: {exc}"
+            ) from exc
+        paths.append(path)
+    return tuple(paths)
+
+
 def render_lock_summary(lock: dict[str, Any]) -> str:
     lines = [f"OpenWrt: {lock['openwrt']['commit']}"]
     lines.append(
@@ -1198,7 +1306,8 @@ def render_lock_summary(lock: dict[str, Any]) -> str:
         for name, artifact in sorted(lock["upstream_artifacts"].items())
     )
     lines.extend(
-        f"{profile}: Linux {locked_profile_string(lock, profile, 'kernel_version')}"
+        f"{profile}: Linux {locked_profile_string(lock, profile, 'kernel_version')} "
+        f"({locked_profile_string(lock, profile, 'kernel_channel')})"
         for profile in sorted(lock["profiles"])
     )
     lines.extend(
@@ -1230,7 +1339,7 @@ def validate_lock(
         "patch_digest",
     }
     if set(lock) != expected_fields:
-        raise ResolutionError("source-lock fields differ from schema 4")
+        raise ResolutionError(f"source-lock fields differ from schema {SOURCE_LOCK_SCHEMA}")
     if lock.get("schema") != SOURCE_LOCK_SCHEMA:
         raise ResolutionError(f"source-lock schema must be {SOURCE_LOCK_SCHEMA}")
     require_sha1(lock.get("repository_commit", ""), "repository commit")
@@ -1238,7 +1347,44 @@ def validate_lock(
     validate_locked_feeds(lock.get("feeds"), repo_root)
     validate_source_overlays(lock.get("source_overlays"), repo_root)
     validate_upstream_artifacts(lock.get("upstream_artifacts"), geodata_contracts)
-    for name, value in lock.get("profile_digests", {}).items():
+    profiles = lock.get("profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        raise ResolutionError("source-lock contains no profiles")
+    profile_digests = lock.get("profile_digests")
+    if not isinstance(profile_digests, dict) or set(profile_digests) != set(profiles):
+        raise ResolutionError("source-lock profile digests differ from profiles")
+    profile_fields = {
+        "kernel_target",
+        "kernel_channel",
+        "kernel_series",
+        "kernel_version",
+        "kernel_source_sha256",
+        "target_check_regex",
+        "image_pattern",
+    }
+    for name, entry in profiles.items():
+        if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
+            raise ResolutionError(f"invalid source-lock profile name: {name!r}")
+        if not isinstance(entry, dict) or set(entry) != profile_fields:
+            raise ResolutionError(f"source-lock profile fields are invalid for {name}")
+        if not re.fullmatch(r"[A-Za-z0-9_.+-]+", entry.get("kernel_target", "")):
+            raise ResolutionError(f"invalid kernel target for profile {name}")
+        if entry.get("kernel_channel") not in {"stable", "testing"}:
+            raise ResolutionError(f"invalid kernel channel for profile {name}")
+        series = entry.get("kernel_series", "")
+        version = entry.get("kernel_version", "")
+        if not re.fullmatch(r"[0-9]+\.[0-9]+", series):
+            raise ResolutionError(f"invalid kernel series for profile {name}")
+        if not re.fullmatch(rf"{re.escape(series)}\.[0-9]+", version):
+            raise ResolutionError(f"invalid kernel version for profile {name}")
+        require_sha256(
+            entry.get("kernel_source_sha256", ""),
+            f"profile {name} kernel source",
+        )
+        for field in ("target_check_regex", "image_pattern"):
+            if not isinstance(entry.get(field), str) or not entry[field]:
+                raise ResolutionError(f"profile {name} has invalid {field}")
+    for name, value in profile_digests.items():
         require_sha256(value, f"profile {name} digest")
     require_sha256(lock.get("patch_digest", ""), "patch digest")
 
@@ -1324,6 +1470,17 @@ def validate_lock(
             raise ResolutionError(
                 f"BBRv3 profile/kernel mapping differs for {profile}: {kernel_series}"
             )
+        port = ports[kernel_series]
+        if (
+            port.get("version") != profile_entry.get("kernel_version")
+            or port.get("source_sha256")
+            != profile_entry.get("kernel_source_sha256")
+        ):
+            raise ResolutionError(
+                f"BBRv3 port/kernel metadata differs for profile {profile}"
+            )
+    if set(profile_kernel_series) != set(profiles):
+        raise ResolutionError("BBRv3 profile mapping differs from locked profiles")
 
 
 def collect_action_refs(
@@ -1383,6 +1540,19 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
     openwrt_ref = next(iter(repo_refs))
     openwrt = resolve_git_ref(openwrt_url, openwrt_ref)
 
+    profile_repository = ProfileRepository(repo_root / "profiles")
+    rendered_configs: dict[str, dict[str, str]] = {}
+    try:
+        with tempfile.TemporaryDirectory(prefix="source-lock-profiles-") as temporary:
+            temporary_root = pathlib.Path(temporary)
+            for profile in profiles:
+                config_path = profile_repository.render_config(
+                    profile, temporary_root / f"{profile}.config"
+                )
+                rendered_configs[profile] = parse_config(config_path)
+    except ProfileModelError as exc:
+        raise ResolutionError(str(exc)) from exc
+
     default_feeds_text = download_text(
         github_raw_url(openwrt_url, openwrt["commit"], "feeds.conf.default")
     )
@@ -1437,16 +1607,11 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
                 openwrt_url, openwrt["commit"], f"target/linux/{target}/Makefile"
             )
         )
-        matches = re.findall(
-            r"^KERNEL_PATCHVER\s*:?=\s*([0-9]+\.[0-9]+)\s*$",
-            makefile,
-            re.MULTILINE,
-        )
-        if len(matches) != 1:
-            raise ResolutionError(
-                f"expected one stable KERNEL_PATCHVER for profile {profile}, found {matches}"
-            )
-        kernel_series = matches[0]
+        try:
+            kernel_channel = selected_channel(rendered_configs[profile])
+            kernel_series = selected_series(makefile, kernel_channel)
+        except KernelSelectionError as exc:
+            raise ResolutionError(f"profile {profile}: {exc}") from exc
         if kernel_series not in kernel_versions:
             kernel_metadata = download_text(
                 github_raw_url(
@@ -1455,32 +1620,20 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
                     f"include/kernel-{kernel_series}",
                 )
             )
-            suffix_match = re.search(
-                rf"^LINUX_VERSION-{re.escape(kernel_series)}\s*=\s*(\.[0-9]+)\s*$",
-                kernel_metadata,
-                re.MULTILINE,
-            )
-            if not suffix_match:
-                raise ResolutionError(
-                    f"cannot resolve exact stable Linux version for {kernel_series}"
+            try:
+                kernel_version, source_sha256 = exact_version_and_hash(
+                    kernel_metadata, kernel_series
                 )
-            kernel_version = kernel_series + suffix_match.group(1)
-            hash_match = re.search(
-                rf"^LINUX_KERNEL_HASH-{re.escape(kernel_version)}\s*=\s*([0-9a-f]{{64}})\s*$",
-                kernel_metadata,
-                re.MULTILINE,
-            )
-            if not hash_match:
-                raise ResolutionError(
-                    f"cannot resolve stable Linux source hash for {kernel_version}"
-                )
+            except KernelSelectionError as exc:
+                raise ResolutionError(f"profile {profile}: {exc}") from exc
             kernel_versions[kernel_series] = {
                 "version": kernel_version,
-                "source_sha256": hash_match.group(1),
+                "source_sha256": source_sha256,
             }
         profile_kernel_series[profile] = kernel_series
         profile_entries[profile] = {
             "kernel_target": target,
+            "kernel_channel": kernel_channel,
             "kernel_series": kernel_series,
             "kernel_version": kernel_versions[kernel_series]["version"],
             "kernel_source_sha256": kernel_versions[kernel_series]["source_sha256"],
@@ -1561,6 +1714,9 @@ def main(argv: list[str]) -> int:
             "render-feeds <lock> <output> | overlay-manifest <lock> | "
             "repository-commit <lock> | kernel-versions <lock> | "
             "profile-names <lock> | profile-identity <lock> <profile> | "
+            "profile-kernel-plan <lock> <profile> | "
+            "bbr-patch-plan <lock> <profile> | "
+            "materialized-bbr-paths <lock> <kernel-version> | "
             "openwrt-source <lock> | summary <lock> | "
             "validate-actions <workflow>...",
             file=sys.stderr,
@@ -1635,6 +1791,28 @@ def main(argv: list[str]) -> int:
         print(
             render_profile_identity(load_lock(pathlib.Path(argv[2])), argv[3]),
             end="",
+        )
+        return 0
+    if command == "profile-kernel-plan" and len(argv) == 4:
+        print(
+            render_profile_kernel_plan(load_lock(pathlib.Path(argv[2])), argv[3]),
+            end="",
+        )
+        return 0
+    if command == "bbr-patch-plan" and len(argv) == 4:
+        print(
+            render_bbr_patch_plan(load_lock(pathlib.Path(argv[2])), argv[3]),
+            end="",
+        )
+        return 0
+    if command == "materialized-bbr-paths" and len(argv) == 4:
+        print(
+            "\n".join(
+                str(path)
+                for path in materialized_bbr_patch_paths(
+                    pathlib.Path(argv[2]), argv[3]
+                )
+            )
         )
         return 0
     if command == "openwrt-source" and len(argv) == 3:

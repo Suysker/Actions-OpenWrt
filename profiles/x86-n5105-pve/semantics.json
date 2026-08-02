@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "rootfs": [
     {
       "name": "x86-n5105-pve.driver-owned-four-queues",
@@ -44,9 +44,20 @@
     },
     {
       "name": "x86-n5105-pve.igc-vlan-offload",
-      "glob": "target/linux/generic/backport-{kernel_series}/*.patch",
-      "contains": [
-        "netdev->features |= NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_CTAG_RX;"
+      "alternatives": [
+        {
+          "glob": "target/linux/generic/backport-{kernel_series}/*.patch",
+          "contains": [
+            "netdev->features |= NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_CTAG_RX;"
+          ]
+        },
+        {
+          "glob": "build_dir/target-*/linux-*/linux-{kernel_version}/drivers/net/ethernet/intel/igc/igc_main.c",
+          "contains": [
+            "/* enable HW vlan tag insertion/stripping by default */",
+            "netdev->features |= NETIF_F_HW_VLAN_CTAG_TX | NETIF_F_HW_VLAN_CTAG_RX;"
+          ]
+        }
       ]
     }
   ]

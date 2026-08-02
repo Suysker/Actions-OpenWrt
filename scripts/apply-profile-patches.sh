@@ -7,7 +7,7 @@ Usage:
   apply-profile-patches.sh <profile> <openwrt-dir> <source-lock.json> <report.txt>
 
 Applies repository-owned common/device patches and installs the BBRv3 port
-selected by the immutable source lock into OpenWrt's stable-kernel patch stack.
+selected by the immutable source lock into OpenWrt's selected-kernel patch stack.
 EOF
 }
 
@@ -34,62 +34,25 @@ openwrt_dir="$(cd "$openwrt_dir" && pwd -P)"
 source_lock="$(cd "$(dirname "$source_lock")" && pwd -P)/$(basename "$source_lock")"
 mkdir -p "$(dirname "$report")"
 
-readarray -t locked < <(python3 - "$source_lock" "$profile" <<'PY'
-import json
-import re
-import sys
-
-lock = json.load(open(sys.argv[1], encoding="utf-8"))
-profile = sys.argv[2]
-entry = lock.get("profiles", {}).get(profile)
-if not isinstance(entry, dict):
-    raise SystemExit(f"::error::Profile {profile} is absent from source-lock")
-series = entry.get("kernel_series", "")
-version = entry.get("kernel_version", "")
-bbr = lock.get("kernel_features", {}).get("bbr3", {})
-if bbr.get("profile_kernel_series", {}).get(profile) != series:
-    raise SystemExit("::error::Profile and BBRv3 kernel series disagree in source-lock")
-port = bbr.get("ports", {}).get(series)
-if not isinstance(port, dict):
-    raise SystemExit(f"::error::No BBRv3 port is locked for kernel {series}")
-values = [
-    series,
-    version,
-    entry.get("kernel_target", ""),
-    port.get("provider", ""),
-    port.get("origin_url", ""),
-    port.get("origin_ref", ""),
-    port.get("origin_commit", ""),
-    port.get("install_directory", ""),
-]
-if not re.fullmatch(r"[0-9]+\.[0-9]+", values[0]):
-    raise SystemExit("::error::Invalid locked kernel series")
-if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", values[1]):
-    raise SystemExit("::error::Invalid locked kernel version")
-if not re.fullmatch(r"[a-z0-9_-]+", values[2]):
-    raise SystemExit("::error::Invalid locked kernel target")
-if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", values[3]):
-    raise SystemExit("::error::Invalid BBRv3 provider")
-if not re.fullmatch(r"[0-9a-f]{40}", values[6]):
-    raise SystemExit("::error::Invalid BBRv3 origin commit")
-if not re.fullmatch(rf"(?:hack|backport)-{re.escape(series)}", values[7]):
-    raise SystemExit("::error::Invalid BBRv3 install directory")
-print("\n".join(values))
-PY
+readarray -t locked < <(
+  bash "$repo_root/scripts/resolve-source-lock.sh" \
+    profile-kernel-plan "$source_lock" "$profile"
 )
-[ "${#locked[@]}" -eq 8 ] || {
+[ "${#locked[@]}" -eq 10 ] || {
   echo "::error::Could not parse the locked patch contract for $profile" >&2
   exit 1
 }
 
-kernel_series="${locked[0]}"
-kernel_version="${locked[1]}"
-kernel_target="${locked[2]}"
-bbr_provider="${locked[3]}"
-origin_url="${locked[4]}"
-origin_ref="${locked[5]}"
-origin_commit="${locked[6]}"
-install_directory="${locked[7]}"
+kernel_channel="${locked[0]}"
+kernel_series="${locked[1]}"
+kernel_version="${locked[2]}"
+kernel_source_sha256="${locked[3]}"
+kernel_target="${locked[4]}"
+bbr_provider="${locked[5]}"
+origin_url="${locked[6]}"
+origin_ref="${locked[7]}"
+origin_commit="${locked[8]}"
+install_directory="${locked[9]}"
 source_lock_dir="$(dirname "$source_lock")"
 
 mapfile -t module_version_contract < <(
@@ -105,34 +68,9 @@ module_version_install_directory="${module_version_contract[1]}"
 module_version_install_name="${module_version_contract[2]}"
 module_version_sha256="${module_version_contract[6]}"
 
-mapfile -t locked_patches < <(python3 - "$source_lock" "$kernel_series" <<'PY'
-import json
-import pathlib
-import re
-import sys
-
-lock = json.load(open(sys.argv[1], encoding="utf-8"))
-series = sys.argv[2]
-patches = lock["kernel_features"]["bbr3"]["ports"][series].get("patches", [])
-if not patches:
-    raise SystemExit("::error::Locked BBRv3 port contains no patches")
-for order, patch in enumerate(patches, start=1):
-    relative = pathlib.PurePosixPath(patch.get("artifact_path", ""))
-    sha256 = patch.get("sha256", "")
-    install_name = patch.get("install_name", "")
-    origin_path = patch.get("origin_path", "")
-    if patch.get("order") != order:
-        raise SystemExit("::error::Locked BBRv3 patch order is invalid")
-    if relative.is_absolute() or ".." in relative.parts or relative.parts[:2] != ("bbr3", series):
-        raise SystemExit("::error::Unsafe BBRv3 artifact path")
-    if not re.fullmatch(r"[0-9a-f]{64}", sha256):
-        raise SystemExit("::error::Invalid BBRv3 patch SHA256")
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.patch", install_name):
-        raise SystemExit("::error::Unsafe BBRv3 install name")
-    if any("\t" in value or "\n" in value for value in (str(relative), origin_path, patch.get("raw_url", ""))):
-        raise SystemExit("::error::Unsafe control character in BBRv3 lock")
-    print("\t".join((str(order), str(relative), sha256, origin_path, patch.get("raw_url", ""), install_name)))
-PY
+mapfile -t locked_patches < <(
+  bash "$repo_root/scripts/resolve-source-lock.sh" \
+    bbr-patch-plan "$source_lock" "$profile"
 )
 [ "${#locked_patches[@]}" -gt 0 ] || {
   echo "::error::Could not parse materialized BBRv3 patches" >&2
@@ -144,9 +82,12 @@ target_makefile="$openwrt_dir/target/linux/$kernel_target/Makefile"
   echo "::error::Locked target Makefile is missing: $target_makefile" >&2
   exit 1
 }
-actual_series="$(sed -nE 's/^KERNEL_PATCHVER[[:space:]]*:=[[:space:]]*([0-9]+\.[0-9]+)[[:space:]]*$/\1/p' "$target_makefile")"
+actual_series="$(
+  python3 "$repo_root/scripts/kernel_selection.py" \
+    target-series "$target_makefile" "$kernel_channel"
+)"
 [ "$actual_series" = "$kernel_series" ] || {
-  echo "::error::OpenWrt stable kernel $actual_series differs from locked $kernel_series" >&2
+  echo "::error::OpenWrt $kernel_channel kernel $actual_series differs from locked $kernel_series" >&2
   exit 1
 }
 
@@ -178,12 +119,14 @@ apply_series() {
 
 source_lock_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$source_lock")"
 {
-  echo "patch-report-v2"
+  echo "patch-report-v3"
   echo "profile=$profile"
   echo "source_lock_digest=$source_lock_digest"
   echo "kernel_target=$kernel_target"
+  echo "kernel_channel=$kernel_channel"
   echo "kernel_series=$kernel_series"
   echo "kernel_version=$kernel_version"
+  echo "kernel_source_sha256=$kernel_source_sha256"
 } > "$report"
 
 python3 "$repo_root/scripts/apply-source-compatibility.py" \
@@ -193,7 +136,7 @@ apply_series device "$repo_root/patchsets/$profile"
 
 destination_dir="$openwrt_dir/target/linux/generic/$install_directory"
 [ -d "$destination_dir" ] || {
-  echo "::error::OpenWrt generic stable-kernel patch directory is missing: $destination_dir" >&2
+  echo "::error::OpenWrt generic selected-kernel patch directory is missing: $destination_dir" >&2
   exit 1
 }
 installed_bbr_patches=()
@@ -217,6 +160,7 @@ for record in "${locked_patches[@]}"; do
     echo "::error::Materialized BBRv3 digest differs from source-lock: $artifact_relative" >&2
     exit 1
   }
+  python3 "$repo_root/scripts/kernel_patch.py" validate "$materialized_patch"
   destination="$destination_dir/$install_name"
   if [ -e "$destination" ]; then
     destination_hash="$(sha256sum "$destination" | awk '{print $1}')"

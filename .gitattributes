@@ -1,0 +1,7 @@
+*.sh text eol=lf
+*.py text eol=lf
+*.patch text eol=lf
+*.seed text eol=lf
+patchsets/**/series text eol=lf
+profiles/**/files/etc/uci-defaults/* text eol=lf
+profiles/**/files/etc/hotplug.d/* text eol=lf

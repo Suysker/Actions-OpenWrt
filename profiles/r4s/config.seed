@@ -1,7 +1,6 @@
 # NanoPi R4S 4GB SD profile: target, image, CPU and hardware-only policy.
 CONFIG_TARGET_rockchip=y
 CONFIG_TARGET_rockchip_armv8=y
-# CONFIG_TESTING_KERNEL is not set
 
 CONFIG_TARGET_ROOTFS_SQUASHFS=y
 # CONFIG_TARGET_ROOTFS_EXT4FS is not set

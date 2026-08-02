@@ -285,7 +285,7 @@ def fixture_feeds():
 
 
 base = {
-    "schema": 4,
+    "schema": 5,
     "resolved_at": "2026-01-01T00:00:00Z",
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
@@ -330,7 +330,17 @@ base = {
             "checksum_sha256": "4" * 64,
         },
     },
-    "profiles": {"r4s": {"kernel_series": "6.12"}},
+    "profiles": {
+        "r4s": {
+            "kernel_target": "rockchip",
+            "kernel_channel": "stable",
+            "kernel_series": "6.12",
+            "kernel_version": "6.12.100",
+            "kernel_source_sha256": "5" * 64,
+            "target_check_regex": "^CONFIG_TARGET_rockchip=y$",
+            "image_pattern": "*sysupgrade.img.gz",
+        }
+    },
     "kernel_features": {
         "bbr3": {
             "algorithm": {
@@ -347,6 +357,8 @@ base = {
                     "origin_ref": "master",
                     "origin_commit": port_commit,
                     "install_directory": "hack-6.12",
+                    "version": "6.12.100",
+                    "source_sha256": "5" * 64,
                     "patches": [
                         {
                             "order": 1,
@@ -365,6 +377,14 @@ base = {
     "patch_digest": "sha256:" + "7" * 64,
 }
 module.validate_lock(base)
+legacy = json.loads(json.dumps(base))
+legacy["schema"] = 4
+try:
+    module.validate_lock(legacy)
+except module.ResolutionError as exc:
+    assert "schema must be 5" in str(exc)
+else:
+    raise AssertionError("legacy source-lock schema 4 was accepted")
 wrong_packages_feed = json.loads(json.dumps(base))
 wrong_packages_feed["feeds"]["packages"]["url"] = (
     "https://github.com/coolsnowwolf/packages"
@@ -451,7 +471,17 @@ policy = {
         }
     ],
 }
-patch_payload = b"diff --git a/net/ipv4/tcp_bbr.c b/net/ipv4/tcp_bbr.c\n"
+patch_payload = (
+    b"diff --git a/net/ipv4/tcp_bbr.c b/net/ipv4/tcp_bbr.c\n"
+    b"--- a/net/ipv4/tcp_bbr.c\n"
+    b"+++ b/net/ipv4/tcp_bbr.c\n"
+    b"@@ -1 +1 @@\n-old\n+new\n"
+)
+quilt_patch_payload = (
+    b"--- a/include/net/tcp.h\n"
+    b"+++ b/include/net/tcp.h\n"
+    b"@@ -1 +1 @@\n-old\n+new\n"
+)
 original_resolve_git_ref = module.resolve_git_ref
 original_github_tree_files = module.github_tree_files
 original_download_bytes = module.download_bytes
@@ -500,7 +530,7 @@ try:
             "patch/kernel-6.18/bbr3/010-bbr3-0002-second.patch",
         }
     )
-    module.download_bytes = lambda _url: patch_payload
+    module.download_bytes = lambda _url: quilt_patch_payload
     resolved_multi = module.resolve_bbr_port(multi_policy, "6.18")
     assert resolved_multi["provider"] == "fixture-series"
     assert resolved_multi["install_directory"] == "backport-6.18"

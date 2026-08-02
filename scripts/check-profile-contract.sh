@@ -7,8 +7,8 @@ Usage:
   check-profile-contract.sh <profile> [openwrt-root] [source-lock.json] [report] [diagnostics-dir]
 
 With only a profile, validates repository-owned static contracts. With an
-OpenWrt tree, also validates the final config/package set, providers, stable
-kernel series, source lock and locked-source semantics through one model.
+OpenWrt tree, also validates the final config/package set, providers, selected
+kernel identity, source lock and locked-source semantics through one model.
 EOF
 }
 

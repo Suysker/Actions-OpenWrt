@@ -1,6 +1,11 @@
 # Shared package, toolchain and network contract for every maintained profile.
 # Target, image layout, CPU flags and hardware-only packages belong to devices.
 
+# Both profiles follow Lean's testing kernel channel; exact versions remain dynamic.
+CONFIG_TESTING_KERNEL=y
+# CONFIG_KERNEL_MPTCP is not set
+# CONFIG_KERNEL_MPTCP_IPV6 is not set
+
 # Build/toolchain policy: native Lean GCC 15, reproducible reports and OPKG.
 CONFIG_DEVEL=y
 CONFIG_TOOLCHAINOPTS=y

@@ -36,8 +36,11 @@ lock = json.loads(path.read_text(encoding="utf-8"))
 lock["profiles"] = {
     "fixture": {
         "kernel_target": "fixture",
+        "kernel_channel": "stable",
         "kernel_series": "6.12",
         "kernel_version": "6.12.100",
+        "kernel_source_sha256": "3" * 64,
+        "target_check_regex": "^CONFIG_TARGET_fixture=y$",
         "image_pattern": "fixture-*.img.gz",
     }
 }
@@ -53,8 +56,12 @@ lock_digest="$(python3 "$repo_root/scripts/source_lock.py" \
 printf '{"schema":1,"source_lock_digest":"%s","components":{}}\n' \
   "$lock_digest" > "$temporary/artifact-report.txt"
 cat > "$temporary/patch-report.txt" <<EOF
-patch-report-v2
+patch-report-v3
 source_lock_digest=$lock_digest
+kernel_channel=stable
+kernel_series=6.12
+kernel_version=6.12.100
+kernel_source_sha256=$(printf '3%.0s' {1..64})
 assertion_BBR_VERSION=3
 assertion_runtime_name=bbr
 assertion_module_version_metadata=retained
@@ -134,8 +141,14 @@ import pathlib
 import sys
 
 report = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+assert report["schema"] == 2
 assert report["profile"] == "fixture"
-assert report["kernel_version"] == "6.12.100"
+assert report["kernel"] == {
+    "channel": "stable",
+    "series": "6.12",
+    "version": "6.12.100",
+    "source_sha256": "3" * 64,
+}
 assert len(report["kernel_modules"]["tcp_bbr"]) == 2
 assert {entry["version"] for entry in report["kernel_modules"]["tcp_bbr"]} == {"3"}
 assert {entry["vermagic"] for entry in report["kernel_modules"]["tcp_bbr"]} == {
@@ -144,7 +157,7 @@ assert {entry["vermagic"] for entry in report["kernel_modules"]["tcp_bbr"]} == {
 assert len(report["kernel_modules"]["sch_fq"]) == 1
 assert report["toolchain"]["gcc_version"] == "15.2.0"
 assert report["toolchain"]["external_prebuilt"] is False
-assert report["build_inputs"]["patches"]["format"] == "patch-report-v2"
+assert report["build_inputs"]["patches"]["format"] == "patch-report-v3"
 assert report["build_inputs"]["runner"]["format"] == "runner-report-v1"
 PY
 

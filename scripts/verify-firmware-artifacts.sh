@@ -122,6 +122,12 @@ locked_profile = lock["profiles"].get(profile)
 if not isinstance(locked_profile, dict):
     raise SystemExit(f"::error::Profile {profile} is absent from embedded source-lock")
 kernel_version = locked_profile.get("kernel_version")
+kernel_identity = {
+    "channel": locked_profile.get("kernel_channel"),
+    "series": locked_profile.get("kernel_series"),
+    "version": kernel_version,
+    "source_sha256": locked_profile.get("kernel_source_sha256"),
+}
 
 for sbom_path in sbom_paths:
     sbom = json.loads(sbom_path.read_text(encoding="utf-8"))
@@ -173,12 +179,12 @@ if expected_optimization not in config_buildinfo.read_text(
 provenance = json.loads(
     (artifacts / "build-provenance.json").read_text(encoding="utf-8")
 )
-if provenance.get("schema") != 1 or provenance.get("profile") != profile:
+if provenance.get("schema") != 2 or provenance.get("profile") != profile:
     raise SystemExit("::error::Build provenance identity is invalid")
 if provenance.get("source_lock_digest") != expected_digest:
     raise SystemExit("::error::Build provenance has the wrong source-lock digest")
-if provenance.get("kernel_version") != kernel_version:
-    raise SystemExit("::error::Build provenance has the wrong kernel version")
+if provenance.get("kernel") != kernel_identity:
+    raise SystemExit("::error::Build provenance has the wrong selected kernel identity")
 
 toolchain = provenance.get("toolchain", {})
 if not str(toolchain.get("gcc_version", "")).startswith("15."):
@@ -197,13 +203,17 @@ if overrides.get("source_lock_digest") != expected_digest:
 patches = inputs.get("patches", {})
 if not isinstance(patches, dict):
     raise SystemExit("::error::Build provenance patch evidence is invalid")
-if patches.get("format") != "patch-report-v2":
+if patches.get("format") != "patch-report-v3":
     raise SystemExit("::error::Build provenance has an unsupported patch report")
 patch_values = patches.get("values", {})
 if not isinstance(patch_values, dict):
     raise SystemExit("::error::Build provenance patch values are invalid")
 for key, expected in (
     ("source_lock_digest", expected_digest),
+    ("kernel_channel", str(kernel_identity["channel"])),
+    ("kernel_series", str(kernel_identity["series"])),
+    ("kernel_version", str(kernel_identity["version"])),
+    ("kernel_source_sha256", str(kernel_identity["source_sha256"])),
     ("assertion_BBR_VERSION", "3"),
     ("assertion_runtime_name", "bbr"),
     ("assertion_module_version_metadata", "retained"),

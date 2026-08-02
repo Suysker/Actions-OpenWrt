@@ -52,7 +52,7 @@ jobs:
         uses: actions/cache@main
         with:
           path: .source-state
-          key: source-lock-v4-${{ steps.lock.outputs.source_digest }}
+          key: source-lock-v5-${{ steps.lock.outputs.source_digest }}
 
       - name: Show changed immutable inputs
         if: steps.fingerprint.outputs.cache-hit != 'true' || inputs.force_build == true

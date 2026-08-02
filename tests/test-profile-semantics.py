@@ -30,25 +30,34 @@ def render_rootfs(profile: str, destination: pathlib.Path) -> None:
     )
 
 
-def fixture_path(rule: dict[str, object], kernel_series: str) -> pathlib.Path:
-    template = str(rule.get("path") or rule["glob"])
-    relative = template.format(kernel_series=kernel_series)
-    if "glob" in rule:
+def fixture_path(
+    matcher: dict[str, object], kernel_series: str, kernel_version: str
+) -> pathlib.Path:
+    template = str(matcher.get("path") or matcher["glob"])
+    relative = template.format(
+        kernel_series=kernel_series, kernel_version=kernel_version
+    )
+    if "glob" in matcher:
         relative = relative.replace("*", "contract")
     return pathlib.Path(relative)
 
 
 def materialize_source_fixture(
-    contract: dict[str, object], profile: str, root: pathlib.Path, kernel_series: str
+    contract: dict[str, object],
+    profile: str,
+    root: pathlib.Path,
+    kernel_series: str,
+    kernel_version: str,
 ) -> None:
     contents: dict[pathlib.Path, list[str]] = {}
     scopes = contract["scopes"]
     for scope in ("common", profile):
         for rule in scopes[scope]["source"]:
-            path = fixture_path(rule, kernel_series)
+            matcher = rule.get("alternatives", [rule])[0]
+            path = fixture_path(matcher, kernel_series, kernel_version)
             values = contents.setdefault(path, [])
             for field in ("contains", "exact_lines", "line_set"):
-                values.extend(rule.get(field, []))
+                values.extend(matcher.get(field, []))
 
     for relative, lines in contents.items():
         path = root / relative
@@ -83,12 +92,16 @@ def main() -> int:
                 )
             for scope in ("common", profile):
                 for rule in contract["scopes"][scope]["source"]:
-                    if "glob" in rule and not str(rule["glob"]).endswith(
-                        "/*.patch"
-                    ):
-                        raise AssertionError(
-                            f"patch rule pins a filename: {rule['name']}"
-                        )
+                    for matcher in rule.get("alternatives", [rule]):
+                        glob = matcher.get("glob")
+                        if (
+                            glob
+                            and "target/linux/" in str(glob)
+                            and not str(glob).endswith("/*.patch")
+                        ):
+                            raise AssertionError(
+                                f"patch rule pins a filename: {rule['name']}"
+                            )
 
             rootfs = root / f"{profile}-rootfs"
             render_rootfs(profile, rootfs)
@@ -101,13 +114,16 @@ def main() -> int:
                 raise AssertionError(f"{profile} static contract produced no evidence")
 
             source = root / f"{profile}-openwrt"
-            materialize_source_fixture(contract, profile, source, "9.99")
+            materialize_source_fixture(
+                contract, profile, source, "9.99", "9.99.1"
+            )
             source_checks, source_problems = check_contract(
                 contract,
                 profile,
                 rootfs,
                 openwrt_root=source,
                 kernel_series="9.99",
+                kernel_version="9.99.1",
             )
             assert_no_problems(f"{profile} source contract", source_problems)
             expected = sum(
@@ -120,6 +136,40 @@ def main() -> int:
                     f"{profile} expected {expected} checks, got {len(source_checks)}"
                 )
 
+            alternative_rules = [
+                rule
+                for scope in ("common", profile)
+                for rule in contract["scopes"][scope]["source"]
+                if "alternatives" in rule
+            ]
+            for rule in alternative_rules:
+                first, second = rule["alternatives"][:2]
+                first_path = source / fixture_path(first, "9.99", "9.99.1")
+                first_path.unlink()
+                second_path = source / fixture_path(second, "9.99", "9.99.1")
+                second_path.parent.mkdir(parents=True, exist_ok=True)
+                second_lines = [
+                    value
+                    for field in ("contains", "exact_lines", "line_set")
+                    for value in second.get(field, [])
+                ]
+                second_path.write_text(
+                    "\n".join(dict.fromkeys(second_lines)) + "\n",
+                    encoding="utf-8",
+                )
+                _, alternative_problems = check_contract(
+                    contract,
+                    profile,
+                    rootfs,
+                    openwrt_root=source,
+                    kernel_series="9.99",
+                    kernel_version="9.99.1",
+                )
+                assert_no_problems(
+                    f"{profile} upstream semantic alternative",
+                    alternative_problems,
+                )
+
             broken = copy.deepcopy(contract)
             rule = broken["scopes"][profile]["source"][0]
             rule.setdefault("contains", []).append("fixture-must-not-contain-this")
@@ -129,6 +179,7 @@ def main() -> int:
                 rootfs,
                 openwrt_root=source,
                 kernel_series="9.99",
+                kernel_version="9.99.1",
             )
             if not any(rule["name"] in problem for problem in broken_problems):
                 raise AssertionError(

@@ -15,37 +15,9 @@ kernel_version="${2:-}"
 source_lock="$(cd "$(dirname "$source_lock")" && pwd -P)/$(basename "$source_lock")"
 kernel_series="${kernel_version%.*}"
 
-mapfile -t locked_patches < <(python3 - "$source_lock" "$kernel_series" "$kernel_version" <<'PY'
-import hashlib
-import json
-import pathlib
-import re
-import sys
-
-lock_path = pathlib.Path(sys.argv[1])
-series = sys.argv[2]
-version = sys.argv[3]
-lock = json.loads(lock_path.read_text(encoding="utf-8"))
-port = lock.get("kernel_features", {}).get("bbr3", {}).get("ports", {}).get(series)
-if not isinstance(port, dict) or port.get("version") != version:
-    raise SystemExit(f"::error::Source lock has no BBRv3 port for Linux {version}")
-patches = port.get("patches")
-if not isinstance(patches, list) or not patches:
-    raise SystemExit(f"::error::Locked BBRv3 port for {series} has no patches")
-for expected_order, patch in enumerate(patches, start=1):
-    if patch.get("order") != expected_order:
-        raise SystemExit("::error::Locked BBRv3 patch order is not contiguous")
-    relative = pathlib.PurePosixPath(patch.get("artifact_path", ""))
-    if relative.is_absolute() or ".." in relative.parts or relative.parts[:2] != ("bbr3", series):
-        raise SystemExit("::error::Unsafe locked BBRv3 artifact path")
-    path = lock_path.parent.joinpath(*relative.parts)
-    if not path.is_file():
-        raise SystemExit(f"::error::Materialized BBRv3 patch is missing: {relative}")
-    actual = hashlib.sha256(path.read_bytes()).hexdigest()
-    if actual != patch.get("sha256") or not re.fullmatch(r"[0-9a-f]{64}", actual):
-        raise SystemExit(f"::error::Materialized BBRv3 patch hash differs: {relative}")
-    print(path)
-PY
+mapfile -t locked_patches < <(
+  bash "$repo_root/scripts/resolve-source-lock.sh" \
+    materialized-bbr-paths "$source_lock" "$kernel_version"
 )
 [ "${#locked_patches[@]}" -gt 0 ] || {
   echo "::error::No materialized BBRv3 patches were selected" >&2
@@ -72,13 +44,12 @@ trap 'rm -rf "$tmpdir"' EXIT
 linux_dir="$tmpdir/linux"
 paths="$tmpdir/paths"
 
-for patch in "${locked_patches[@]}"; do
-  sed -n 's#^diff --git a/\([^ ]*\) b/.*#\1#p' "$patch"
-done | sort -u > "$paths"
+python3 "$repo_root/scripts/kernel_patch.py" paths \
+  "${locked_patches[@]}" > "$paths"
 printf '%s\n' "$module_version_source" >> "$paths"
 sort -u -o "$paths" "$paths"
 [ -s "$paths" ] || {
-  echo "::error::BBRv3 patches do not contain git paths" >&2
+  echo "::error::BBRv3 patches do not contain safe source paths" >&2
   exit 1
 }
 

@@ -54,19 +54,18 @@ done < <(find "$target_dir" -maxdepth 1 -type f -print0)
 cp "$source_lock" "$output/source-lock.json"
 cp "$openwrt/.config" "$output/openwrt.config"
 
-locked_kernel_version="$(PYTHONPATH="$repo_root/scripts" python3 - "$source_lock" "$profile" <<'PY'
-import pathlib
-import sys
-
-import source_lock
-
-lock = source_lock.load_lock(pathlib.Path(sys.argv[1]))
-entry = lock["profiles"].get(sys.argv[2])
-if not isinstance(entry, dict) or not entry.get("kernel_version"):
-    raise SystemExit("::error::Profile kernel version is absent from source-lock")
-print(entry["kernel_version"])
-PY
-)"
+mapfile -t locked_kernel < <(
+  bash "$repo_root/scripts/resolve-source-lock.sh" \
+    profile-kernel-plan "$source_lock" "$profile"
+)
+[ "${#locked_kernel[@]}" -eq 10 ] || {
+  echo "::error::Could not parse locked kernel plan for $profile" >&2
+  exit 1
+}
+locked_kernel_channel="${locked_kernel[0]}"
+locked_kernel_series="${locked_kernel[1]}"
+locked_kernel_version="${locked_kernel[2]}"
+locked_kernel_source_sha256="${locked_kernel[3]}"
 
 module_records="$(mktemp)"
 gcc_banner="$(mktemp)"
@@ -146,7 +145,9 @@ esac
 
 source_lock_digest="$(python3 "$repo_root/scripts/source_lock.py" digest "$source_lock")"
 PYTHONPATH="$repo_root/scripts" python3 - \
-  "$profile" "$source_lock" "$source_lock_digest" "$locked_kernel_version" \
+  "$profile" "$source_lock" "$source_lock_digest" \
+  "$locked_kernel_channel" "$locked_kernel_series" \
+  "$locked_kernel_version" "$locked_kernel_source_sha256" \
   "${toolchain_gcc#"$openwrt"/}" "$gcc_version" "$gcc_banner" \
   "$artifact_report" "$patch_report" "$runner_report" "$module_records" \
   "$output/build-provenance.json" <<'PY'
@@ -161,7 +162,10 @@ import source_lock
     profile,
     lock_path,
     lock_digest,
+    kernel_channel,
+    kernel_series,
     kernel_version,
+    kernel_source_sha256,
     gcc_path,
     gcc_version,
     gcc_banner_path,
@@ -218,7 +222,7 @@ if artifact_overrides.get("source_lock_digest") != lock_digest:
     raise SystemExit("::error::Artifact override report has the wrong source-lock digest")
 patches = text_report(patch_path)
 runner = text_report(runner_path)
-if patches["format"] != "patch-report-v2":
+if patches["format"] != "patch-report-v3":
     raise SystemExit("::error::Unsupported patch report format")
 if runner["format"] != "runner-report-v1":
     raise SystemExit("::error::Unsupported runner report format")
@@ -232,14 +236,19 @@ for raw in pathlib.Path(modules_path).read_text(encoding="utf-8").splitlines():
     modules[kind].append(entry)
 
 report = {
-    "schema": 1,
+    "schema": 2,
     "profile": profile,
     "generated_at": dt.datetime.now(dt.timezone.utc)
     .replace(microsecond=0)
     .isoformat()
     .replace("+00:00", "Z"),
     "source_lock_digest": lock_digest,
-    "kernel_version": kernel_version,
+    "kernel": {
+        "channel": kernel_channel,
+        "series": kernel_series,
+        "version": kernel_version,
+        "source_sha256": kernel_source_sha256,
+    },
     "build_inputs": {
         "artifact_overrides": artifact_overrides,
         "patches": patches,

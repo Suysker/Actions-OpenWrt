@@ -67,7 +67,7 @@ for raw in (repo_root / "feeds.custom.conf").read_text(
 origin_commit = "9" * 40
 origin_path = "6.12/bbr3.patch"
 lock = {
-    "schema": 4,
+    "schema": 5,
     "resolved_at": "2026-01-01T00:00:00Z",
     "repository_commit": "1" * 40,
     "openwrt": {"commit": "2" * 40},
@@ -115,8 +115,12 @@ lock = {
     "profiles": {
         "r4s": {
             "kernel_target": "rockchip",
+            "kernel_channel": "stable",
             "kernel_series": "6.12",
             "kernel_version": "6.12.100",
+            "kernel_source_sha256": "3" * 64,
+            "target_check_regex": "^CONFIG_TARGET_rockchip=y$",
+            "image_pattern": "*sysupgrade.img.gz",
         }
     },
     "kernel_features": {
@@ -135,6 +139,8 @@ lock = {
                     "origin_ref": "main",
                     "origin_commit": origin_commit,
                     "install_directory": "hack-6.12",
+                    "version": "6.12.100",
+                    "source_sha256": "3" * 64,
                     "patches": [
                         {
                             "order": 1,
@@ -253,7 +259,7 @@ assert all(marker in text for marker in rule["accepted_semantics"][0])
 PY
 grep -qx 'bbrv3_provider=fixture-single' "$report"
 grep -qx 'bbrv3_patch_count=1' "$report"
-grep -qx 'patch-report-v2' "$report"
+grep -qx 'patch-report-v3' "$report"
 grep -qx 'bbrv3_module_version_status=compatibility-installed' "$report"
 grep -qx 'bbrv3_module_version_destination=target/linux/generic/hack-6.12/996-bbrv3-module-version.patch' "$report"
 grep -qx 'assertion_BBR_VERSION=3' "$report"

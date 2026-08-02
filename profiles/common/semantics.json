@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "rootfs": [
     {
       "name": "common.network-defaults",
@@ -83,6 +83,27 @@
         "uci -q set \"firewall.@defaults[0].flow_offloading\"=\"$flow_offloading\"",
         "uci -q set \"firewall.@defaults[0].flow_offloading_hw\"=\"$flow_offloading_hw\"",
         "sysctl -w net.ipv4.tcp_congestion_control=\"$tcpcca\""
+      ]
+    },
+    {
+      "name": "common.ppp-tx-scatter-gather",
+      "glob": "build_dir/target-*/linux-*/linux-{kernel_version}/drivers/net/ppp/ppp_generic.c",
+      "contains": [
+        "dev->features = NETIF_F_SG | NETIF_F_FRAGLIST;",
+        "dev->hw_features = dev->features;",
+        "!chan->direct_xmit && skb_linearize(skb)"
+      ]
+    },
+    {
+      "name": "common.pppoe-gro-gso-ipv4-ipv6",
+      "glob": "build_dir/target-*/linux-*/linux-{kernel_version}/drivers/net/ppp/pppoe.c",
+      "contains": [
+        "case cpu_to_be16(PPP_IP):",
+        "case cpu_to_be16(PPP_IPV6):",
+        ".gro_receive = pppoe_gro_receive,",
+        ".gro_complete = pppoe_gro_complete,",
+        ".gso_segment = pppoe_gso_segment,",
+        "dev_add_offload(&pppoe_packet_offload);"
       ]
     }
   ]

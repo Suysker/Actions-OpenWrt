@@ -279,7 +279,7 @@ jobs:
           cp -a "$profile_dir/files" "$OPENWRT_ROOT/files"
           cp "$profile_dir/config.seed" "$OPENWRT_ROOT/.config"
 
-      - name: Resolve and enforce Kconfig contracts
+      - name: Resolve Kconfig contracts
         shell: bash
         run: |
           set -euo pipefail
@@ -294,16 +294,22 @@ jobs:
             .config "$GITHUB_WORKSPACE/profile-input/forbidden.txt" \
             "$GITHUB_WORKSPACE/forbidden-suboptions-check.txt"
           ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/config.effective"
-          bash "$GITHUB_WORKSPACE/scripts/check-profile-contract.sh" \
-            "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" \
-            "$GITHUB_WORKSPACE/profile-contract-report.txt" "$GITHUB_WORKSPACE"
 
-      - name: Download all sources with exact hashes
+      - name: Download and prepare selected kernel sources
         shell: bash
         run: |
           set -euo pipefail
           cd "$OPENWRT_ROOT"
           make download -j8
+          make target/linux/prepare
+
+      - name: Validate final profile contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash "$GITHUB_WORKSPACE/scripts/check-profile-contract.sh" \
+            "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" \
+            "$GITHUB_WORKSPACE/profile-contract-report.txt" "$GITHUB_WORKSPACE"
 
       - name: Compile firmware once in parallel
         shell: bash
@@ -482,7 +488,7 @@ jobs:
           - Repository commit: ${GITHUB_SHA}
           - Profiles: ${profiles}
           - Firewall: firewall3 / iptables
-          - Kernel policy: target stable kernel
+          - Kernel policy: target-selected kernel channel
 
           The Release remains a draft until every uploaded asset is downloaded again,
           hash-checked, reconstructed, and passed through the firmware verifier.

@@ -11,6 +11,12 @@ import sys
 import tempfile
 from typing import Iterable
 
+from kernel_selection import (
+    KernelSelection,
+    KernelSelectionError,
+    resolve_from_tree,
+    selected_channel,
+)
 from profile_model import (
     ProfileModelError,
     ProfileRepository,
@@ -45,26 +51,8 @@ def target_matches(expression: str, values: dict[str, str]) -> bool:
     )
 
 
-def resolve_kernel_series(openwrt: pathlib.Path, target: str) -> str:
-    if not re.fullmatch(r"[A-Za-z0-9_.+-]+", target):
-        raise ProfileModelError(f"invalid KERNEL_TARGET: {target!r}")
-    target_makefile = openwrt / "target" / "linux" / target / "Makefile"
-    if not target_makefile.is_file():
-        raise ProfileModelError(f"target Makefile is missing: {target_makefile}")
-    matches = re.findall(
-        r"^KERNEL_PATCHVER\s*:?=\s*([0-9]+\.[0-9]+)\s*$",
-        target_makefile.read_text(encoding="utf-8"),
-        re.MULTILINE,
-    )
-    if len(matches) != 1:
-        raise ProfileModelError(
-            f"expected one stable KERNEL_PATCHVER in {target_makefile}, got {matches}"
-        )
-    return matches[0]
-
-
 def source_lock_problems(
-    lock: dict[str, object], profile: str, kernel_series: str
+    lock: dict[str, object], profile: str, selection: KernelSelection
 ) -> list[str]:
     problems: list[str] = []
     profiles = lock.get("profiles")
@@ -73,14 +61,19 @@ def source_lock_problems(
     profile_entry = profiles[profile]
     if not isinstance(profile_entry, dict):
         return [f"source-lock profile entry is invalid: {profile}"]
-    if profile_entry.get("kernel_series") != kernel_series:
-        problems.append("source-lock kernel series differs from target stable series")
+    expected = selection.lock_fields()
+    for field, value in expected.items():
+        if profile_entry.get(field) != value:
+            problems.append(
+                f"source-lock {field} differs from selected target: "
+                f"expected {value}, got {profile_entry.get(field)}"
+            )
 
     kernel_features = lock.get("kernel_features")
     bbr3 = kernel_features.get("bbr3") if isinstance(kernel_features, dict) else None
     ports = bbr3.get("ports") if isinstance(bbr3, dict) else None
-    if not isinstance(ports, dict) or kernel_series not in ports:
-        problems.append(f"source-lock has no BBRv3 port for kernel {kernel_series}")
+    if not isinstance(ports, dict) or selection.series not in ports:
+        problems.append(f"source-lock has no BBRv3 port for kernel {selection.series}")
     return problems
 
 
@@ -133,6 +126,7 @@ def run(args: argparse.Namespace) -> tuple[list[str], list[str]]:
         problems.extend(
             rendered_config_problems(config, rendered.required, rendered.forbidden)
         )
+        checks.append(f"rendered kernel channel {selected_channel(config)}")
         if not target_matches(environment["TARGET_CHECK_REGEX"], config):
             problems.append("rendered target does not match TARGET_CHECK_REGEX")
         else:
@@ -191,14 +185,18 @@ def run(args: argparse.Namespace) -> tuple[list[str], list[str]]:
         _check_provider_contract(args.repo_root, openwrt, provider_report)
         checks.append(f"provider contract {provider_report}")
 
-        kernel_series = resolve_kernel_series(openwrt, environment["KERNEL_TARGET"])
-        checks.append(f"stable kernel series {kernel_series}")
+        selection = resolve_from_tree(
+            openwrt, environment["KERNEL_TARGET"], final_config
+        )
+        checks.append(
+            f"selected kernel {selection.channel} Linux {selection.version}"
+        )
         if args.source_lock is None:
             problems.append("source lock is required with an OpenWrt tree")
         else:
             lock = source_lock.load_lock(args.source_lock)
             lock_problems = source_lock_problems(
-                lock, args.profile, kernel_series
+                lock, args.profile, selection
             )
             problems.extend(lock_problems)
             if not lock_problems:
@@ -209,7 +207,8 @@ def run(args: argparse.Namespace) -> tuple[list[str], list[str]]:
             args.profile,
             rendered.files,
             openwrt_root=openwrt,
-            kernel_series=kernel_series,
+            kernel_series=selection.series,
+            kernel_version=selection.version,
         )
         checks.extend(source_checks)
         problems.extend(source_problems)
@@ -242,13 +241,14 @@ def main(argv: Iterable[str] | None = None) -> int:
         OSError,
         ProfileModelError,
         ProfileSemanticError,
+        KernelSelectionError,
         source_lock.ResolutionError,
     ) as exc:
         checks, problems = [], [str(exc)]
 
     status = "passed" if not problems else "failed"
     lines = [
-        "profile-contract-v3",
+        "profile-contract-v4",
         f"profile={args.profile}",
         f"status={status}",
         *[f"check={item}" for item in checks],
