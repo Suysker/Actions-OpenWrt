@@ -55,32 +55,6 @@ cp "$patch_report" "$output/patch-report.txt"
 cp "$runner_report" "$output/runner-report.txt"
 cp "$openwrt/.config" "$output/openwrt.config"
 
-mapfile -t bbr_modules < <(find "$openwrt/build_dir" -type f -name tcp_bbr.ko -print)
-[ "${#bbr_modules[@]}" -gt 0 ] || {
-  echo "::error::Build tree contains no tcp_bbr.ko" >&2
-  exit 1
-}
-bbr_version=""
-for module in "${bbr_modules[@]}"; do
-  version="$(modinfo -F version "$module" 2>/dev/null || true)"
-  [ -n "$version" ] || continue
-  if [ -n "$bbr_version" ] && [ "$version" != "$bbr_version" ]; then
-    echo "::error::Built tcp_bbr modules report inconsistent versions" >&2
-    exit 1
-  fi
-  bbr_version="$version"
-done
-[ "$bbr_version" = "3" ] || {
-  echo "::error::Built tcp_bbr.ko module version is '${bbr_version:-missing}', expected 3" >&2
-  exit 1
-}
-
-sch_fq_module="$(find "$openwrt/build_dir" -type f -name sch_fq.ko -print -quit)"
-[ -n "$sch_fq_module" ] || {
-  echo "::error::Build tree contains no sch_fq.ko" >&2
-  exit 1
-}
-
 locked_kernel_version="$(python3 - "$source_lock" "$profile" <<'PY'
 import json, sys
 lock = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -92,22 +66,90 @@ PY
   echo "::error::Profile kernel version is absent from source-lock" >&2
   exit 1
 }
-vermagic="$(modinfo -F vermagic "${bbr_modules[0]}" 2>/dev/null || true)"
-case "$vermagic" in
-  "$locked_kernel_version"*) ;;
-  *)
-    echo "::error::tcp_bbr vermagic '$vermagic' does not start with locked kernel $locked_kernel_version" >&2
+
+mapfile -d '' -t bbr_modules < <(
+  find "$openwrt/build_dir" -type f -name tcp_bbr.ko -print0 |
+    LC_ALL=C sort -z
+)
+[ "${#bbr_modules[@]}" -gt 0 ] || {
+  echo "::error::Build tree contains no tcp_bbr.ko" >&2
+  exit 1
+}
+bbr_version=""
+bbr_vermagic=""
+declare -a bbr_relative_paths=()
+declare -a bbr_versions=()
+declare -a bbr_vermagics=()
+declare -a bbr_sha256s=()
+for module in "${bbr_modules[@]}"; do
+  relative="${module#"$openwrt"/}"
+  if ! version="$(
+    python3 "$repo_root/scripts/kernel_module_metadata.py" "$module" version
+  )"; then
+    echo "::error::Cannot verify BBR module metadata: $relative" >&2
     exit 1
-    ;;
-esac
+  fi
+  if ! vermagic="$(
+    python3 "$repo_root/scripts/kernel_module_metadata.py" "$module" vermagic
+  )"; then
+    echo "::error::Cannot verify BBR module metadata: $relative" >&2
+    exit 1
+  fi
+  [ "$version" = "3" ] || {
+    echo "::error::Built $relative reports module version '$version', expected 3" >&2
+    exit 1
+  }
+  case "$vermagic" in
+    "$locked_kernel_version"*) ;;
+    *)
+      echo "::error::$relative vermagic '$vermagic' does not start with locked kernel $locked_kernel_version" >&2
+      exit 1
+      ;;
+  esac
+  if [ -n "$bbr_version" ] && [ "$version" != "$bbr_version" ]; then
+    echo "::error::Built tcp_bbr modules report inconsistent versions" >&2
+    exit 1
+  fi
+  if [ -n "$bbr_vermagic" ] && [ "$vermagic" != "$bbr_vermagic" ]; then
+    echo "::error::Built tcp_bbr modules report inconsistent vermagic" >&2
+    exit 1
+  fi
+  bbr_version="$version"
+  bbr_vermagic="$vermagic"
+  bbr_relative_paths+=("$relative")
+  bbr_versions+=("$version")
+  bbr_vermagics+=("$vermagic")
+  bbr_sha256s+=("$(sha256sum "$module" | awk '{print $1}')")
+done
+[ "$bbr_version" = "3" ] || {
+  echo "::error::Built tcp_bbr.ko module version is '$bbr_version', expected 3" >&2
+  exit 1
+}
+
+mapfile -d '' -t sch_fq_modules < <(
+  find "$openwrt/build_dir" -type f -name sch_fq.ko -print0 |
+    LC_ALL=C sort -z
+)
+[ "${#sch_fq_modules[@]}" -gt 0 ] || {
+  echo "::error::Build tree contains no sch_fq.ko" >&2
+  exit 1
+}
+sch_fq_module="${sch_fq_modules[0]}"
 
 {
-  echo "module-report-v1"
+  echo "module-report-v2"
   echo "tcp_bbr_version=$bbr_version"
-  echo "tcp_bbr_vermagic=$vermagic"
+  echo "tcp_bbr_vermagic=$bbr_vermagic"
   echo "tcp_bbr_candidates=${#bbr_modules[@]}"
   echo "sch_fq_present=1"
   echo "sch_fq_path=${sch_fq_module#"$openwrt"/}"
+  for index in "${!bbr_modules[@]}"; do
+    printf -v field '%03d' "$((index + 1))"
+    echo "tcp_bbr_${field}_path=${bbr_relative_paths[$index]}"
+    echo "tcp_bbr_${field}_sha256=${bbr_sha256s[$index]}"
+    echo "tcp_bbr_${field}_version=${bbr_versions[$index]}"
+    echo "tcp_bbr_${field}_vermagic=${bbr_vermagics[$index]}"
+  done
 } > "$output/module-report.txt"
 
 toolchain_gcc="$(find "$openwrt/staging_dir" \( -type f -o -type l \) -path '*/bin/*-openwrt-*-gcc' -print -quit)"
@@ -131,7 +173,7 @@ esac
 
 source_lock_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$source_lock")"
 python3 - "$profile" "$source_lock_digest" "$locked_kernel_version" \
-  "$bbr_version" "$vermagic" "$gcc_version" "$output/provenance.json" <<'PY'
+  "$bbr_version" "$bbr_vermagic" "$gcc_version" "$output/provenance.json" <<'PY'
 import datetime as dt
 import json
 import sys

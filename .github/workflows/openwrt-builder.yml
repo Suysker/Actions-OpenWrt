@@ -101,19 +101,15 @@ jobs:
                 -print | sort
             )
           done
-          bash -n diy-part1.sh diy-part2.sh scripts/*.sh "${rootfs_scripts[@]}"
-          python3 -m py_compile scripts/*.py
-          bash tests/test-profile-renderer.sh
-          python3 tests/test-profile-semantics.py
-          bash tests/test-resolve-source-lock.sh
-          bash tests/test-apply-source-lock-artifacts.sh
-          bash tests/test-apply-profile-patches.sh
-          bash tests/test-build-failure-diagnostics.sh
-          bash tests/test-locked-feeds.sh
-          bash tests/test-select-package-providers.sh
-          bash tests/test-install-profile-feeds.sh
-          bash tests/test-sync-source-overlays.sh
-          python3 tests/test-normalize-forbidden-suboptions.py
+          bash -n diy-part1.sh diy-part2.sh scripts/*.sh tests/test-*.sh \
+            "${rootfs_scripts[@]}"
+          python3 -m py_compile scripts/*.py tests/*.py
+          for test in tests/test-*.sh; do
+            bash "$test"
+          done
+          for test in tests/test-*.py; do
+            python3 "$test"
+          done
           for profile in "${profiles[@]}"; do
             bash scripts/check-profile-contract.sh "$profile"
           done
@@ -426,6 +422,31 @@ jobs:
           done
           [ -e "$OPENWRT_ROOT/.config" ] && cp "$OPENWRT_ROOT/.config" "$diagnostics/openwrt.config"
           [ -d "$OPENWRT_ROOT/logs" ] && tar -C "$OPENWRT_ROOT" -czf "$diagnostics/openwrt-logs.tar.gz" logs
+          mapfile -d '' -t module_files < <(
+            find "$OPENWRT_ROOT/build_dir" -type f \
+              \( -name tcp_bbr.ko -o -name sch_fq.ko \) -print0 2>/dev/null |
+              sort -z
+          )
+          if [ "${#module_files[@]}" -gt 0 ]; then
+            relative_modules=()
+            : > "$diagnostics/kernel-module-metadata.txt"
+            for module in "${module_files[@]}"; do
+              relative="${module#"$OPENWRT_ROOT"/}"
+              relative_modules+=("$relative")
+              {
+                echo "module=$relative"
+                printf 'version='
+                python3 "$GITHUB_WORKSPACE/scripts/kernel_module_metadata.py" \
+                  "$module" version || true
+                printf 'vermagic='
+                python3 "$GITHUB_WORKSPACE/scripts/kernel_module_metadata.py" \
+                  "$module" vermagic || true
+              } >> "$diagnostics/kernel-module-metadata.txt" 2>&1
+            done
+            tar -C "$OPENWRT_ROOT" -czf \
+              "$diagnostics/kernel-module-candidates.tar.gz" -- \
+              "${relative_modules[@]}"
+          fi
           df -hT > "$diagnostics/disk-final.txt"
 
       - name: Upload diagnostics

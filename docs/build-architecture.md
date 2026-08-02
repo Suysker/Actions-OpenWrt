@@ -315,6 +315,7 @@ scripts/
   normalize-forbidden-suboptions.py
   check-seed-config.sh
   check-profile-contract.sh
+  kernel_module_metadata.py
   verify-firmware-artifacts.sh
   collect-build-provenance.sh
 
@@ -331,6 +332,8 @@ tests/
   test-normalize-forbidden-suboptions.py
   test-profile-renderer.sh
   test-profile-semantics.py
+  test-kernel-module-metadata.py
+  test-collect-build-provenance.sh
 
 docs/
   build-architecture.md
@@ -518,6 +521,8 @@ profiles/common + profiles/<device>
 - `profile_model.py` 的 package contract 接口：使用同一份 required/forbidden 同时判定必选缺失、禁用命中，并一次生成 `package-list.txt` 与命中报告；不存在两个各自解释规则的检查路径。
 - `check-profile-contract.sh`：只把 CLI 参数交给通用 Python checker，不包含 profile 名、包名、CPU flags、网络值或 provider 路径枚举；checker 从同一个 rendered bundle 验证 env 接口、required/forbidden 集合关系、动态 target regex、稳定 kernel/source-lock 映射，并以 check-only 模式复用 provider selector，最后调用 profile semantic interpreter。
 
+checker 内的 `ENVIRONMENT_FIELDS` 只定义所有 profile 都必须实现的接口键，不保存任何设备值；键对应的 URL、target、image pattern 与 regex 仍只存在于 common/device `profile.env`。这与函数参数或 JSON schema 一样属于消费接口，不是第二份 profile 配置。新增设备目录必须实现同一接口，但不需要修改字段集合、checker 分支或 workflow。
+
 workflow 与仓库预检必须调用 `render-profile.sh list` 自动得到 profile 集合；`all` 表示这个集合，不在 matrix、测试命令或 update checker 再写 `r4s,x86-n5105-pve`。正式产品仍要求 source-lock 中包含仓库当前声明的全部 profile，新增或移除 profile 只修改 `profiles/` 声明目录及其真实设备语义，不修改 checker 代码。
 
 `profiles/common/semantics.json` 与 `profiles/<device>/semantics.json` 是网络默认、运行时调优及 Lean 继承优化的唯一语义声明层。每个文件只保存本目录所有者的稳定行为、相对路径模板和内容断言，不保存 kernel 版本、Lean commit、patch 文件名或逐轮 hash。通用解释器在 prepare 阶段验证 rootfs，在 build checkout 本轮 source-lock 后展开 `{kernel_series}` 并验证 upstream source；patch 能力按目录 glob 与同一文件的内容语义匹配，不依赖上游文件名。任一声明必须命中且不得靠另一个 profile 的文件满足。
@@ -551,6 +556,25 @@ verify-firmware-artifacts.sh <profile> <target-directory> <source-lock.json>
 - target/kernel/compiler/CPU flags 与 profile contract 一致
 - BBRv3 algorithm commit、kernel port hash 与实际 `tcp_bbr.ko` 的 module version `3` 一致
 - manifest 包含 `kmod-sched`，构建树包含 `sch_fq.ko`
+
+`run 30721359572` 已证明 R4S 与 N5105 的完整 `make world` 同时成功，并且同一 `995-bbrv3.patch` 在两个 Linux 6.12.100 tree 都实际应用、`tcp_bbr.ko` 都实际打包；随后旧 verifier 报 `version=missing`。旧实现用 host `modinfo` 读取 cross-built ELF，并以 `2>/dev/null || true` 同时吞掉“命令不可用、ELF 解析失败、字段缺失”三类状态，空字符串不能证明 module 真正缺少 metadata。
+
+模块身份验收因此划分为三个单一职责模块：
+
+1. `scripts/kernel_module_metadata.py` 是唯一 ELF `.modinfo` 读取接口。它调用已作为构建前置依赖的 GNU `readelf --wide --string-dump=.modinfo`，在 `LC_ALL=C` 且禁用 debuginfod 的确定环境中解析 `key=value`，拒绝 readelf 非零、section 缺失、字段缺失和同名字段冲突；不依赖 host kernel release、module install tree 或目标架构。
+2. `collect-build-provenance.sh` 只发现并排序本 profile 的全部 `tcp_bbr.ko` 候选，逐个调用同一读取器，要求每个候选的 `version=3`、`vermagic` 以 source-lock 的 kernel version 开头且候选之间完全一致，再生成 module report。任何读取失败必须保留模块相对路径和原始 readelf 诊断，不再转换成模糊的 `missing`。
+3. workflow diagnostics 从 `build_dir` 归档 `tcp_bbr.ko` 与 `sch_fq.ko` 候选；即使 provenance 失败，下一轮也能直接复核真实 ELF，不需要重新编译才能看样本。`tests/test-kernel-module-metadata.py` 构造 x86_64 与可用时的 AArch64 `.modinfo` ELF object，覆盖 version/vermagic、字段缺失、冲突和无 section；`tests/test-collect-build-provenance.sh` 复用现有 source-lock fixture，覆盖多候选发现、GCC15、报告/hash 生成以及候选 vermagic 不一致时拒绝。workflow 按 `tests/test-*.sh`/`tests/test-*.py` 自动发现测试，不为新增测试维护第二份清单。
+
+依赖方向固定为：
+
+```text
+Linux MODULE_VERSION -> tcp_bbr.ko:.modinfo
+  -> kernel_module_metadata.py -> collect-build-provenance.sh
+  -> module-report/provenance -> verify-firmware-artifacts.sh
+  -> draft/re-download/publish
+```
+
+这只是把 build-time 证据读取改为 ELF section 的权威内容，不降低产品合同；真机仍必须通过 `/sys/module/tcp_bbr/version=3`。
 
 ### 7.8 依赖图、复用边界与配置所有权
 
@@ -1541,17 +1565,12 @@ release-verify job 从 draft Release 重新下载所有资产，执行 `sha256su
 ### 15.1 脚本与配置静态验证
 
 ```sh
-bash -n diy-part1.sh diy-part2.sh scripts/*.sh
+bash -n diy-part1.sh diy-part2.sh scripts/*.sh tests/test-*.sh
 find profiles -type f \( -path '*/etc/uci-defaults/*' -o -path '*/etc/hotplug.d/*' \) \
   -print0 | xargs -0 bash -n
-bash tests/test-profile-renderer.sh
-python3 tests/test-profile-semantics.py
-bash tests/test-resolve-source-lock.sh
-bash tests/test-apply-source-lock-artifacts.sh
-bash tests/test-locked-feeds.sh
-bash tests/test-select-package-providers.sh
-bash tests/test-sync-source-overlays.sh
-python3 tests/test-normalize-forbidden-suboptions.py
+python3 -m py_compile scripts/*.py tests/*.py
+for test in tests/test-*.sh; do bash "$test"; done
+for test in tests/test-*.py; do python3 "$test"; done
 while IFS= read -r profile; do
   bash scripts/check-profile-contract.sh "$profile"
 done < <(bash scripts/render-profile.sh list)
@@ -1575,6 +1594,7 @@ done < <(bash scripts/render-profile.sh list)
 - provider fixture 证明预期 Makefile/package 保留、已声明冲突目录删除、未声明目录不受影响，且 source-lock 中每个 feed 都被重建索引
 - forbidden suboption fixture 证明只清理 exact-forbidden 父包的选中子项、二次执行幂等，并保留允许 package 的子选项
 - BBRv3 每个物化 patch SHA256 与 source-lock/origin 一致；按序对精确 Linux 源码 clean-apply，且 `BBR_VERSION=3`、运行名 `bbr`、`MODULE_VERSION` 等后置断言通过
+- ELF metadata fixture 证明 x86_64 与可用时的 AArch64 object 都能直接读取 `.modinfo`；provenance fixture 证明全部 `tcp_bbr.ko` 候选逐个验证，任一 version/vermagic 缺失或不一致均失败
 - `90-common-network` fixture 证明 DHCP `start=32`、`limit=232`、LAN DHCPv6/NDP relay 和 WAN relay master
 - 优化合同 fixture 证明 common/R4S/N5105 rootfs 语义完整，且 source rule 按动态 kernel series 展开、按同一文件的内容语义匹配；实际 build tree 还必须命中 TurboACC flow runtime、R4S affinity/接口映射/schedutil/crypto/OPP 与 N5105 VirtIO/EEE/VLAN 语义
 - workflow 中所有复用 action 都严格匹配 `actions/*@main`，没有第三方 action、tag 或固定 SHA
@@ -1631,8 +1651,11 @@ make package/v2ray-geodata/download V=s
 make download -j8
 set -o pipefail
 make -j"$BUILD_JOBS" 2>&1 | tee build.parallel.log
-find build_dir -type f -name tcp_bbr.ko -exec modinfo {} \; |
-  grep -Eq '^version:[[:space:]]+3$'
+find build_dir -type f -name tcp_bbr.ko -print0 |
+  while IFS= read -r -d '' module; do
+    python3 "$GITHUB_WORKSPACE/scripts/kernel_module_metadata.py" \
+      "$module" version | grep -Fxq 3
+  done
 find build_dir -type f -name sch_fq.ko -print -quit | grep -q .
 ```
 
@@ -1880,7 +1903,7 @@ openwrt-<YYYY.MM.DD-HHMMSS>-<lede-short-sha>
 | release 元数据或资产不完整 | HAProxy 官方 SHA256、GitHub asset digest、发布的 checksum 交叉校验；任一缺失或不一致即失败 |
 | AdGuardHome 设备自更新破坏 OPKG/回滚 | 保持非特权 jail 和 `--no-check-update`；由 update checker 触发新的可验证双平台固件 |
 | master 提升稳定内核后 provider 尚无对应 BBRv3 port | resolver 按策略查询受信任单文件/多文件 provider，并在 matrix 前明确失败；provider 发布兼容 port 后下一轮自动吸收并执行 clean-apply，不切 testing kernel、不回退算法代际 |
-| BBRv3 patch 已应用但模块身份不符 | 源码后置断言、build `modinfo version=3`、真机 `/sys/module/tcp_bbr/version=3` 三重门禁 |
+| BBRv3 patch 已应用但模块身份不符 | 源码后置断言、build 直接读取每个 ELF `.modinfo` 的 `version=3`/`vermagic`、真机 `/sys/module/tcp_bbr/version=3` 三重门禁；读取失败保留原始诊断与模块样本 |
 | `default_qdisc=fq` 但固件缺少 provider | common 显式选择 `kmod-sched`；build 检查 `sch_fq.ko`，真机检查 `/sys/module/sch_fq` 与实际 qdisc |
 | GCC 15 对 package 暴露新错误 | 当前实际通用 package 闭包整体消费锁定的 OpenWrt 官方 packages master；官方 core 缺口走窄 overlay，只有 canonical 来源也未解决时才评审语义变换；不下载外部 toolchain、不用 GCC13 自动 fallback |
 | N5105 guest 未暴露 CPU flags | PVE CPU 必须为 `host`，启动前检查 `/proc/cpuinfo` |
