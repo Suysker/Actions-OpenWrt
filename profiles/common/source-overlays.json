@@ -18,6 +18,11 @@
         },
         {
           "kind": "tree",
+          "source": "package/utils/f2fs-tools",
+          "target": "package/utils/f2fs-tools"
+        },
+        {
+          "kind": "tree",
           "source": "package/system/mtd",
           "target": "package/system/mtd"
         },

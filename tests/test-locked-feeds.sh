@@ -2,9 +2,12 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-lock="$repo_root/tests/fixtures/artifact-applicator/source-lock.json"
+fixture_lock="$repo_root/tests/fixtures/artifact-applicator/source-lock.json"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
+lock="$tmpdir/source-lock.json"
+cp "$fixture_lock" "$lock"
+python3 "$repo_root/tests/source_lock_fixtures.py" "$lock" "$repo_root"
 
 bash "$repo_root/scripts/manage-custom-feeds.sh" apply-lock "$lock" "$tmpdir/feeds.conf.default"
 mapfile -t feeds < <(grep '^src-git' "$tmpdir/feeds.conf.default")

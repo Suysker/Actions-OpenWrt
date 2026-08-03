@@ -20,7 +20,7 @@ EOF
 parallel_log="$tmpdir/parallel.log"
 serial_log="$tmpdir/serial.log"
 trace="$tmpdir/trace.log"
-printf '%s\n' 'ERROR: package/feeds/small/tcping failed to build.' > "$parallel_log"
+printf '%s\n' 'ERROR: package/feeds/small/tcping failed to build (build variant: default).' > "$parallel_log"
 TRACE="$trace" bash "$repo_root/scripts/collect-build-failure-diagnostics.sh" \
   "$openwrt" "$parallel_log" "$serial_log"
 grep -qx 'package/feeds/small/tcping/compile' "$trace"

@@ -32,7 +32,7 @@ fi
 
 failed_package=""
 while IFS= read -r line; do
-  if [[ "$line" =~ ERROR:\ (package/[A-Za-z0-9._/-]+)\ failed\ to\ build\. ]]; then
+  if [[ "$line" =~ ERROR:\ (package/[A-Za-z0-9._/-]+)\ failed\ to\ build ]]; then
     failed_package="${BASH_REMATCH[1]}"
     break
   fi

@@ -5,7 +5,7 @@
 - NanoPi R4S：RK3399、原生 Lean 启动链与网口 IRQ 策略、ARMv8 CRC/crypto、R8168、PWM fan、512 MiB LZ4 zram。
 - N5105 PVE：`x86-64-v2 + mtune=tremont`、squashfs combined EFI、VirtIO NET/SCSI、I225/igc 直通、4 队列与 irqbalance。
 
-两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、Lean testing kernel channel 和按所选内核系列动态解析的 BBRv3。仓库不写死 Linux point release：每轮从同一份 Lean master 分别解析目标的 channel/series/version/source hash，当前 R4S 与 x86 都选择 Linux 6.18。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP、PCRE2、MTD 以及 Lean 缺失的官方 CycloneDX image generator 从同一轮锁定的 OpenWrt 官方 core 窄同步。`libsepol`、旧 `wol` CLI、current `small/tcping`、R4S ZRAM backend guard 和共享 image manifest 只保留经真实构建证明必要的窄语义兼容；系列相关规则只消费本轮 source-lock 的 selected kernel，不固定 point release，不降低全局编译器，也不覆盖整份 Lean 核心文件。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
+两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、Lean testing kernel channel 和按所选内核系列动态解析的 BBRv3。仓库不写死 Linux point release：每轮从同一份 Lean master 分别解析目标的 channel/series/version/source hash，当前 R4S 与 x86 都选择 Linux 6.18。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP、PCRE2、F2FS tools、MTD 以及 Lean 缺失的官方 CycloneDX image generator 从同一轮锁定的 OpenWrt 官方 core 窄同步。`libsepol`、旧 `wol` CLI、current `small/tcping`、R4S ZRAM backend guard 和共享 image manifest 只保留经真实构建证明必要的窄语义兼容；系列相关规则只消费本轮 source-lock 的 selected kernel，不固定 point release，不降低全局编译器，也不覆盖整份 Lean 核心文件。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
 
 ## 构建模型
 
