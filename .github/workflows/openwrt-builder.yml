@@ -494,6 +494,7 @@ jobs:
           hash-checked, reconstructed, and passed through the firmware verifier.
           EOF
           gh release create "$RELEASE_TAG" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
             --draft --title "OpenWrt ${RELEASE_ID} · R4S + N5105 PVE" \
             --notes-file release-notes.md --target "$GITHUB_SHA"
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
@@ -514,7 +515,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.ref_name == github.event.repository.default_branch && github.token || secrets.ACTIONS_TRIGGER_PAT }}
           RELEASE_TAG: ${{ needs.aggregate.outputs.release_tag }}
-        run: gh release download "$RELEASE_TAG" --dir downloaded-release
+        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir downloaded-release
 
       - name: Verify the downloaded transaction
         shell: bash
@@ -533,7 +534,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.ref_name == github.event.repository.default_branch && github.token || secrets.ACTIONS_TRIGGER_PAT }}
           RELEASE_TAG: ${{ needs.aggregate.outputs.release_tag }}
-        run: gh release edit "$RELEASE_TAG" --draft=false
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
 
   cleanup:
     name: Retain six verified production Releases
@@ -550,9 +551,9 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t old_tags < <(
-            gh release list --limit 100 --json tagName,createdAt,isDraft \
+            gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,createdAt,isDraft \
               --jq '[.[] | select(.isDraft == false and (.tagName | startswith("openwrt-")))] | sort_by(.createdAt) | reverse | .[6:] | .[].tagName'
           )
           for tag in "${old_tags[@]}"; do
-            gh release delete "$tag" --yes --cleanup-tag
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
           done

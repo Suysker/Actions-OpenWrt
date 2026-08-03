@@ -1089,6 +1089,7 @@ rendered profile intent
 - `prepare / Select profiles` 只从 profile 目录发现构建矩阵；选择 `all` 就进入完整 Release 事务，不枚举或特判分支名。
 - `build` 只依赖 profile 矩阵和 source lock，不理解发布令牌、tag 或资产命名。
 - Release jobs 由当前 ref 自动选择授权：默认分支使用内置 `GITHUB_TOKEN`；非默认分支使用仓库已有的 `ACTIONS_TRIGGER_PAT`，因为当目标 commit 相对默认分支修改 workflow 时，GitHub 不允许内置 token 创建或更新指向该 commit 的 Release。
+- 所有 `gh release` 调用显式使用 `--repo "$GITHUB_REPOSITORY"`。checkout 只为读取仓库脚本和文档服务，Release create/download/edit/list/delete 不依赖当前目录存在 `.git`；因此不需要源码的 publish/cleanup job 可以保持最小权限和零 checkout。
 
 依赖图为 `profile 目录 -> prepare 矩阵 -> build artifacts -> aggregate -> draft -> re-download -> publish`。令牌选择只存在于 Release jobs 的 `GH_TOKEN` 环境边界，不新增第二套发布逻辑。tag 始终指向真实构建 commit，不得为规避权限而错挂到默认分支。
 
