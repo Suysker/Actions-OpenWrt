@@ -167,6 +167,7 @@ N5105 profile 的设备合同是运行在 PVE 中的专用 OpenWrt guest，而�
 | 源码兼容规则 | `profiles/common/source-compatibility.json` |
 | BBRv3 provider 策略 | `patchsets/common/kernel/bbr3-sources.json` |
 | BBRv3 module version 兼容 | `patchsets/common/kernel/bbr3-sources.json` 的兼容声明与 `patchsets/common/kernel/bbr3-module-version.patch` |
+| selected-kernel PPP TX scatter-gather 兼容 | `patchsets/common/kernel/selected-kernel-compatibility.json` 与对应系列窄补丁 |
 | 当轮动态版本、commit、hash | 运行时生成的 `source-lock.json` |
 
 文档、workflow 和测试只引用这些声明，不复制设备名、包清单、版本或 hash。
@@ -268,7 +269,8 @@ repository declarations + rendered common/device intent + floating upstreams
 | `scripts/profile_semantics.py` | 声明式验证 Lean target patch 与 prepared kernel upstream 等价语义 |
 | `scripts/apply_source_lock_artifacts.py` | 把 lock 中的精确 release metadata 写入唯一 package provider |
 | `scripts/apply-source-compatibility.py` | 按声明式规则处理当前编译闭包内的非内核源码兼容，并以 selected kernel series 驱动系列相关 Kconfig 守卫 |
-| `scripts/apply-profile-patches.sh` | 在各自 Git 工作树应用 OpenWrt common/device 与 feed patchset、源码兼容规则和本轮 BBRv3 patch stack |
+| `scripts/selected_kernel_compatibility.py` | 解释 selected-kernel 能力声明，区分 Lean 原生补丁、仓库适配、部分实现与未来 upstream kernel |
+| `scripts/apply-profile-patches.sh` | 在各自 Git 工作树应用 OpenWrt common/device 与 feed patchset、selected-kernel/源码兼容规则和本轮 BBRv3 patch stack |
 | `scripts/collect-build-provenance.sh` | 从真实 build tree 生成平台交付目录和 `build-provenance.json` |
 | `scripts/verify-firmware-artifacts.sh` | 平台交付的唯一验收器 |
 | `scripts/release_assets.py` | 双平台聚合、专业资产命名、完整包/release index、回下载重建和复验 |
@@ -449,7 +451,7 @@ selected kernel 只有一条带明确优先级的解析路径：
 
 testing channel 以后可能按 target 前进到其他 series。任一 profile 的 selected series 缺少可信 BBRv3 port、target patch 或当前闭包兼容性时，整轮构建必须停止且不发布；不得静默切回 6.12、普通 BBR 或其他 provider。
 
-Lean 6.18 patch stack 当前还包含 PPP TX scatter-gather、PPPoE GRO/GSO、R4S target/OPP 与 I225/I226 EEE disable；仓库验证这些能力的源码语义与成品落地。
+Lean 6.18 patch stack 当前还包含 PPP TX scatter-gather、PPPoE GRO/GSO、R4S target/OPP 与 I225/I226 EEE disable；仓库验证这些能力的源码语义与成品落地。stable 6.12 缺少 PPP TX scatter-gather 时，`selected-kernel-compatibility.json` 会在确认 Lean 的 `direct_xmit` 前置补丁存在后，把由 Linux 上游 `42fcb213e58a` 窄适配的补丁安装到 `backport-6.12`。testing 6.18 已有完整语义时不重复安装。完整、部分、缺失三种 patch-stack 状态由同一解释器判定，最终 prepared-source 合同仍是能力是否真正落地的裁决者。
 
 ### 6.5 schema 5/6.18 迁移结果
 

@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "capabilities": [
+    {
+      "id": "ppp-tx-scatter-gather",
+      "semantic_rule": "common.ppp-tx-scatter-gather",
+      "source_path": "drivers/net/ppp/ppp_generic.c",
+      "upstream_from": "7.0",
+      "prerequisite_patch_markers": [
+        "bool direct_xmit;",
+        "chan.direct_xmit = true;"
+      ],
+      "variants": {
+        "6.12": {
+          "patch": "ppp-tx-scatter-gather-6.12.patch",
+          "install_directory": "backport-6.12",
+          "install_name": "625-v7.0-ppp-enable-TX-scatter-gather.patch",
+          "adapted_for": "6.12",
+          "origin_url": "https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git",
+          "origin_commit": "42fcb213e58a7da33d5d2d7517b4e521025c68c3"
+        }
+      }
+    }
+  ]
+}

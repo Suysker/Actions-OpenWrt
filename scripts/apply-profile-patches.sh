@@ -6,8 +6,9 @@ usage() {
 Usage:
   apply-profile-patches.sh <profile> <openwrt-dir> <source-lock.json> <report.txt>
 
-Applies repository-owned OpenWrt common/device patches, feed-local patches, and
-the BBRv3 port selected by the immutable source lock.
+Applies repository-owned OpenWrt common/device patches, feed-local patches,
+selected-kernel compatibility, and the BBRv3 port selected by the immutable
+source lock.
 EOF
 }
 
@@ -150,6 +151,59 @@ apply_series feed_passwall "$repo_root/patchsets/feeds/passwall" \
   "$openwrt_dir/feeds/passwall"
 apply_series feed_kenzo "$repo_root/patchsets/feeds/kenzo" \
   "$openwrt_dir/feeds/kenzo"
+
+mapfile -t selected_kernel_compatibility < <(
+  python3 "$repo_root/scripts/selected_kernel_compatibility.py" \
+    describe "$repo_root" "$openwrt_dir" "$kernel_series"
+)
+[ "${#selected_kernel_compatibility[@]}" -eq 7 ] || {
+  echo "::error::Could not resolve selected-kernel compatibility" >&2
+  exit 1
+}
+selected_kernel_compatibility_status="${selected_kernel_compatibility[0]}"
+selected_kernel_compatibility_patch="${selected_kernel_compatibility[1]}"
+selected_kernel_compatibility_destination="${selected_kernel_compatibility[2]}"
+selected_kernel_compatibility_sha256="${selected_kernel_compatibility[3]}"
+selected_kernel_compatibility_rule="${selected_kernel_compatibility[4]}"
+selected_kernel_compatibility_origin_url="${selected_kernel_compatibility[5]}"
+selected_kernel_compatibility_origin_commit="${selected_kernel_compatibility[6]}"
+
+if [ "$selected_kernel_compatibility_patch" != "-" ]; then
+  python3 "$repo_root/scripts/kernel_patch.py" validate \
+    "$selected_kernel_compatibility_patch"
+fi
+case "$selected_kernel_compatibility_status" in
+  compatibility-required)
+    selected_kernel_destination="$openwrt_dir/$selected_kernel_compatibility_destination"
+    selected_kernel_destination_dir="$(dirname "$selected_kernel_destination")"
+    [ -d "$selected_kernel_destination_dir" ] || {
+      echo "::error::Selected-kernel compatibility directory is missing: ${selected_kernel_compatibility_destination%/*}" >&2
+      exit 1
+    }
+    [ ! -e "$selected_kernel_destination" ] || {
+      echo "::error::Refusing to overwrite a different selected-kernel compatibility patch" >&2
+      exit 1
+    }
+    install -m 0644 "$selected_kernel_compatibility_patch" \
+      "$selected_kernel_destination"
+    selected_kernel_compatibility_status="compatibility-installed"
+    ;;
+  compatibility-present|upstream-patch|upstream-kernel)
+    ;;
+  *)
+    echo "::error::Unsupported selected-kernel compatibility status: $selected_kernel_compatibility_status" >&2
+    exit 1
+    ;;
+esac
+{
+  echo "selected_kernel_ppp_tx_scatter_gather_status=$selected_kernel_compatibility_status"
+  echo "selected_kernel_ppp_tx_scatter_gather_semantic_rule=$selected_kernel_compatibility_rule"
+  echo "selected_kernel_ppp_tx_scatter_gather_patch=${selected_kernel_compatibility_patch#"$repo_root"/}"
+  echo "selected_kernel_ppp_tx_scatter_gather_patch_sha256=$selected_kernel_compatibility_sha256"
+  echo "selected_kernel_ppp_tx_scatter_gather_destination=$selected_kernel_compatibility_destination"
+  echo "selected_kernel_ppp_tx_scatter_gather_origin_url=$selected_kernel_compatibility_origin_url"
+  echo "selected_kernel_ppp_tx_scatter_gather_origin_commit=$selected_kernel_compatibility_origin_commit"
+} >> "$report"
 
 destination_dir="$openwrt_dir/target/linux/generic/$install_directory"
 [ -d "$destination_dir" ] || {

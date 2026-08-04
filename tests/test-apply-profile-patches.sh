@@ -9,6 +9,7 @@ lock_dir="$tmpdir/source-input"
 openwrt="$tmpdir/openwrt"
 mkdir -p "$lock_dir/bbr3/6.12" \
   "$openwrt/target/linux/rockchip" \
+  "$openwrt/target/linux/generic/backport-6.12" \
   "$openwrt/target/linux/generic/hack-6.12" \
   "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall" \
   "$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d" \
@@ -170,6 +171,18 @@ git -C "$openwrt" init -q
 git -C "$openwrt/feeds/passwall" init -q
 git -C "$openwrt/feeds/kenzo" init -q
 printf 'KERNEL_PATCHVER:=6.12\n' > "$openwrt/target/linux/rockchip/Makefile"
+cat > "$openwrt/target/linux/generic/backport-6.12/620-ppp-direct-xmit.patch" <<'PATCH'
+--- a/include/linux/ppp_channel.h
++++ b/include/linux/ppp_channel.h
+@@ -1 +1,2 @@
+ struct ppp_channel {
++	bool direct_xmit;
+--- a/drivers/net/ppp/pppoe.c
++++ b/drivers/net/ppp/pppoe.c
+@@ -1 +1,2 @@
+ context
++	po->chan.direct_xmit = true;
+PATCH
 cat > "$openwrt/package/libs/libsepol/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk
 PKG_NAME:=libsepol
@@ -369,6 +382,11 @@ module_version_patch="$openwrt/target/linux/generic/hack-6.12/996-bbrv3-module-v
 [ "$(sha256sum "$module_version_patch" | awk '{print $1}')" = "$(
   sha256sum "$repo_root/patchsets/common/kernel/bbr3-module-version.patch" | awk '{print $1}'
 )" ]
+ppp_sg_patch="$openwrt/target/linux/generic/backport-6.12/625-v7.0-ppp-enable-TX-scatter-gather.patch"
+[ -f "$ppp_sg_patch" ]
+[ "$(sha256sum "$ppp_sg_patch" | awk '{print $1}')" = "$(
+  sha256sum "$repo_root/patchsets/common/kernel/ppp-tx-scatter-gather-6.12.patch" | awk '{print $1}'
+)" ]
 grep -Fxq 'TARGET_CFLAGS += -std=gnu17' "$openwrt/package/libs/libsepol/Makefile"
 if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/package/libs/libsepol/Makefile"; then
   echo "libsepol compatibility fixture unexpectedly depends on version/hash fields" >&2
@@ -436,6 +454,10 @@ PY
 grep -qx 'bbrv3_provider=fixture-single' "$report"
 grep -qx 'bbrv3_patch_count=1' "$report"
 grep -qx 'patch-report-v3' "$report"
+grep -qx 'selected_kernel_ppp_tx_scatter_gather_status=compatibility-installed' "$report"
+grep -qx 'selected_kernel_ppp_tx_scatter_gather_semantic_rule=common.ppp-tx-scatter-gather' "$report"
+grep -qx 'selected_kernel_ppp_tx_scatter_gather_destination=target/linux/generic/backport-6.12/625-v7.0-ppp-enable-TX-scatter-gather.patch' "$report"
+grep -Eq '^selected_kernel_ppp_tx_scatter_gather_patch_sha256=[0-9a-f]{64}$' "$report"
 grep -qx 'bbrv3_module_version_status=compatibility-installed' "$report"
 grep -qx 'bbrv3_module_version_destination=target/linux/generic/hack-6.12/996-bbrv3-module-version.patch' "$report"
 grep -qx 'assertion_BBR_VERSION=3' "$report"
@@ -496,6 +518,7 @@ grep -Eq '^present_feed_passwall=dnsmasq-addnmount-lifecycle\.patch sha256:[0-9a
   "$second_report"
 grep -Eq '^present_feed_kenzo=adguardhome-dns-redirect-dualstack\.patch sha256:[0-9a-f]{64}$' \
   "$second_report"
+grep -qx 'selected_kernel_ppp_tx_scatter_gather_status=compatibility-present' "$second_report"
 grep -qx 'bbrv3_module_version_status=compatibility-present' "$second_report"
 
 # Prove that a future provider retaining the field itself does not require a

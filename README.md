@@ -88,6 +88,8 @@ BBRv3 同时适用于本机 IPv4 TCP 与 IPv6 TCP。Linux 的 IPv6 TCP socket �
 
 Lean 会通过 `CONFIG_MODULE_STRIPPED` 剥离普通 `MODULE_VERSION`。构建保留这项全局体积优化，只在本轮 BBRv3 provider 仍使用该宏时自动安装一个单行 companion，以 direct `MODULE_INFO` 保留 BBRv3 的 `version=3`；若上游已经处理则自动跳过。随后对构建树中每一份 `tcp_bbr.ko` 直接读取 `.modinfo`，不会仅凭源码文本判定成功。
 
+PPP TX scatter-gather 同样按 selected kernel 能力处理：若 Lean 的所选 patch stack 已完整提供则直接使用；当前 stable 6.12 缺失时安装基于 Linux 上游提交 `42fcb213` 的窄适配补丁；只检测到部分语义、缺少 `direct_xmit` 前置补丁或遇到尚无适配的旧 series 时均立即终止。最终仍检查 prepared kernel source，不能用“补丁文件存在”代替功能验证。
+
 ## N5105 PVE 前置条件
 
 推荐 VM 合同：
