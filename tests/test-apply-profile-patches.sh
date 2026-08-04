@@ -278,6 +278,22 @@ set_iptable()
 	local ipv6_server="$1"
 	local tcp_server="$2"
 
+	uci -q batch <<-EOF >/dev/null 2>&1
+	delete firewall.AdGuardHome
+	set firewall.AdGuardHome=include
+	set firewall.AdGuardHome.type=script
+	set firewall.AdGuardHome.path=/usr/share/AdGuardHome/firewall.start
+	set firewall.AdGuardHome.reload=1
+	commit firewall
+	EOF
+
+	local IPS="$(ip -4 addr show | grep inet | grep -v ':' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d'/' -f1)"
+	for IP in $IPS; do
+		[ -z "$IP" ] && continue
+		iptables -t nat -I PREROUTING -p udp -d "$IP" --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
+		[ "$tcp_server" = "1" ] && iptables -t nat -I PREROUTING -p tcp -d "$IP" --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
+	done
+
 	[ "$ipv6_server" = "0" ] && return
 
 	IPS="$(ip -6 addr show | grep inet6 | grep -v 'fe80::' | grep -v '::1' | grep 'Global' | awk '{print $2}' | cut -d'/' -f1)"
@@ -290,8 +306,19 @@ set_iptable()
 
 clear_iptable()
 {
+	uci -q batch <<-EOF >/dev/null 2>&1
+	delete firewall.AdGuardHome
+	commit firewall
+	EOF
+
 	local OLD_PORT="$1"
 	local ipv6_server="$2"
+	local IPS="$(ip -4 addr show | grep inet | grep -v ':' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d'/' -f1)"
+	for IP in $IPS; do
+		[ -z "$IP" ] && continue
+		iptables -t nat -D PREROUTING -p udp -d "$IP" --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
+		iptables -t nat -D PREROUTING -p tcp -d "$IP" --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
+	done
 
 	[ "$ipv6_server" = "0" ] && return
 	echo "warn ip6tables nat mod is needed"
@@ -301,6 +328,11 @@ clear_iptable()
 		ip6tables -t nat -D PREROUTING -p udp -d "$IP" --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
 		ip6tables -t nat -D PREROUTING -p tcp -d "$IP" --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
 	done
+}
+
+service_triggers() {
+	procd_add_reload_trigger "$CONFIGURATION"
+	[ "$(uci get AdGuardHome.AdGuardHome.redirect 2>/dev/null)" = "redirect" ] && procd_add_reload_trigger firewall
 }
 
 _do_redirect()
@@ -419,8 +451,21 @@ grep -Eq '^applied_feed_passwall=dnsmasq-addnmount-lifecycle\.patch sha256:[0-9a
   "$report"
 grep -Fqx $'\ttcp_server=1' \
   "$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d/AdGuardHome"
-[ "$(grep -Fc 'ip -6 addr show scope global' \
-  "$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d/AdGuardHome")" -eq 2 ]
+adguard_init="$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d/AdGuardHome"
+[ "$(grep -Fc 'local LAN_DEVICE="$(uci -q get network.lan.device)"' "$adguard_init")" -eq 2 ]
+[ "$(grep -Fc -- '-i "$LAN_DEVICE"' "$adguard_init")" -eq 8 ]
+grep -Fqx $'\tiptables -t nat -I PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\t[ "$tcp_server" = "1" ] && iptables -t nat -I PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\tip6tables -t nat -I PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\t[ "$tcp_server" = "1" ] && ip6tables -t nat -I PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\tiptables -t nat -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\tiptables -t nat -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\tip6tables -t nat -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\tip6tables -t nat -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
+if grep -Fq -- '-d "$IP" --dport 53' "$adguard_init"; then
+  echo "AdGuardHome redirect still depends on local destination addresses" >&2
+  exit 1
+fi
 grep -Eq '^applied_feed_kenzo=adguardhome-dns-redirect-dualstack\.patch sha256:[0-9a-f]{64}$' \
   "$report"
 grep -Fxq $'\t$(MAKE) -C $(PKG_BUILD_DIR) $(TARGET_CONFIGURE_OPTS) CC="$(TARGET_CC)" CFLAGS="$(TARGET_CFLAGS) -Wall" LDFLAGS="$(TARGET_LDFLAGS)"' \
