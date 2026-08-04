@@ -9,4 +9,6 @@ set system.ntp.enable_server='0'
 EOF
 uci -q commit system
 
+[ ! -x /etc/init.d/haproxy ] || /etc/init.d/haproxy disable
+
 exit 0

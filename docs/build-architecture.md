@@ -196,6 +196,8 @@ patchsets/
     bbr3-sources.json             # provider/ref/path/算法身份策略
     bbr3-module-version.patch     # module stripping 的窄兼容补丁
   common/series                   # 仓库 common patch 顺序
+  feeds/passwall/series           # PassWall feed-local patch 顺序
+  feeds/kenzo/series              # AdGuardHome feed-local patch 顺序
   r4s/series                      # R4S patch 顺序
   x86-n5105-pve/series            # N5105 patch 顺序
 
@@ -264,7 +266,7 @@ repository declarations + rendered common/device intent + floating upstreams
 | `scripts/profile_semantics.py` | 声明式验证 Lean target patch 与 prepared kernel upstream 等价语义 |
 | `scripts/apply_source_lock_artifacts.py` | 把 lock 中的精确 release metadata 写入唯一 package provider |
 | `scripts/apply-source-compatibility.py` | 按声明式规则处理当前编译闭包内的非内核源码兼容，并以 selected kernel series 驱动系列相关 Kconfig 守卫 |
-| `scripts/apply-profile-patches.sh` | 应用仓库 patch、源码兼容规则和本轮 BBRv3 patch stack |
+| `scripts/apply-profile-patches.sh` | 在各自 Git 工作树应用 OpenWrt common/device 与 feed patchset、源码兼容规则和本轮 BBRv3 patch stack |
 | `scripts/collect-build-provenance.sh` | 从真实 build tree 生成平台交付目录和 `build-provenance.json` |
 | `scripts/verify-firmware-artifacts.sh` | 平台交付的唯一验收器 |
 | `scripts/release_assets.py` | 双平台聚合、专业资产命名、完整包/release index、回下载重建和复验 |
@@ -356,7 +358,8 @@ flowchart LR
 | 初次 CCA 选择 | `zz-common-turboacc`，仅在 module version `3` 和 `sch_fq` 成立后执行一次 |
 | 后续 CCA 与 software flow offload | TurboACC UCI/init；项目不建立第二个 sysctl 所有者 |
 | common qdisc/socket buffer | `90-router-performance.conf` |
-| DHCP `.32/232` 与 IPv6 relay | `90-common-network` |
+| DHCP `.32/232` 与 IPv6-PD LAN 发布 | `90-common-network` |
+| 服务角色去重 | `90-common-system` 只禁用官方 HAProxy 示例服务；PassWall 与 LuCI AdGuardHome 实例分别拥有实际进程 |
 | R4S IRQ affinity/接口映射 | Lean Rockchip target；项目语义合同只验证 |
 | R4S zram/packet steering | `91-r4s-performance` 与 `91-r4s-memory.conf` |
 | N5105 接口角色、4 queues、RPS | `91-x86-n5105-performance` 与 `91-n5105-multiqueue` |
@@ -738,7 +741,7 @@ TCP CCA 此后只由 TurboACC/UCI 管理，不在 sysctl 文件维护第二份�
 - LAN `192.168.2.1/24`。
 - DHCP 从 `.32` 开始，`limit=232`，租期 12 小时。
 - WAN 使用 DHCP，WAN6 使用 DHCPv6。
-- LAN 的 RA/DHCPv6/NDP 全部为 relay，WAN 的 RA/DHCPv6/NDP 为 relay master。
+- WAN6 获取 DHCPv6-PD，LAN 用 RA/DHCPv6 server 发布独立委派前缀，NDP relay 关闭。
 - 不写死跨设备的 `ethX`。
 - 时区 `Asia/Shanghai`，启用 NTP client，保留上游 server 列表。
 - 默认 qdisc 为 `fq`，socket receive/send buffer 上限 16 MiB。
@@ -760,19 +763,19 @@ dnsmasq-full、AdGuardHome、MosDNS、SmartDNS 和 PassWall 可以同时安装�
 ```text
 LAN static 192.168.2.1/24
 DHCP start=32, limit=232, leasetime=12h
-LAN ip6assign=64, delegate=0
-LAN interface=lan, ra/dhcpv6/ndp=relay
+LAN ip6assign=64
+LAN interface=lan, ra/dhcpv6=server, ndp=disabled
 WAN proto=dhcp, WAN6 proto=dhcpv6
-WAN interface=wan, ignore=1, ra/dhcpv6/ndp=relay, master=1
+WAN interface=wan, ignore=1
 ```
 
-IPv6 relay 是一个整体合同：LAN 是 relay slave，WAN 是唯一 relay master；两侧都显式配置 RA、DHCPv6 和 NDP，LAN 的 `delegate=0` 与 `ip6assign=64` 同时存在。`90-common-network` 还显式补齐两个 `dhcp` section 的类型、逻辑 interface，以及 WAN 的 `ignore=1`，不依赖某轮上游默认文件恰好已创建这些字段，不能只改其中一个字段形成半配置状态。WAN 静态地址、网关、自定义 bridge/端口和转发规则没有被用户确认为跨设备默认，不能从历史设备配置扩大推断。
+IPv6 使用正常路由的 PD 合同：WAN6 从上游取得委派前缀，netifd 按 `ip6assign=64` 分配给 LAN，odhcpd 只在 LAN 发布该前缀。不能把 WAN 链路 `/64` relay 到客户端，否则客户端源地址不属于 LAN 的委派前缀，PassWall ipset、策略路由和回程邻居状态会产生不同所有者。`90-common-network` 还显式补齐两个 `dhcp` section 的类型、逻辑 interface，以及 WAN 的 `ignore=1`。WAN 静态地址、网关、自定义 bridge/端口和转发规则没有被确认为跨设备默认，不能从历史设备配置扩大推断。
 
 common 只拥有协议与地址，R4S 的物理接口映射由 Lean target 拥有，N5105 的物理/虚拟接口角色由设备 overlay 按 driver 拥有。任何层都不使用宽泛 `sed` 修改 Lean `config_generate`。
 
 ### 10.2 DNS 与私密配置边界
 
-同时编译五个 DNS/代理组件不等于让五个服务争抢 `:53`。构建阶段只负责 package、provider、iptables 依赖、安全 package default 和配置接口兼容；实际 listener、iptables redirect、upstream、cache、域名规则、PassWall DNS mode、节点和订阅由设备上的 UCI/YAML 决定。
+同时编译五个 DNS/代理组件不等于让五个服务争抢 `:53`。构建阶段只负责 package、provider、iptables 依赖、安全 package default 和配置接口兼容；其中 Kenzo feed compatibility 保证 AdGuardHome 的 redirect 同时覆盖 TCP/IPv6，PassWall compatibility 保证临时 dnsmasq 规则目录的 jail mount 声明与目录生命周期一致。SmartDNS 对相同类型和地址的重复 bind 会自行告警并跳过，不为无功能影响的日志噪声维护源码补丁。实际 listener、redirect 端口、upstream、cache、域名规则、PassWall DNS mode、节点和订阅仍由设备上的 UCI/YAML 决定。
 
 这种边界有三个目的：
 
@@ -790,7 +793,7 @@ common 只拥有协议与地址，R4S 的物理接口映射由 Lean target 拥�
 - sysupgrade 保留 `/etc/config` 后尊重用户修改；项目不通过源码 patch 强制覆盖运行值。
 - 全新安装保持防火墙和管理面安全基线，用户首次登录后自行设置 root 密码。
 
-### 10.4 `mkf2fs` 与 IPv6 relay 的实现设计
+### 10.4 `mkf2fs` 与 IPv6-PD 的实现设计
 
 本节是这两项启动能力的实现设计，继续复用现有 profile 模型，不增加平行脚本或新的事实源：
 
@@ -799,7 +802,7 @@ common 只拥有协议与地址，R4S 的物理接口映射由 Lean target 拥�
 | `profiles/common/required-packages.txt` | 声明两个当前 squashfs/block-root profile 都需要 `mkf2fs` | `ProfileRepository` 自动合并 common/device required，渲染 `CONFIG_PACKAGE_mkf2fs=y` |
 | `profiles/common/source-overlays.json` | 从本轮锁定的 OpenWrt 官方 core 提供 canonical `f2fs-tools` recipe | 复用统一 source lock 与 overlay 同步器，不保存版本/hash 或私有兼容 patch |
 | 设备 `forbidden-packages.txt` | 只保留真正的设备黑名单，不再否定 common 的启动依赖 | 现有 required/forbidden 冲突检查 |
-| `profiles/common/files/etc/uci-defaults/90-common-network` | 网络 UCI 值的唯一事实源，一次性写入 LAN relay slave 与 WAN relay master | OpenWrt `uci batch`；renderer 只复制并拒绝路径冲突，shell 语法检查不复述字段 |
+| `profiles/common/files/etc/uci-defaults/90-common-network` | 网络 UCI 值的唯一事实源，一次性写入 WAN6 DHCPv6-PD 与 LAN RA/DHCPv6 server | OpenWrt `uci batch`；renderer 只复制并拒绝路径冲突，shell 语法检查不复述字段 |
 | `profiles/*/semantics.json` | 只描述仓库外、会随 Lean 漂移的 locked-source 语义 | 现有 `profile_semantics.py`；禁止镜像 rootfs 文件内容 |
 | 最终 package/firmware contract | 证明 `mkf2fs` 经过 `defconfig` 且进入 manifest | 现有 `profile_contract.py` 与 firmware verifier |
 
@@ -812,10 +815,10 @@ flowchart LR
     IMAGE --> FST
     FST --> PERSIST["persistent F2FS overlay"]
 
-    NET["90-common-network"] --> LAN["LAN: RA + DHCPv6 + NDP relay"]
-    NET --> WAN["WAN: RA + DHCPv6 + NDP relay, master=1"]
-    LAN --> ODHCPD["odhcpd relay pair"]
-    WAN --> ODHCPD
+    NET["90-common-network"] --> WAN["WAN6: DHCPv6-PD"]
+    WAN --> NETIFD["netifd: assign LAN /64"]
+    NETIFD --> LAN["LAN: RA + DHCPv6 server"]
+    LAN --> ODHCPD["odhcpd: publish delegated prefix"]
 ```
 
 命名继续沿用 OpenWrt UCI 域名：`network.lan`、`network.wan`、`network.wan6`、`dhcp.lan`、`dhcp.wan`；不发明设备别名或 helper abstraction。网络值只在 `90-common-network` 修改，`semantics.json`、测试和 checker 都不得维护第二份逐行清单。`mkf2fs` 是首次启动依赖，不扩展为 `block-mount`、完整磁盘管理套件或运行时存储服务。
@@ -1469,7 +1472,7 @@ Release 级验收在 GitHub 上完成完整闭环：aggregate 先复验两个 de
 | Geodata 与 Geoview | GeoIP/Geosite 均来自 Loyalsoldier 动态 release，`v2ray-geodata` 打包，Geoview 由 PassWall packages provider 编译 |
 | HAProxy/AdGuardHome/Geo 始终新 | prepare 解析最新 LTS/stable，写入真实 hash；设备内不绕过 package manager 自更新 |
 | 使用指定上游 feed | `kenzok8/small`、`kenzok8/openwrt-packages`、`sbwml/luci-app-mosdns`、canonical Openwrt-Passwall 两个仓库 |
-| 网络共同偏好 | LAN `192.168.2.1/24`、DHCP `.32/232`、LAN RA/DHCPv6/NDP relay + WAN relay master；其他 WAN/桥接/端口不扩大推断 |
+| 网络共同偏好 | LAN `192.168.2.1/24`、DHCP `.32/232`、WAN6 DHCPv6-PD + LAN RA/DHCPv6 server；其他 WAN/桥接/端口不扩大推断 |
 | DNS 链不要固化进编译 | 只编译组件与接口，端口、upstream、cache、规则、节点、订阅和凭据留在设备运行时 |
 | 学习 sbwml 但保持公开可维护 | 逐项纳入或用 Lean 原生等价实现；不运行远程脚本、不引入私有 target/授权输入/宽功能集 |
 | 避免多头维护和过量校验 | 声明单一所有者、共享领域模块、四个高价值边界；workflow/shell 不复制 schema 或设备枚举 |

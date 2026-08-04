@@ -10,6 +10,9 @@ openwrt="$tmpdir/openwrt"
 mkdir -p "$lock_dir/bbr3/6.12" \
   "$openwrt/target/linux/rockchip" \
   "$openwrt/target/linux/generic/hack-6.12" \
+  "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall" \
+  "$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d" \
+  "$openwrt/package/network/services/dnsmasq/files" \
   "$openwrt/package/libs/libsepol" \
   "$openwrt/package/lean/wol" \
   "$openwrt/feeds/small/tcping" \
@@ -164,6 +167,8 @@ with open(output, "w", encoding="utf-8") as handle:
 PY
 
 git -C "$openwrt" init -q
+git -C "$openwrt/feeds/passwall" init -q
+git -C "$openwrt/feeds/kenzo" init -q
 printf 'KERNEL_PATCHVER:=6.12\n' > "$openwrt/target/linux/rockchip/Makefile"
 cat > "$openwrt/package/libs/libsepol/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk
@@ -176,6 +181,132 @@ include $(TOPDIR)/rules.mk
 PKG_NAME:=wol
 include $(INCLUDE_DIR)/package.mk
 EOF
+cat > "$openwrt/package/network/services/dnsmasq/files/dnsmasq.init" <<'EOF'
+append_addnhosts() {
+	ismounted "$1" || append EXTRA_MOUNT "$1"
+	xappend "--addn-hosts=$1"
+}
+
+append_bogusnxdomain() {
+	xappend "--bogus-nxdomain=$1"
+}
+
+dnsmasq_start()
+{
+	if [ "$ignore_hosts_dir" = "1" ]; then
+		xappend "--addn-hosts=$HOSTFILE"
+		append EXTRA_MOUNT "$HOSTFILE"
+	else
+		xappend "--addn-hosts=$HOSTFILE_DIR"
+		append EXTRA_MOUNT "$HOSTFILE_DIR"
+	fi
+	config_list_foreach "$cfg" "addnhosts" append_addnhosts
+	config_list_foreach "$cfg" "bogusnxdomain" append_bogusnxdomain
+	append_parm "$cfg" "leasefile" "--dhcp-leasefile" "/tmp/dhcp.leases"
+	append_parm "$cfg" "serversfile" "--servers-file"
+}
+EOF
+cat > "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh" <<'EOF'
+run_ipt2socks() {
+	case "$proto" in
+	*)
+		flag="${flag}_TCP_UDP"
+	;;
+	esac
+	_extra_param="${_extra_param} -o 60 -n 65535 -v"
+	ln_run "$(first_type ipt2socks)" "ipt2socks_${flag}" $log_file -l $local_port -b 0.0.0.0 -s $socks_address -p $socks_port ${_extra_param}
+}
+
+run_singbox() {
+	:
+}
+
+start_dns() {
+	if [ "$RUN_NEW_DNSMASQ" = "0" ]; then
+		lua $APP_PATH/helper_dnsmasq.lua add_rule \
+			-USE_DIRECT_LIST "${USE_DIRECT_LIST}" -USE_PROXY_LIST "${USE_PROXY_LIST}" -USE_BLOCK_LIST "${USE_BLOCK_LIST}" -USE_GFW_LIST "${USE_GFW_LIST}" -CHN_LIST "${CHN_LIST}" \
+			-TCP_NODE ${TCP_NODE} -DEFAULT_PROXY_MODE ${TCP_PROXY_MODE} -NO_PROXY_IPV6 ${DNSMASQ_FILTER_PROXY_IPV6:-0} -NFTFLAG ${nftflag:-0} \
+			-NO_LOGIC_LOG ${NO_LOGIC_LOG:-0}
+		uci -q add_list dhcp.@dnsmasq[0].addnmount=${GLOBAL_DNSMASQ_CONF_PATH}
+		uci -q commit dhcp
+		lua $APP_PATH/helper_dnsmasq.lua logic_restart -LOG 1
+	else
+		:
+	fi
+}
+
+stop() {
+	unset SS_SYSTEM_DNS_RESOLVER_FORCE_BUILTIN
+	stop_crontab
+	source $APP_PATH/helper_smartdns.sh del
+	rm -rf $GLOBAL_DNSMASQ_CONF
+	rm -rf $GLOBAL_DNSMASQ_CONF_PATH
+	[ "1" = "1" ] && {
+		bak_dnsmasq_dns_redirect=$(config_t_get global dnsmasq_dns_redirect)
+		[ -n "${bak_dnsmasq_dns_redirect}" ] && {
+			uci -q commit ${CONFIG}
+		}
+		if [ -z "${ACL_default_dns_port}" ] || [ -n "${bak_dnsmasq_dns_redirect}" ]; then
+			uci -q del_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"
+			uci -q commit dhcp
+			lua $APP_PATH/helper_dnsmasq.lua restart -LOG 0
+		fi
+		[ -n "${bak_bridge_nf_ipt}" ] && sysctl -w net.bridge.bridge-nf-call-iptables=${bak_bridge_nf_ipt} >/dev/null 2>&1
+	}
+}
+EOF
+git -C "$openwrt/feeds/passwall" add luci-app-passwall/root/usr/share/passwall/app.sh
+git -C "$openwrt/feeds/passwall" \
+  -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'fixture PassWall source'
+cat > "$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d/AdGuardHome" <<'EOF'
+set_iptable()
+{
+	local ipv6_server="$1"
+	local tcp_server="$2"
+
+	[ "$ipv6_server" = "0" ] && return
+
+	IPS="$(ip -6 addr show | grep inet6 | grep -v 'fe80::' | grep -v '::1' | grep 'Global' | awk '{print $2}' | cut -d'/' -f1)"
+	for IP in $IPS; do
+		[ -z "$IP" ] && continue
+		ip6tables -t nat -I PREROUTING -p udp -d "$IP" --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
+		[ "$tcp_server" = "1" ] && ip6tables -t nat -I PREROUTING -p tcp -d "$IP" --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
+	done
+}
+
+clear_iptable()
+{
+	local OLD_PORT="$1"
+	local ipv6_server="$2"
+
+	[ "$ipv6_server" = "0" ] && return
+	echo "warn ip6tables nat mod is needed"
+	IPS="$(ip -6 addr show | grep inet6 | grep -v 'fe80::' | grep -v '::1' | grep 'Global' | awk '{print $2}' | cut -d'/' -f1)"
+	for IP in $IPS; do
+		[ -z "$IP" ] && continue
+		ip6tables -t nat -D PREROUTING -p udp -d "$IP" --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
+		ip6tables -t nat -D PREROUTING -p tcp -d "$IP" --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
+	done
+}
+
+_do_redirect()
+{
+	local section="$CONFIGURATION"
+	ipv6_server=1
+	tcp_server=0
+	local enabled="$1"
+
+	if [ "$enabled" = "1" ]; then
+		:
+	fi
+}
+EOF
+git -C "$openwrt/feeds/kenzo" add \
+  luci-app-adguardhome/root/etc/init.d/AdGuardHome
+git -C "$openwrt/feeds/kenzo" \
+  -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'fixture Kenzo source'
 cat > "$openwrt/feeds/small/tcping/Makefile" <<'EOF'
 include $(TOPDIR)/rules.mk
 PKG_NAME:=tcping
@@ -248,6 +379,32 @@ if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/package/lean/wol/Makefile"; then
   echo "wol compatibility fixture unexpectedly depends on version/hash fields" >&2
   exit 1
 fi
+grep -Fqx 'append_addnmount() {' \
+  "$openwrt/package/network/services/dnsmasq/files/dnsmasq.init"
+grep -Fqx $'\t[ -e "$1" ] || return 0' \
+  "$openwrt/package/network/services/dnsmasq/files/dnsmasq.init"
+grep -Fqx $'\tconfig_list_foreach "$cfg" "addnmount" append_addnmount' \
+  "$openwrt/package/network/services/dnsmasq/files/dnsmasq.init"
+grep -Eq '^applied_common=dnsmasq-addnmount-jail\.patch sha256:[0-9a-f]{64}$' \
+  "$report"
+grep -Fqx $'\tln_run "$(first_type ipt2socks)" "ipt2socks_${flag}" $log_file -l $local_port -b 0.0.0.0 -B :: -j 2 -s $socks_address -p $socks_port ${_extra_param}' \
+  "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh"
+grep -Eq '^applied_feed_passwall=ipt2socks-dualstack\.patch sha256:[0-9a-f]{64}$' \
+  "$report"
+grep -Fqx $'\t\tuci -q del_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"' \
+  "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh"
+grep -Fqx $'\t\t[ ! -e "${GLOBAL_DNSMASQ_CONF_PATH}" ] || \\' \
+  "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh"
+[ "$(grep -Fc 'del_list dhcp.@dnsmasq[0].addnmount=' \
+  "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh")" -eq 2 ]
+grep -Eq '^applied_feed_passwall=dnsmasq-addnmount-lifecycle\.patch sha256:[0-9a-f]{64}$' \
+  "$report"
+grep -Fqx $'\ttcp_server=1' \
+  "$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d/AdGuardHome"
+[ "$(grep -Fc 'ip -6 addr show scope global' \
+  "$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d/AdGuardHome")" -eq 2 ]
+grep -Eq '^applied_feed_kenzo=adguardhome-dns-redirect-dualstack\.patch sha256:[0-9a-f]{64}$' \
+  "$report"
 grep -Fxq $'\t$(MAKE) -C $(PKG_BUILD_DIR) $(TARGET_CONFIGURE_OPTS) CC="$(TARGET_CC)" CFLAGS="$(TARGET_CFLAGS) -Wall" LDFLAGS="$(TARGET_LDFLAGS)"' \
   "$openwrt/feeds/small/tcping/Makefile"
 if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/feeds/small/tcping/Makefile"; then
@@ -331,6 +488,14 @@ grep -qx 'source_compatibility_wol_gnu17_status=upstream' "$second_report"
 grep -qx 'source_compatibility_tcping_target_make_environment_status=upstream' "$second_report"
 grep -qx 'source_compatibility_zram_selected_kernel_backend_status=upstream' "$second_report"
 grep -qx 'source_compatibility_image_cyclonedx_sbom_status=upstream' "$second_report"
+grep -Eq '^present_common=dnsmasq-addnmount-jail\.patch sha256:[0-9a-f]{64}$' \
+  "$second_report"
+grep -Eq '^present_feed_passwall=ipt2socks-dualstack\.patch sha256:[0-9a-f]{64}$' \
+  "$second_report"
+grep -Eq '^present_feed_passwall=dnsmasq-addnmount-lifecycle\.patch sha256:[0-9a-f]{64}$' \
+  "$second_report"
+grep -Eq '^present_feed_kenzo=adguardhome-dns-redirect-dualstack\.patch sha256:[0-9a-f]{64}$' \
+  "$second_report"
 grep -qx 'bbrv3_module_version_status=compatibility-present' "$second_report"
 
 # Prove that a future provider retaining the field itself does not require a

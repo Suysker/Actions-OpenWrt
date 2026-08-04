@@ -70,7 +70,7 @@ feed 索引覆盖全部锁定源，但安装阶段只提交当前 profile 的 re
 
 固件只拥有安全、可解释的出厂默认：
 
-- LAN `192.168.2.1/24`，DHCP 从 `.32` 开始、`limit=232`、租期 12 小时；WAN DHCP、WAN6 DHCPv6；LAN 与 WAN 均启用 RA/DHCPv6/NDP relay，WAN 是唯一 master；不写死物理 `ethX`。
+- LAN `192.168.2.1/24`，DHCP 从 `.32` 开始、`limit=232`、租期 12 小时；WAN DHCP、WAN6 DHCPv6-PD；LAN 用 RA/DHCPv6 server 发布独立委派前缀，不把 WAN 链路前缀 relay 到客户端；不写死物理 `ethX`。
 - R4S 与 N5105 的 squashfs block-root 镜像均保留启动必需的 `mkf2fs`，首次启动可创建持久 F2FS overlay；不因此引入完整磁盘管理套件。
 - `Asia/Shanghai` 和启用 NTP client，保留上游 NTP server 列表。
 - `fq`、16 MiB socket buffer 上限。
@@ -78,6 +78,10 @@ feed 索引覆盖全部锁定源，但安装阶段只提交当前 profile 的 re
 - 不内置固定 root 密码、不关闭签名校验、不添加私有软件源、不开放 WAN 管理入口。
 
 AdGuardHome、MosDNS、SmartDNS、dnsmasq-full 和 PassWall 都会被编译，但 DNS 端口、上游、缓存、规则、节点、订阅和凭据是用户常用的设备运行时配置，不烘焙进两台设备共用的镜像。它们应按设备实际 UCI/YAML、socket、iptables redirect 和完整查询链验收。
+
+PassWall 在关闭 DNS 劫持并复用系统 dnsmasq 时会通过 UCI `addnmount` 声明生成规则目录。common patch 让 Lean 的 dnsmasq init 把存在的目录纳入只读 procd jail mount，并忽略已经消失的临时路径；PassWall feed 补丁在启停和 DNS 模式切换时先清理旧声明、只登记真实存在的目录，同时让 `ipt2socks` 绑定 `0.0.0.0`/`::` 并使用两个 worker。Kenzo feed 补丁补齐 AdGuardHome redirect 的 TCP/IPv6 规则生成。它们都只修复配置接口，不写入任何 DNS 上游、端口、规则或节点。
+
+PassWall 自行生成并管理 HAProxy 实例；common factory defaults 禁用官方 HAProxy 软件包自带的示例服务，避免无用途地在所有接口开放 `60000/tcp`。实际 AdGuardHome 由其 LuCI 集成服务管理。
 
 BBRv3 同时适用于本机 IPv4 TCP 与 IPv6 TCP。Linux 的 IPv6 TCP socket 同样进入通用 `tcp_init_sock()` 和 `tcp_congestion_ops`，所以源码位于 `net/ipv4/tcp_bbr.c` 不代表“只支持 IPv4”。它不接管 UDP/QUIC，也不会改变普通 NAT 转发连接在 LAN 客户端/远端服务器上的端到端拥塞控制；PassWall/Xray 在路由器本机建立的 TCP outbound 才会直接使用它。
 
@@ -146,7 +150,7 @@ Breaking changes：
 - source lock 当前为 schema 5，profile 内完整记录 selected kernel channel/target/series/version/source hash；Action 执行身份不属于 source lock，feeds/source overlays/kernel/BBRv3 等消费者统一通过 `source_lock.py` 解释。其他 schema 的 incoming lock 需重新运行 resolver，设备配置与 sysupgrade 行为不受影响。
 - 生产 profile 共同选择 Lean testing channel，但不永久写死 6.18 或任一 point release；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析与目标 series 匹配的最新可信 BBRv3 port、物化并锁定 commit/hash。缺少兼容 port 时构建明确失败，不静默降级。
 - GitHub 官方复用 Actions 直接使用 `actions/*@main`，按用户选择追踪最新默认分支；任何上游 runtime/行为不兼容会使门禁直接失败。
-- `diy-part2.sh` 不再做可变 release 查询、`sed` 服务策略或 `PKG_HASH:=skip`；它只应用 source lock 中已经验证的 metadata。
+- `diy-part2.sh` 不做可变 release 查询、服务策略修改或 `PKG_HASH:=skip`；它只应用 source lock 中已经验证的 metadata。PassWall 与 Kenzo 的窄修复均位于独立 feed patchset，由 patch applicator 在各自锁定 Git 工作树中 clean-apply、记录 hash，并在上游语义漂移时失败。
 - 正式 Release 必须由同一 source lock 下两台设备同时通过；任意分支的 `all` 都发布，单 profile 仅提供 Actions artifact。
 
 ## Credits

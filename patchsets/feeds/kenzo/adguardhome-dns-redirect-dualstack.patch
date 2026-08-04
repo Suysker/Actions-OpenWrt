@@ -1,0 +1,30 @@
+diff --git a/luci-app-adguardhome/root/etc/init.d/AdGuardHome b/luci-app-adguardhome/root/etc/init.d/AdGuardHome
+--- a/luci-app-adguardhome/root/etc/init.d/AdGuardHome
++++ b/luci-app-adguardhome/root/etc/init.d/AdGuardHome
+@@ -74,7 +74,7 @@ set_iptable()
+ 
+ 	[ "$ipv6_server" = "0" ] && return
+ 
+-	IPS="$(ip -6 addr show | grep inet6 | grep -v 'fe80::' | grep -v '::1' | grep 'Global' | awk '{print $2}' | cut -d'/' -f1)"
++	IPS="$(ip -6 addr show scope global | awk '$1 == "inet6" { sub(/\/.*/, "", $2); print $2 }')"
+ 	for IP in $IPS; do
+ 		[ -z "$IP" ] && continue
+ 		ip6tables -t nat -I PREROUTING -p udp -d "$IP" --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
+@@ -100,7 +100,6 @@ clear_iptable()
+ 
+ 	[ "$ipv6_server" = "0" ] && return
+-	echo "warn ip6tables nat mod is needed"
+-	IPS="$(ip -6 addr show | grep inet6 | grep -v 'fe80::' | grep -v '::1' | grep 'Global' | awk '{print $2}' | cut -d'/' -f1)"
++	IPS="$(ip -6 addr show scope global | awk '$1 == "inet6" { sub(/\/.*/, "", $2); print $2 }')"
+ 	for IP in $IPS; do
+ 		[ -z "$IP" ] && continue
+ 		ip6tables -t nat -D PREROUTING -p udp -d "$IP" --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
+@@ -215,7 +215,7 @@ _do_redirect()
+ {
+ 	local section="$CONFIGURATION"
+ 	ipv6_server=1
+-	tcp_server=0
++	tcp_server=1
+ 	local enabled="$1"
+ 
+ 	if [ "$enabled" = "1" ]; then

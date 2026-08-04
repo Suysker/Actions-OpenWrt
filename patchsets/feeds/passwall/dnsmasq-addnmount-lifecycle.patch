@@ -1,0 +1,34 @@
+diff --git a/luci-app-passwall/root/usr/share/passwall/app.sh b/luci-app-passwall/root/usr/share/passwall/app.sh
+--- a/luci-app-passwall/root/usr/share/passwall/app.sh
++++ b/luci-app-passwall/root/usr/share/passwall/app.sh
+@@ -1466,7 +1466,9 @@ start_dns() {
+ 			-USE_DIRECT_LIST "${USE_DIRECT_LIST}" -USE_PROXY_LIST "${USE_PROXY_LIST}" -USE_BLOCK_LIST "${USE_BLOCK_LIST}" -USE_GFW_LIST "${USE_GFW_LIST}" -CHN_LIST "${CHN_LIST}" \
+ 			-TCP_NODE ${TCP_NODE} -DEFAULT_PROXY_MODE ${TCP_PROXY_MODE} -NO_PROXY_IPV6 ${DNSMASQ_FILTER_PROXY_IPV6:-0} -NFTFLAG ${nftflag:-0} \
+ 			-NO_LOGIC_LOG ${NO_LOGIC_LOG:-0}
+-		uci -q add_list dhcp.@dnsmasq[0].addnmount=${GLOBAL_DNSMASQ_CONF_PATH}
++		uci -q del_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"
++		[ ! -e "${GLOBAL_DNSMASQ_CONF_PATH}" ] || \
++			uci -q add_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"
+ 		uci -q commit dhcp
+ 		lua $APP_PATH/helper_dnsmasq.lua logic_restart -LOG 1
+ 	else
+@@ -1927,6 +1929,10 @@ stop() {
+ 	unset SS_SYSTEM_DNS_RESOLVER_FORCE_BUILTIN
+ 	stop_crontab
+ 	source $APP_PATH/helper_smartdns.sh del
++	[ -z "${GLOBAL_DNSMASQ_CONF_PATH}" ] || {
++		uci -q del_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"
++		uci -q commit dhcp
++	}
+ 	rm -rf $GLOBAL_DNSMASQ_CONF
+ 	rm -rf $GLOBAL_DNSMASQ_CONF_PATH
+ 	[ "1" = "1" ] && {
+@@ -1939,8 +1945,6 @@ stop() {
+ 			uci -q commit ${CONFIG}
+ 		}
+ 		if [ -z "${ACL_default_dns_port}" ] || [ -n "${bak_dnsmasq_dns_redirect}" ]; then
+-			uci -q del_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"
+-			uci -q commit dhcp
+ 			lua $APP_PATH/helper_dnsmasq.lua restart -LOG 0
+ 		fi
+ 		[ -n "${bak_bridge_nf_ipt}" ] && sysctl -w net.bridge.bridge-nf-call-iptables=${bak_bridge_nf_ipt} >/dev/null 2>&1

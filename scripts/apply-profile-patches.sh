@@ -6,8 +6,8 @@ usage() {
 Usage:
   apply-profile-patches.sh <profile> <openwrt-dir> <source-lock.json> <report.txt>
 
-Applies repository-owned common/device patches and installs the BBRv3 port
-selected by the immutable source lock into OpenWrt's selected-kernel patch stack.
+Applies repository-owned OpenWrt common/device patches, feed-local patches, and
+the BBRv3 port selected by the immutable source lock.
 EOF
 }
 
@@ -92,9 +92,14 @@ actual_series="$(
 }
 
 apply_series() {
-  local layer="$1" directory="$2" series_file="$2/series" patch_name patch_path
+  local layer="$1" directory="$2" worktree="$3" series_file="$2/series"
+  local patch_name patch_path state
   [ -f "$series_file" ] || {
     echo "::error::Missing $layer patch series: $series_file" >&2
+    exit 1
+  }
+  git -C "$worktree" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+    echo "::error::$layer patch target is not a Git worktree: $worktree" >&2
     exit 1
   }
   while IFS= read -r patch_name || [ -n "$patch_name" ]; do
@@ -110,9 +115,16 @@ apply_series() {
       echo "::error::Missing patch listed by $series_file: $patch_name" >&2
       exit 1
     }
-    git -C "$openwrt_dir" apply --check "$patch_path"
-    git -C "$openwrt_dir" apply "$patch_path"
-    printf 'applied_%s=%s sha256:%s\n' "$layer" "$patch_name" \
+    if git -C "$worktree" apply --check "$patch_path" >/dev/null 2>&1; then
+      git -C "$worktree" apply "$patch_path"
+      state="applied"
+    elif git -C "$worktree" apply --reverse --check "$patch_path" >/dev/null 2>&1; then
+      state="present"
+    else
+      echo "::error::$layer patch neither applies nor is already present: $patch_name" >&2
+      exit 1
+    fi
+    printf '%s_%s=%s sha256:%s\n' "$state" "$layer" "$patch_name" \
       "$(sha256sum "$patch_path" | awk '{print $1}')" >> "$report"
   done < "$series_file"
 }
@@ -132,8 +144,12 @@ source_lock_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$
 python3 "$repo_root/scripts/apply-source-compatibility.py" \
   "$repo_root/profiles/common/source-compatibility.json" "$openwrt_dir" "$report" \
   "$kernel_series"
-apply_series common "$repo_root/patchsets/common"
-apply_series device "$repo_root/patchsets/$profile"
+apply_series common "$repo_root/patchsets/common" "$openwrt_dir"
+apply_series device "$repo_root/patchsets/$profile" "$openwrt_dir"
+apply_series feed_passwall "$repo_root/patchsets/feeds/passwall" \
+  "$openwrt_dir/feeds/passwall"
+apply_series feed_kenzo "$repo_root/patchsets/feeds/kenzo" \
+  "$openwrt_dir/feeds/kenzo"
 
 destination_dir="$openwrt_dir/target/linux/generic/$install_directory"
 [ -d "$destination_dir" ] || {
