@@ -785,10 +785,10 @@ common 只拥有协议与地址，R4S 的物理接口映射由 Lean target 拥�
 
 Kenzo feed patch 为 `redirect` 模式提供两层互补但汇聚到同一 AdGuard 实例的入口：
 
-- LAN 入方向：按 `network.lan.device` 在 IPv4/IPv6 `nat PREROUTING` 匹配 TCP/UDP 53，不再依赖查询目标恰好是路由器地址，因此客户端硬编码的传统 DNS 同样进入 AdGuard。
-- 路由器本机：仅当 `AdGuardHome.AdGuardHome.redirect_local=1` 时，在 IPv4/IPv6 `nat OUTPUT` 把发往 `127.0.0.1:53` 和 `[::1]:53` 的 TCP/UDP 查询重定向到 AdGuard 的实际监听端口。删除规则与插入规则逐项对称，AdGuard 重启和 firewall reload 仍由同一 init 生命周期管理。
+- LAN 入方向：先在 IPv4/IPv6 `mangle PREROUTING` 按 `network.lan.device` 放行 TCP/UDP 53，避免更早执行的 PassWall TPROXY 抢走 DNS；随后在 `nat PREROUTING` 重定向到 AdGuard。匹配不再依赖查询目标恰好是路由器地址，因此客户端硬编码的传统 DNS 同样进入 AdGuard。
+- 路由器本机：在 IPv4/IPv6 `nat OUTPUT` 把发往 `127.0.0.1:53` 和 `[::1]:53` 的 TCP/UDP 查询重定向到 AdGuard 的实际监听端口。OUTPUT 与 PREROUTING 不使用第二个隐藏开关，统一跟随现有的 AdGuard `enabled` 和 `redirect='redirect'` 生命周期创建、重载与清除。
 
-`redirect_local` 是显式 opt-in，缺省或任何非 `1` 值都不创建 OUTPUT 规则。这个默认保护旧配置：如果 AdGuard 的 `.lan` 或私网 PTR 上游仍是 `127.0.0.1:53`，无条件劫持会把 AdGuard 自己的本地查询送回自身并形成环路。
+插入和删除规则逐项对称，AdGuard 重启和 firewall reload 仍由同一 init 生命周期管理。`_do_redirect` 使用 `/bin/lock` 串行化 procd reload、firewall include 和人工重启可能并发触发的规则变更；删除操作会循环到所有匹配项消失，因此也能收敛升级前或异常并发留下的重复规则。该设计没有 `redirect_local` UCI/LuCI 状态；网页中的“将 53 端口劫持到 AdGuardHome”就是唯一开关。
 
 当前设备采用的低风险运行时拓扑保持 dnsmasq 的标准端口不变：
 
@@ -802,12 +802,12 @@ flowchart LR
     AGH -->|".lan / private PTR"| DNSMASQ["192.168.2.1:53 dnsmasq"]
 ```
 
-启用本机劫持之前，设备配置必须同时满足以下合同：
+启用 `redirect` 之前，设备配置必须同时满足以下合同：
 
 1. dnsmasq 继续监听 `53`，不迁移端口；删除其 `127.0.0.1#5553` 通用上游，使它只承担 DHCP、本地域名和私网反查数据源。
 2. AdGuard 继续监听 `5553`；`upstream_dns` 中的 `[/lan/]127.0.0.1:53` 改为 `[/lan/]192.168.2.1:53`，`local_ptr_upstreams` 同样改为 `192.168.2.1:53`。这里使用设备当前 LAN 网关；LAN 地址变化时必须同步更新，补丁本身不写死该地址。
-3. 先提交 YAML，再用 `uci set AdGuardHome.AdGuardHome.redirect_local='1'`、`uci commit AdGuardHome` 启用本机劫持并重启 AdGuard。确认四条 OUTPUT 规则存在且本机解析正常后，才执行 `uci -q del_list dhcp.@dnsmasq[0].server='127.0.0.1#5553'`、提交并 reload dnsmasq。不能先单独删除 dnsmasq 上游；验证失败时应把 `redirect_local` 改回 `0` 并重启 AdGuard，而不是继续删除回退路径。
-4. PassWall 关闭自己的 DNS 劫持，并保留 TCP/UDP 53“不转发”例外，避免更早执行的 mangle/TPROXY 抢走 DNS。
+3. 旧配置迁移必须先提交 YAML 中的两处本地上游，再启动或重启新版 AdGuard；确认四条 OUTPUT 规则存在且本机解析正常后，才执行 `uci -q del_list dhcp.@dnsmasq[0].server='127.0.0.1#5553'`、提交并 reload dnsmasq。不能把仍指向 `127.0.0.1:53` 的旧 YAML 与新版 `redirect` 同时启用，否则 AdGuard 的本地查询会被 OUTPUT 送回自身。验证失败时应先关闭现有 redirect 模式，而不是继续删除回退路径。
+4. PassWall 关闭自己的 DNS 劫持。新版 AdGuard redirect 已在 mangle 阶段保护 53；PassWall 的 TCP/UDP 53“不转发”条目可以继续保留，作为配置层的重复保护且不改变链路结果。若以后希望精简，也只能在新版规则实机生效后删除；旧固件没有这层保护，不能提前删除。
 
 这条链中 dnsmasq 不再把公网查询回送给 AdGuard；它只接受 AdGuard 对 `.lan` 和私网 PTR 的定向查询。LAN 客户端与路由器默认 resolver 的第一站都是 AdGuard，同时不改变 dnsmasq 的监听端口和 DHCP 职责。该拓扑是设备运行时配置，不作为 R4S/N5105 的跨设备 factory default。
 

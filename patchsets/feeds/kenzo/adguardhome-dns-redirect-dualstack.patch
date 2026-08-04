@@ -1,21 +1,23 @@
 diff --git a/luci-app-adguardhome/root/etc/init.d/AdGuardHome b/luci-app-adguardhome/root/etc/init.d/AdGuardHome
 --- a/luci-app-adguardhome/root/etc/init.d/AdGuardHome
 +++ b/luci-app-adguardhome/root/etc/init.d/AdGuardHome
-@@ -55,6 +55,10 @@ set_iptable()
+@@ -55,6 +55,9 @@ set_iptable()
  {
  	local ipv6_server="$1"
  	local tcp_server="$2"
 +	local LAN_DEVICE="$(uci -q get network.lan.device)"
-+	local redirect_local="$(uci -q get AdGuardHome.AdGuardHome.redirect_local)"
 +
 +	[ -n "$LAN_DEVICE" ] || return 1
  
  	uci -q batch <<-EOF >/dev/null 2>&1
  	delete firewall.AdGuardHome
-@@ -65,21 +69,23 @@ set_iptable()
+@@ -65,21 +68,25 @@ set_iptable()
  	commit firewall
  	EOF
  
++	iptables -t mangle -I PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j RETURN >/dev/null 2>&1
++	iptables -t mangle -I PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j RETURN >/dev/null 2>&1
++
 -	local IPS="$(ip -4 addr show | grep inet | grep -v ':' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d'/' -f1)"
 -	for IP in $IPS; do
 -		[ -z "$IP" ] && continue
@@ -25,13 +27,14 @@ diff --git a/luci-app-adguardhome/root/etc/init.d/AdGuardHome b/luci-app-adguard
 +	iptables -t nat -I PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
 +	[ "$tcp_server" = "1" ] && iptables -t nat -I PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
 +
-+	if [ "$redirect_local" = "1" ]; then
-+		iptables -t nat -I OUTPUT -d 127.0.0.1/32 -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
-+		[ "$tcp_server" = "1" ] && iptables -t nat -I OUTPUT -d 127.0.0.1/32 -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
-+	fi
++	iptables -t nat -I OUTPUT -d 127.0.0.1/32 -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
++	[ "$tcp_server" = "1" ] && iptables -t nat -I OUTPUT -d 127.0.0.1/32 -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
  
  	[ "$ipv6_server" = "0" ] && return
  
++	ip6tables -t mangle -I PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j RETURN >/dev/null 2>&1
++	ip6tables -t mangle -I PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j RETURN >/dev/null 2>&1
++
 -	IPS="$(ip -6 addr show | grep inet6 | grep -v 'fe80::' | grep -v '::1' | grep 'Global' | awk '{print $2}' | cut -d'/' -f1)"
 -	for IP in $IPS; do
 -		[ -z "$IP" ] && continue
@@ -41,14 +44,12 @@ diff --git a/luci-app-adguardhome/root/etc/init.d/AdGuardHome b/luci-app-adguard
 +	ip6tables -t nat -I PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
 +	[ "$tcp_server" = "1" ] && ip6tables -t nat -I PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
 +
-+	if [ "$redirect_local" = "1" ]; then
-+		ip6tables -t nat -I OUTPUT -d ::1/128 -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
-+		[ "$tcp_server" = "1" ] && ip6tables -t nat -I OUTPUT -d ::1/128 -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
-+	fi
++	ip6tables -t nat -I OUTPUT -d ::1/128 -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
++	[ "$tcp_server" = "1" ] && ip6tables -t nat -I OUTPUT -d ::1/128 -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1
  }
  
  clear_iptable()
-@@ -91,21 +97,21 @@ clear_iptable()
+@@ -91,21 +98,27 @@ clear_iptable()
  
  	local OLD_PORT="$1"
  	local ipv6_server="$2"
@@ -62,10 +63,13 @@ diff --git a/luci-app-adguardhome/root/etc/init.d/AdGuardHome b/luci-app-adguard
 +
 +	[ -n "$LAN_DEVICE" ] || return 1
 +
-+	iptables -t nat -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
-+	iptables -t nat -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
-+	iptables -t nat -D OUTPUT -d 127.0.0.1/32 -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
-+	iptables -t nat -D OUTPUT -d 127.0.0.1/32 -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
++	while iptables -t mangle -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j RETURN >/dev/null 2>&1; do :; done
++	while iptables -t mangle -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j RETURN >/dev/null 2>&1; do :; done
++
++	while iptables -t nat -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done
++	while iptables -t nat -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done
++	while iptables -t nat -D OUTPUT -d 127.0.0.1/32 -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done
++	while iptables -t nat -D OUTPUT -d 127.0.0.1/32 -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done
  
  	[ "$ipv6_server" = "0" ] && return
 -	echo "warn ip6tables nat mod is needed"
@@ -76,14 +80,29 @@ diff --git a/luci-app-adguardhome/root/etc/init.d/AdGuardHome b/luci-app-adguard
 -		ip6tables -t nat -D PREROUTING -p tcp -d "$IP" --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
 -	done
 +
-+	ip6tables -t nat -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
-+	ip6tables -t nat -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
-+	ip6tables -t nat -D OUTPUT -d ::1/128 -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
-+	ip6tables -t nat -D OUTPUT -d ::1/128 -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1
++	while ip6tables -t mangle -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j RETURN >/dev/null 2>&1; do :; done
++	while ip6tables -t mangle -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j RETURN >/dev/null 2>&1; do :; done
++
++	while ip6tables -t nat -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done
++	while ip6tables -t nat -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done
++	while ip6tables -t nat -D OUTPUT -d ::1/128 -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done
++	while ip6tables -t nat -D OUTPUT -d ::1/128 -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done
  }
  
  service_triggers() {
-@@ -215,7 +221,7 @@ _do_redirect()
+@@ -212,10 +225,19 @@ do_redirect()
+ }
+ 
+ _do_redirect()
++{
++	lock /var/lock/AdGuardHome.redirect
++	_do_redirect_locked "$@"
++	local ret=$?
++	lock -u /var/lock/AdGuardHome.redirect
++	return "$ret"
++}
++
++_do_redirect_locked()
  {
  	local section="$CONFIGURATION"
  	ipv6_server=1

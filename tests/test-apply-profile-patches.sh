@@ -453,27 +453,41 @@ grep -Fqx $'\ttcp_server=1' \
   "$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d/AdGuardHome"
 adguard_init="$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d/AdGuardHome"
 [ "$(grep -Fc 'local LAN_DEVICE="$(uci -q get network.lan.device)"' "$adguard_init")" -eq 2 ]
-[ "$(grep -Fc 'local redirect_local="$(uci -q get AdGuardHome.AdGuardHome.redirect_local)"' "$adguard_init")" -eq 1 ]
-[ "$(grep -Fc -- '-i "$LAN_DEVICE"' "$adguard_init")" -eq 8 ]
-[ "$(grep -Fc 'if [ "$redirect_local" = "1" ]; then' "$adguard_init")" -eq 2 ]
+[ "$(grep -Fc -- '-i "$LAN_DEVICE"' "$adguard_init")" -eq 16 ]
+grep -Fqx $'\tiptables -t mangle -I PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j RETURN >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\tiptables -t mangle -I PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j RETURN >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\tip6tables -t mangle -I PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j RETURN >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\tip6tables -t mangle -I PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j RETURN >/dev/null 2>&1' "$adguard_init"
 grep -Fqx $'\tiptables -t nat -I PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
 grep -Fqx $'\t[ "$tcp_server" = "1" ] && iptables -t nat -I PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
 grep -Fqx $'\tip6tables -t nat -I PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
 grep -Fqx $'\t[ "$tcp_server" = "1" ] && ip6tables -t nat -I PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\t\tiptables -t nat -I OUTPUT -d 127.0.0.1/32 -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\t\t[ "$tcp_server" = "1" ] && iptables -t nat -I OUTPUT -d 127.0.0.1/32 -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\t\tip6tables -t nat -I OUTPUT -d ::1/128 -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\t\t[ "$tcp_server" = "1" ] && ip6tables -t nat -I OUTPUT -d ::1/128 -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\tiptables -t nat -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\tiptables -t nat -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\tip6tables -t nat -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\tip6tables -t nat -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\tiptables -t nat -D OUTPUT -d 127.0.0.1/32 -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\tiptables -t nat -D OUTPUT -d 127.0.0.1/32 -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\tip6tables -t nat -D OUTPUT -d ::1/128 -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
-grep -Fqx $'\tip6tables -t nat -D OUTPUT -d ::1/128 -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\tiptables -t nat -I OUTPUT -d 127.0.0.1/32 -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\t[ "$tcp_server" = "1" ] && iptables -t nat -I OUTPUT -d 127.0.0.1/32 -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\tip6tables -t nat -I OUTPUT -d ::1/128 -p udp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\t[ "$tcp_server" = "1" ] && ip6tables -t nat -I OUTPUT -d ::1/128 -p tcp --dport 53 -j REDIRECT --to-ports "$AdGuardHome_PORT" >/dev/null 2>&1' "$adguard_init"
+grep -Fqx $'\twhile iptables -t nat -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile iptables -t nat -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile ip6tables -t nat -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile ip6tables -t nat -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile iptables -t nat -D OUTPUT -d 127.0.0.1/32 -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile iptables -t nat -D OUTPUT -d 127.0.0.1/32 -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile ip6tables -t nat -D OUTPUT -d ::1/128 -p udp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile ip6tables -t nat -D OUTPUT -d ::1/128 -p tcp --dport 53 -j REDIRECT --to-ports "$OLD_PORT" >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile iptables -t mangle -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j RETURN >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile iptables -t mangle -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j RETURN >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile ip6tables -t mangle -D PREROUTING -i "$LAN_DEVICE" -p udp --dport 53 -j RETURN >/dev/null 2>&1; do :; done' "$adguard_init"
+grep -Fqx $'\twhile ip6tables -t mangle -D PREROUTING -i "$LAN_DEVICE" -p tcp --dport 53 -j RETURN >/dev/null 2>&1; do :; done' "$adguard_init"
+[ "$(grep -Fc 'lock /var/lock/AdGuardHome.redirect' "$adguard_init")" -eq 1 ]
+[ "$(grep -Fc 'lock -u /var/lock/AdGuardHome.redirect' "$adguard_init")" -eq 1 ]
+grep -Fqx $'\t_do_redirect_locked "$@"' "$adguard_init"
+grep -Fqx '_do_redirect_locked()' "$adguard_init"
 if grep -Fq -- '-d "$IP" --dport 53' "$adguard_init"; then
   echo "AdGuardHome redirect still depends on local destination addresses" >&2
+  exit 1
+fi
+if grep -Fq 'redirect_local' "$adguard_init"; then
+  echo "AdGuardHome redirect unexpectedly retains a second local toggle" >&2
   exit 1
 fi
 grep -Eq '^applied_feed_kenzo=adguardhome-dns-redirect-dualstack\.patch sha256:[0-9a-f]{64}$' \
