@@ -6,10 +6,11 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import os
 import pathlib
 import re
 import sys
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, MutableMapping
 
 from profile_model import ProfileModelError, parse_config
 
@@ -70,6 +71,50 @@ def selected_channel(config: Mapping[str, str]) -> str:
     raise KernelSelectionError(
         f"{CHANNEL_SYMBOL} must be y or n, got {value!r}"
     )
+
+
+def apply_channel_override(
+    config: MutableMapping[str, str], channel: str
+) -> None:
+    """Select one validated Lean kernel channel in a parsed config."""
+
+    if channel not in CHANNEL_VARIABLES:
+        raise KernelSelectionError(f"unsupported kernel channel: {channel!r}")
+    config[CHANNEL_SYMBOL] = "y" if channel == "testing" else "n"
+
+
+def set_config_channel(path: pathlib.Path, channel: str) -> None:
+    """Atomically replace the profile-owned channel selector in one seed."""
+
+    if channel not in CHANNEL_VARIABLES:
+        raise KernelSelectionError(f"unsupported kernel channel: {channel!r}")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise KernelSelectionError(f"cannot read kernel config {path}: {exc}") from exc
+
+    matches = [
+        index
+        for index, line in enumerate(lines)
+        if line.startswith(f"{CHANNEL_SYMBOL}=")
+        or line == f"# {CHANNEL_SYMBOL} is not set"
+    ]
+    if len(matches) != 1:
+        raise KernelSelectionError(
+            f"expected one {CHANNEL_SYMBOL} declaration in {path}, found {len(matches)}"
+        )
+    lines[matches[0]] = (
+        f"{CHANNEL_SYMBOL}=y"
+        if channel == "testing"
+        else f"# {CHANNEL_SYMBOL} is not set"
+    )
+    temporary = path.with_name(f".{path.name}.kernel-channel-{os.getpid()}")
+    try:
+        temporary.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+        os.replace(temporary, path)
+    except OSError as exc:
+        temporary.unlink(missing_ok=True)
+        raise KernelSelectionError(f"cannot update kernel config {path}: {exc}") from exc
 
 
 def selected_series(target_makefile: str, channel: str) -> str:
@@ -177,6 +222,10 @@ def _build_parser() -> argparse.ArgumentParser:
     tree.add_argument("openwrt_root", type=pathlib.Path)
     tree.add_argument("target")
     tree.add_argument("config", type=pathlib.Path)
+
+    config = subparsers.add_parser("set-config-channel")
+    config.add_argument("config", type=pathlib.Path)
+    config.add_argument("channel", choices=tuple(CHANNEL_VARIABLES))
     return parser
 
 
@@ -189,6 +238,9 @@ def main(argv: Iterable[str] | None = None) -> int:
                     args.target_makefile.read_text(encoding="utf-8"), args.channel
                 )
             )
+            return 0
+        if args.command == "set-config-channel":
+            set_config_channel(args.config, args.channel)
             return 0
         selection = resolve_from_tree(
             args.openwrt_root, args.target, parse_config(args.config)

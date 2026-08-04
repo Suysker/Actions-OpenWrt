@@ -5,7 +5,7 @@
 - NanoPi R4S：RK3399、原生 Lean 启动链与网口 IRQ 策略、ARMv8 CRC/crypto、R8168、PWM fan、512 MiB LZ4 zram。
 - N5105 PVE：`x86-64-v2 + mtune=tremont`、squashfs combined EFI、VirtIO NET/SCSI、I225/igc 直通、4 队列与 irqbalance。
 
-两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、Lean testing kernel channel 和按所选内核系列动态解析的 BBRv3。仓库不写死 Linux point release：每轮从同一份 Lean master 分别解析目标的 channel/series/version/source hash，当前 R4S 与 x86 都选择 Linux 6.18。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP、PCRE2、F2FS tools、MTD 以及 Lean 缺失的官方 CycloneDX image generator 从同一轮锁定的 OpenWrt 官方 core 窄同步。`libsepol`、旧 `wol` CLI、current `small/tcping`、R4S ZRAM backend guard 和共享 image manifest 只保留经真实构建证明必要的窄语义兼容；系列相关规则只消费本轮 source-lock 的 selected kernel，不固定 point release，不降低全局编译器，也不覆盖整份 Lean 核心文件。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
+两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、可选择的 Lean stable/testing kernel channel 和按所选内核系列动态解析的 BBRv3。仓库不写死 Linux point release：手动构建默认选择 stable，也可以选择 testing；每轮从同一份 Lean master 分别解析目标的 channel/series/version/source hash，并把精确结果写进 source lock。2026-08-02 审计时，两个目标的 stable/testing 分别对应 Linux 6.12/6.18，这只是通道映射证据，不是永久版本常量。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP、PCRE2、F2FS tools、MTD 以及 Lean 缺失的官方 CycloneDX image generator 从同一轮锁定的 OpenWrt 官方 core 窄同步。`libsepol`、旧 `wol` CLI、current `small/tcping`、R4S ZRAM backend guard 和共享 image manifest 只保留经真实构建证明必要的窄语义兼容；系列相关规则只消费本轮 source-lock 的 selected kernel，不固定 point release，不降低全局编译器，也不覆盖整份 Lean 核心文件。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
 
 ## 构建模型
 
@@ -27,12 +27,13 @@
 
 1. 在 GitHub Actions 中选择 `OpenWrt Builder`。
 2. 点击 `Run workflow`。
-3. 任意分支选择 `profile=all` 都会构建两个平台并发布正式 Release；`r4s` 或 `x86-n5105-pve` 只构建对应 Actions artifact。
-4. 通常把四个版本输入留空，resolver 会选择：
+3. `kernel_channel` 选择 `stable`（默认，2026-08-02 审计对应 6.12）或 `testing`（当时对应 6.18）；实际 series、point release 和源码 hash 以该次 source lock 为准。
+4. 任意分支选择 `profile=all` 都会构建两个平台并发布正式 Release；`r4s` 或 `x86-n5105-pve` 只构建对应 Actions artifact。
+5. 通常把四个版本输入留空，resolver 会选择：
    - 仍受支持的最高 HAProxy LTS 分支最新 patch release；
    - 最新 AdGuardHome stable；
    - `Loyalsoldier/geoip` 的最新 `geoip.dat` 和 `Loyalsoldier/v2ray-rules-dat` 的最新 `geosite.dat`。
-5. 需要故障回滚时才填写精确 `haproxy_version`、`adguardhome_version`、`geoip_tag` 或 `geosite_tag`；resolver 仍会获取并验证真实 hash。
+6. 需要故障回滚时才填写精确 `haproxy_version`、`adguardhome_version`、`geoip_tag` 或 `geosite_tag`；resolver 仍会获取并验证真实 hash。
 
 默认分支发布使用 GitHub 内置 token。当非默认分支相对默认分支修改了 workflow，GitHub API 要求一个同时具有仓库与 workflow 写权限的凭据；workflow 只在 Release jobs 中使用仓库已配置的 `ACTIONS_TRIGGER_PAT`。
 
@@ -129,7 +130,7 @@ done < <(bash scripts/render-profile.sh list)
 ```sh
 profiles="$(bash scripts/render-profile.sh list | paste -sd, -)"
 bash scripts/resolve-source-lock.sh resolve \
-  "$profiles" /tmp/source-input/source-lock.json
+  "$profiles" /tmp/source-input/source-lock.json stable
 bash scripts/resolve-source-lock.sh materialize \
   /tmp/source-input/source-lock.json /tmp/source-input
 bash scripts/resolve-source-lock.sh digest /tmp/source-input/source-lock.json
@@ -148,7 +149,7 @@ Breaking changes：
 - `profiles/x86` 和 workflow 输入 `x86` 已改名为 `x86-n5105-pve`，没有兼容别名。
 - workflow 的 `profile` 输入由静态下拉框改为字符串：填 `all` 或任一 `profiles/<device>` 目录名；matrix、update checker、静态检查和 Release 聚合均自动发现目录，不再维护第二份 profile 名单。
 - source lock 当前为 schema 5，profile 内完整记录 selected kernel channel/target/series/version/source hash；Action 执行身份不属于 source lock，feeds/source overlays/kernel/BBRv3 等消费者统一通过 `source_lock.py` 解释。其他 schema 的 incoming lock 需重新运行 resolver，设备配置与 sysupgrade 行为不受影响。
-- 生产 profile 共同选择 Lean testing channel，但不永久写死 6.18 或任一 point release；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析与目标 series 匹配的最新可信 BBRv3 port、物化并锁定 commit/hash。缺少兼容 port 时构建明确失败，不静默降级。
+- 手动 workflow 通过 `kernel_channel` 共同选择 Lean stable/testing channel，默认 stable；本地 resolver 省略该参数时沿用 common seed 的 testing 默认，自动 update 直接消费自己生成并锁定的通道。任何路径都不永久写死 6.12、6.18 或 point release；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析与目标 series 匹配的最新可信 BBRv3 port、物化并锁定 commit/hash。缺少兼容 port 时构建明确失败，不静默降级。
 - GitHub 官方复用 Actions 直接使用 `actions/*@main`，按用户选择追踪最新默认分支；任何上游 runtime/行为不兼容会使门禁直接失败。
 - `diy-part2.sh` 不做可变 release 查询、服务策略修改或 `PKG_HASH:=skip`；它只应用 source lock 中已经验证的 metadata。PassWall 与 Kenzo 的窄修复均位于独立 feed patchset，由 patch applicator 在各自锁定 Git 工作树中 clean-apply、记录 hash，并在上游语义漂移时失败。
 - 正式 Release 必须由同一 source lock 下两台设备同时通过；任意分支的 `all` 都发布，单 profile 仅提供 Actions artifact。

@@ -18,6 +18,16 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 rendered="$tmpdir/rendered"
 bash "$repo_root/scripts/render-profile.sh" bundle "$profile" "$rendered"
+mapfile -t kernel_plan < <(
+  python3 "$repo_root/scripts/source_lock.py" \
+    profile-kernel-plan "$source_lock" "$profile"
+)
+[ "${#kernel_plan[@]}" -eq 10 ] || {
+  echo "::error::Could not read the locked kernel channel for $profile" >&2
+  exit 1
+}
+python3 "$repo_root/scripts/kernel_selection.py" set-config-channel \
+  "$rendered/config.seed" "${kernel_plan[0]}"
 
 image_pattern="$(PYTHONPATH="$repo_root/scripts" python3 - "$source_lock" "$profile" <<'PY'
 import pathlib

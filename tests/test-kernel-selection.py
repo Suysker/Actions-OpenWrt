@@ -47,6 +47,24 @@ def expect_error(callable_object, fragment: str) -> None:
 
 assert MODULE.selected_channel({"CONFIG_TESTING_KERNEL": "n"}) == "stable"
 assert MODULE.selected_channel({"CONFIG_TESTING_KERNEL": "y"}) == "testing"
+overridden = {"CONFIG_TESTING_KERNEL": "y"}
+MODULE.apply_channel_override(overridden, "stable")
+assert overridden["CONFIG_TESTING_KERNEL"] == "n"
+MODULE.apply_channel_override(overridden, "testing")
+assert overridden["CONFIG_TESTING_KERNEL"] == "y"
+expect_error(
+    lambda: MODULE.apply_channel_override(overridden, "future"),
+    "unsupported kernel channel",
+)
+workflow = (ROOT / ".github/workflows/openwrt-builder.yml").read_text(
+    encoding="utf-8"
+)
+assert "kernel_channel:" in workflow
+assert "type: choice\n        options:\n          - stable\n          - testing" in workflow
+assert 'requested_channel="${KERNEL_CHANNEL:-testing}"' in workflow
+assert '"$PROFILES" "$lock" "$requested_channel"' in workflow
+assert "scripts/kernel_selection.py set-config-channel" in workflow
+assert '"$profile_dir/config.seed" "${kernel_plan[0]}"' in workflow
 expect_error(lambda: MODULE.selected_channel({}), "explicitly own")
 expect_error(
     lambda: MODULE.selected_channel({"CONFIG_TESTING_KERNEL": "m"}),
@@ -78,6 +96,20 @@ assert testing.lock_fields() == {
 
 with tempfile.TemporaryDirectory() as raw_directory:
     root = pathlib.Path(raw_directory)
+    seed = root / "config.seed"
+    seed.write_text(
+        "CONFIG_DEVEL=y\nCONFIG_TESTING_KERNEL=y\n",
+        encoding="utf-8",
+    )
+    MODULE.set_config_channel(seed, "stable")
+    assert seed.read_text(encoding="utf-8") == (
+        "CONFIG_DEVEL=y\n# CONFIG_TESTING_KERNEL is not set\n"
+    )
+    MODULE.set_config_channel(seed, "testing")
+    assert seed.read_text(encoding="utf-8") == (
+        "CONFIG_DEVEL=y\nCONFIG_TESTING_KERNEL=y\n"
+    )
+
     (root / "target/linux/x86").mkdir(parents=True)
     (root / "include").mkdir()
     (root / "target/linux/x86/Makefile").write_text(TARGET, encoding="utf-8")

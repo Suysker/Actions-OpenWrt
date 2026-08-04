@@ -23,6 +23,7 @@ from bbr3_module_version import BBRModuleVersionError, validate_policy_compatibi
 from kernel_patch import KernelPatchError, inspect_patch
 from kernel_selection import (
     KernelSelectionError,
+    apply_channel_override,
     exact_version_and_hash,
     selected_channel,
     selected_series,
@@ -1523,11 +1524,20 @@ def validate_action_refs(workflow_paths: Iterable[pathlib.Path]) -> None:
     collect_action_refs(workflow_paths)
 
 
-def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
+def resolve(
+    repo_root: pathlib.Path,
+    profiles: list[str],
+    kernel_channel: str | None = None,
+) -> dict[str, Any]:
     if not profiles:
         raise ResolutionError("at least one profile is required")
     if len(profiles) != len(set(profiles)):
         raise ResolutionError("profile list contains duplicates")
+    if kernel_channel is not None:
+        try:
+            apply_channel_override({}, kernel_channel)
+        except KernelSelectionError as exc:
+            raise ResolutionError(str(exc)) from exc
     validate_action_refs(sorted((repo_root / ".github/workflows").glob("*.yml")))
 
     geodata_contracts = load_geodata_contracts(repo_root)
@@ -1550,7 +1560,11 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
                     profile, temporary_root / f"{profile}.config"
                 )
                 rendered_configs[profile] = parse_config(config_path)
-    except ProfileModelError as exc:
+                if kernel_channel is not None:
+                    apply_channel_override(
+                        rendered_configs[profile], kernel_channel
+                    )
+    except (ProfileModelError, KernelSelectionError) as exc:
         raise ResolutionError(str(exc)) from exc
 
     default_feeds_text = download_text(
@@ -1608,8 +1622,8 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
             )
         )
         try:
-            kernel_channel = selected_channel(rendered_configs[profile])
-            kernel_series = selected_series(makefile, kernel_channel)
+            selected_kernel_channel = selected_channel(rendered_configs[profile])
+            kernel_series = selected_series(makefile, selected_kernel_channel)
         except KernelSelectionError as exc:
             raise ResolutionError(f"profile {profile}: {exc}") from exc
         if kernel_series not in kernel_versions:
@@ -1633,7 +1647,7 @@ def resolve(repo_root: pathlib.Path, profiles: list[str]) -> dict[str, Any]:
         profile_kernel_series[profile] = kernel_series
         profile_entries[profile] = {
             "kernel_target": target,
-            "kernel_channel": kernel_channel,
+            "kernel_channel": selected_kernel_channel,
             "kernel_series": kernel_series,
             "kernel_version": kernel_versions[kernel_series]["version"],
             "kernel_source_sha256": kernel_versions[kernel_series]["source_sha256"],
@@ -1708,7 +1722,7 @@ def parse_profiles(raw: str) -> list[str]:
 def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print(
-            "Usage: source_lock.py resolve <profiles> <output> | "
+            "Usage: source_lock.py resolve <profiles> <output> [kernel-channel] | "
             "materialize <lock> <output-dir> | digest <lock> | "
             "compare <old> <new> | list-feeds <lock> | "
             "render-feeds <lock> <output> | overlay-manifest <lock> | "
@@ -1724,8 +1738,9 @@ def main(argv: list[str]) -> int:
         return 2
     command = argv[1]
     repo_root = pathlib.Path(__file__).resolve().parent.parent
-    if command == "resolve" and len(argv) == 4:
-        lock = resolve(repo_root, parse_profiles(argv[2]))
+    if command == "resolve" and len(argv) in {4, 5}:
+        channel = argv[4] if len(argv) == 5 else None
+        lock = resolve(repo_root, parse_profiles(argv[2]), channel)
         output = pathlib.Path(argv[3])
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(

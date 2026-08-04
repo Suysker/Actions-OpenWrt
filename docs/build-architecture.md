@@ -34,7 +34,7 @@
 - 跟踪 Lean `master`，不切换到固定稳定分支。
 - 使用 firewall3/iptables，不引入 firewall4/nftables 平行栈。
 - `CONFIG_GCC_USE_VERSION_15=y` 是明确的工具链代际合同。
-- common 只声明 selected kernel channel，不永久写死 Linux point release；目标配置选择 Lean testing channel，当前由 Lean 动态解析为 Linux 6.18。
+- common 只声明本地与自动 resolver 的 testing 回退值；手动 workflow 显式选择 stable/testing（默认 stable），且不永久写死 Linux point release。
 - BBRv3 是内核能力，运行时名称保持 `bbr`，package 名保持 Lean 的 `kmod-tcp-bbr`。
 - GitHub 官方 Actions 使用 `actions/*@main`，每次运行直接使用其最新默认分支。
 - HAProxy LTS、AdGuardHome stable、GeoIP、Geosite、feeds、BBRv3 port 都按“每轮解析最新、轮内冻结”处理。
@@ -139,7 +139,7 @@ N5105 profile 的设备合同是运行在 PVE 中的专用 OpenWrt guest，而�
 
 | 层 | 最终方案 |
 |---|---|
-| Common | Lean master；testing selected-kernel channel；firewall3/iptables；GCC15；共享精简 package 闭包；OpenSSL ASM/speed、zlib speed；BBRv3 + `fq`；software flow offload；签名、SBOM、source lock 与 provenance |
+| Common | Lean master；可选择的 stable/testing kernel channel；firewall3/iptables；GCC15；共享精简 package 闭包；OpenSSL ASM/speed、zlib speed；BBRv3 + `fq`；software flow offload；签名、SBOM、source lock 与 provenance |
 | R4S | Lean 原生 Rockchip/R4S target；ARMv8 CRC/crypto + A72/A53 tune；r8168；native CPU4/5 IRQ；packet steering；schedutil/PWM fan；512 MiB LZ4 zram；无 irqbalance、RTL8152、DRM/Panfrost |
 | N5105 PVE | x86_64 generic EFI squashfs；x86-64-v2 + Tremont tune；VirtIO built-in + I225/igc；4 queues + irqbalance、RPS off；无 autocore、zram、microcode、USB/GPU/音频 |
 | Actions | prepare 一次解析 source lock；双 profile matrix；四个高价值门禁；失败定向诊断；聚合、draft、回下载复验、公开、保留六个 Release |
@@ -157,7 +157,9 @@ N5105 profile 的设备合同是运行在 PVE 中的专用 OpenWrt guest，而�
 | 设备环境与目标 | 对应层的 `profile.env` |
 | rootfs 默认 | 对应层的 `files/` |
 | 锁定上游源码语义 | 对应层的 `semantics.json` |
-| selected kernel channel | `profiles/common/config.seed` 中的 `CONFIG_TESTING_KERNEL` |
+| 手动 kernel channel 选择 | workflow_dispatch 的 `kernel_channel`（stable/testing，默认 stable） |
+| 本地/自动 resolver 回退 channel | `profiles/common/config.seed` 中的 `CONFIG_TESTING_KERNEL` |
+| 当轮最终 kernel channel | `source-lock.json` 各 profile 的 `kernel_channel` |
 | 自定义 feeds | `feeds.custom.conf` |
 | package provider | `profiles/common/providers.tsv` |
 | Geo 数据角色与可信来源 | `profiles/common/geodata-sources.json` |
@@ -304,7 +306,7 @@ render-profile.sh bundle <profile> <output-directory>
 render-profile.sh env|config|required|forbidden <profile> [output]
 render-profile.sh files <profile> <output-directory>
 
-resolve-source-lock.sh resolve <profile-list> <output-json>
+resolve-source-lock.sh resolve <profile-list> <output-json> [stable|testing]
 resolve-source-lock.sh materialize <source-lock.json> <output-directory>
 resolve-source-lock.sh digest <source-lock.json>
 resolve-source-lock.sh compare <old-json> <new-json>
@@ -433,15 +435,15 @@ GitHub Actions 不写入 source lock。Action 在 workflow 开始时已由 GitHu
 - package metadata 不允许 `PKG_HASH:=skip` 或 `releases/latest/download`。
 - `make download -j8` 是 OpenWrt 全部 source 的统一 hash 门禁。
 
-### 6.4 selected kernel channel 与 Linux 6.18
+### 6.4 stable/testing selected kernel channel
 
-selected kernel 只有一条解析路径：
+selected kernel 只有一条带明确优先级的解析路径：
 
-1. `profiles/common/config.seed` 唯一表达 `CONFIG_TESTING_KERNEL`；两个设备 seed 不重复拥有该 symbol。
-2. `kernel_selection.py` 从渲染结果确定 `stable` 或 `testing`。
-3. resolver 从本轮锁定 Lean 的 `target/linux/<target>/Makefile` 分别读取 `KERNEL_PATCHVER` 或 `KERNEL_TESTING_PATCHVER`，再从 `include/kernel-<series>` 解析精确 version/hash。
-4. 同一轮两个 profile 由 common 选择同一 channel；各 target 独立解析该 channel 对应的 series。当前 Rockchip/x86 都得到 6.18；未来若 Lean 为两个 target 提供不同 testing series，source-lock 分别记录并为每个 series 解析 BBRv3 port，不要求为了表面对齐而降级其中一个平台。
-5. build 在最终 `.config`、target metadata、source-lock 和 provenance 四处复核同一个 selection；任何一处不同立即失败。
+1. 手动 workflow 的 `kernel_channel` 显式选择 `stable` 或 `testing`，默认 stable；本地调用省略参数时才沿用 common seed 的 testing 回退值。两个设备 seed 都不重复拥有该 symbol。
+2. resolver 通过 `kernel_selection.py` 将显式选择应用到两个渲染结果；非法值在解析前失败。
+3. resolver 从本轮锁定 Lean 的 `target/linux/<target>/Makefile` 分别读取 `KERNEL_PATCHVER` 或 `KERNEL_TESTING_PATCHVER`，再从 `include/kernel-<series>` 解析精确 version/hash，并把最终选择写入 source lock。
+4. build 不再重新猜测通道，而是依据 source lock 原子改写渲染后的 `CONFIG_TESTING_KERNEL`，再执行 defconfig。各 target 独立解析同一 channel 对应的 series；若 Lean 为两个 target 提供不同 series，source lock 分别记录并为每个 series 解析 BBRv3 port。
+5. build 在最终 `.config`、target metadata、source lock 和 provenance 四处复核同一个 selection；产物 verifier 会再次按 lock 重建期望 seed，任何一处不同立即失败。
 
 2026-08-02 审计时，Lean `f9dcc54b24e3f7fc7e8cd6db05f9e545eff67486` 为 Rockchip/x86 同时提供 stable 6.12、testing 6.18，精确 testing version 为 6.18.38；Linux 6.18 已是 kernel.org longterm。它们是可行性证据而不是永久构建输入，后续仍由 Lean master 动态解析。即使 sbwml 已更新到更高的 6.18 point release，本项目也不越过 Lean target 独立改 kernel hash。
 
@@ -453,7 +455,7 @@ Lean 6.18 patch stack 当前还包含 PPP TX scatter-gather、PPPoE GRO/GSO、R4
 
 当前实现已经完成以下收敛，不再保留旧路径：
 
-- common 唯一声明 `CONFIG_TESTING_KERNEL=y` 与 MPTCP/MPTCP IPv6 负选择；两个设备 seed 不再重复拥有 kernel channel。
+- common 唯一声明本地/自动 resolver 的 `CONFIG_TESTING_KERNEL=y` 回退值与 MPTCP/MPTCP IPv6 负选择；手动选择由 source lock 传递，两个设备 seed 不重复拥有 kernel channel。
 - `source_lock.py`、`profile_contract.py` 与 patch applicator 统一消费 `kernel_selection.py`；生产代码只有该模块解释 `KERNEL_PATCHVER`/`KERNEL_TESTING_PATCHVER`。
 - BBRv3 resolver、materializer 与 clean-apply checker 统一消费 `kernel_patch.py`，同时接受真实 Git/quilt 格式并拒绝危险或不完整路径。
 - source-lock schema 5 在 profile entry 中完整记录 channel/target/series/version/source hash；resolver、validator、digest、summary、applicator、provenance、firmware/Release verifier 与 fixtures 已同步升级，schema 4 明确拒绝。
@@ -479,7 +481,7 @@ renderer 按以下规则合并：
 - required config 自动派生 `<symbol>=y`。
 - exact-forbidden package 自动派生对应负选择。
 - `config.seed` 只保存 target、CPU flags、数值、字符串和不能由 package 合同表达的选项。
-- common 拥有两个设备共同的 `CONFIG_TESTING_KERNEL=y` 以及 MPTCP 负选择；设备 seed 不重复声明 kernel channel。
+- common 拥有两个设备共同的 kernel channel 回退值以及 MPTCP 负选择；手动 workflow 的选择在渲染后由 source lock 覆盖，设备 seed 不重复声明 kernel channel。
 
 首次 `make defconfig` 后，normalizer 只处理 exact-forbidden 父应用遗留的已选子项；第二次 `defconfig` 后，`profile_contract.py` 一次性验证：
 
@@ -628,7 +630,7 @@ AdGuardHome 保持 package 的 `--no-check-update`：最新版本由 Actions 生
 
 common 的内核/构建策略同样遵循精简原则：
 
-- `CONFIG_TESTING_KERNEL=y` 只选择 Lean 的 testing channel；精确 series/version/hash 仍由当轮 lock 决定。
+- `CONFIG_TESTING_KERNEL` 只表达 Lean 的 stable/testing channel：手动 workflow 显式选择并写入 lock，本地/自动 resolver 才使用 common 的 testing 回退值；精确 series/version/hash 仍由当轮 lock 决定。
 - `CONFIG_KERNEL_MPTCP` 与 `CONFIG_KERNEL_MPTCP_IPV6` 显式关闭。MPTCP 不加速普通 NAT 转发，也不是当前 PassWall 运行合同。
 - 继续使用 `-O2`、GCC15、OpenSSL ASM/runtime dispatch；生产路径不启用全局 LTO、GC sections、Mold 或 Clang ThinLTO。
 - 新的编译器/链接器选项必须分别证明运行性能、镜像体积或构建耗时收益，不能混称为“固件优化”。
@@ -1278,7 +1280,7 @@ fixture 必须覆盖：
 - Git format-patch 与 OpenWrt/quilt patch 的等价 touched-path 解析，以及绝对路径、`..`、NUL、空 patch、不配对 header 的拒绝。
 - BBRv3 module-version 状态机、selected 6.18 directory provider 与 ELF metadata。
 - kernel semantic 的 `backport`、`upstream`、missing/partial 三种状态，至少覆盖 6.12 backport 与 6.18 prepared-source 两条 igc VLAN 路径。
-- common 的 testing channel 与 MPTCP 负选择不能在 defconfig 后漂移。
+- source lock 选择的 stable/testing channel 与 common 的 MPTCP 负选择不能在 defconfig 后漂移。
 - firmware gzip/fwtool 容器。
 - build provenance、固件 verifier、Release assemble 与 Release reconstruct verifier 的端到端闭环。
 
@@ -1294,7 +1296,7 @@ bash scripts/resolve-source-lock.sh digest \
   /tmp/source-input/source-lock.json
 ```
 
-该步骤访问真实上游并验证受控 release、selected channel/series/version/hash、两 profile 同代和对应 BBRv3 port。Linux 6.18 首次迁移必须在 resolver 输出中同时看到 R4S/x86 的 `kernel_channel=testing`、同一 `kernel_series=6.18`，精确 point release 由当轮 Lean 决定。
+该步骤访问真实上游并验证受控 release、selected channel/series/version/hash、两 profile 同代和对应 BBRv3 port。命令末尾可显式传 `stable` 或 `testing`；省略时使用 common seed 回退值。2026-08-02 审计中，testing 输出为 R4S/x86 的 `kernel_series=6.18`，精确 point release 仍由当轮 Lean 决定。
 
 ### 17.3 最终配置与完整构建
 
@@ -1322,7 +1324,7 @@ make -j"$BUILD_JOBS" world
 - required package/config 全部存在，forbidden 和父应用残留子选项全部关闭。
 - package provider 与 `providers.tsv` 一致，当前 feeds/source overlays 全部来自 source lock。
 - firewall3/iptables、GCC15、OPKG/签名/TLS、SBOM、OpenSSL/zlib 优化成立，两个 squashfs profile 的 `mkf2fs` 启动依赖进入最终 manifest；LTO/GC/Mold、MPTCP、ALL_KMODS/ALL_NONSHARED 关闭。
-- 两个平台都使用 common testing channel，实际 target/series/version/hash 与 lock 完全一致。
+- 两个平台都使用 source lock 选择的同一 stable/testing channel，实际 target/series/version/hash 与 lock 完全一致。
 - R4S target、A72+A53 flags、LZ4 zram backend/default/library、native interface/IRQ、schedutil、crypto/CRC 和 OPP 语义存在。
 - N5105 target、x86-64-v2/Tremont flags、VirtIO built-in、igc、EEE disable、VLAN upstream/backport 等价语义存在。
 - common prepared source 具备 PPP TX scatter-gather 与 PPPoE IPv4/IPv6 GRO/GSO 语义。

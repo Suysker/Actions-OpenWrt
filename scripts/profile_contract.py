@@ -16,6 +16,7 @@ from kernel_selection import (
     KernelSelectionError,
     resolve_from_tree,
     selected_channel,
+    set_config_channel,
 )
 from profile_model import (
     ProfileModelError,
@@ -106,6 +107,22 @@ def run(args: argparse.Namespace) -> tuple[list[str], list[str]]:
         rendered = repository.render_bundle(
             args.profile, pathlib.Path(temporary) / "rendered"
         )
+        lock = None
+        if args.source_lock is not None:
+            lock = source_lock.load_lock(args.source_lock)
+            locked_profiles = lock.get("profiles")
+            locked_profile = (
+                locked_profiles.get(args.profile)
+                if isinstance(locked_profiles, dict)
+                else None
+            )
+            if not isinstance(locked_profile, dict):
+                raise ProfileModelError(
+                    f"source-lock does not contain profile {args.profile}"
+                )
+            set_config_channel(
+                rendered.config, str(locked_profile.get("kernel_channel", ""))
+            )
         config = parse_config(rendered.config)
         environment = rendered.environment
 
@@ -186,10 +203,9 @@ def run(args: argparse.Namespace) -> tuple[list[str], list[str]]:
         checks.append(
             f"selected kernel {selection.channel} Linux {selection.version}"
         )
-        if args.source_lock is None:
+        if lock is None:
             problems.append("source lock is required with an OpenWrt tree")
         else:
-            lock = source_lock.load_lock(args.source_lock)
             lock_problems = source_lock_problems(
                 lock, args.profile, selection
             )

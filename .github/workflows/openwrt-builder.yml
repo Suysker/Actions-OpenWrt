@@ -8,6 +8,14 @@ on:
         required: true
         default: all
         type: string
+      kernel_channel:
+        description: Lean kernel channel; stable is currently 6.12, testing is currently 6.18
+        required: true
+        default: stable
+        type: choice
+        options:
+          - stable
+          - testing
       haproxy_version:
         description: Optional exact HAProxy LTS rollback version
         required: false
@@ -90,6 +98,7 @@ jobs:
           PROFILES: ${{ steps.select.outputs.profiles }}
           INCOMING_LOCK_B64: ${{ github.event.client_payload.source_lock_b64 }}
           EXPECTED_DIGEST: ${{ github.event.client_payload.source_digest }}
+          KERNEL_CHANNEL: ${{ inputs.kernel_channel }}
           HAPROXY_VERSION: ${{ inputs.haproxy_version }}
           ADGUARDHOME_VERSION: ${{ inputs.adguardhome_version }}
           GEOIP_TAG: ${{ inputs.geoip_tag }}
@@ -110,7 +119,9 @@ jobs:
               exit 1
             }
           else
-            bash scripts/resolve-source-lock.sh resolve "$PROFILES" "$lock"
+            requested_channel="${KERNEL_CHANNEL:-testing}"
+            bash scripts/resolve-source-lock.sh resolve \
+              "$PROFILES" "$lock" "$requested_channel"
           fi
 
           bash scripts/resolve-source-lock.sh materialize "$lock" "$lock_dir"
@@ -123,6 +134,7 @@ jobs:
           fi
           echo "source_digest=$digest_hex" >> "$GITHUB_OUTPUT"
           echo "Source lock: $digest"
+          python3 scripts/source_lock.py summary "$lock" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Preflight the exact BBRv3 kernel ports
         shell: bash
@@ -239,6 +251,14 @@ jobs:
           set -euo pipefail
           profile_dir="$GITHUB_WORKSPACE/profile-input"
           bash scripts/render-profile.sh bundle "$PROFILE" "$profile_dir"
+          mapfile -t kernel_plan < <(python3 scripts/source_lock.py \
+            profile-kernel-plan "$SOURCE_LOCK" "$PROFILE")
+          [ "${#kernel_plan[@]}" -eq 10 ] || {
+            echo "::error::Could not read the locked kernel channel for $PROFILE"
+            exit 1
+          }
+          python3 scripts/kernel_selection.py set-config-channel \
+            "$profile_dir/config.seed" "${kernel_plan[0]}"
 
       - name: Checkout locked feeds and select providers
         shell: bash

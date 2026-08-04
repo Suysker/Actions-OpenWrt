@@ -18,6 +18,7 @@ mkdir -p \
 printf 'fixture-package 1\n' > "$target/fixture.manifest"
 cat > "$openwrt/.config" <<'EOF'
 CONFIG_TARGET_OPTIMIZATION="-O2"
+# CONFIG_TESTING_KERNEL is not set
 CONFIG_KEEP=y
 CONFIG_PACKAGE_fixture-package=y
 EOF
@@ -165,6 +166,7 @@ profiles="$temporary/profiles"
 mkdir -p "$profiles/common/files" "$profiles/fixture/files"
 cat > "$profiles/common/config.seed" <<'EOF'
 CONFIG_TARGET_OPTIMIZATION="-O2"
+CONFIG_TESTING_KERNEL=y
 EOF
 cat > "$profiles/common/required-packages.txt" <<'EOF'
 package:fixture-package
