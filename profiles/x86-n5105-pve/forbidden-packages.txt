@@ -4,7 +4,6 @@ exact:zram-swap
 exact:kmod-zram
 regex:^(amd64|intel)-microcode$
 exact:autosamba
-exact:e2fsprogs
 exact:partx-utils
 exact:kmod-fs-f2fs
 exact:lm-sensors

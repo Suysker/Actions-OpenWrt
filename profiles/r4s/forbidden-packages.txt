@@ -1,6 +1,5 @@
 # NanoPi R4S hardware/runtime blacklist.
 exact:irqbalance
-exact:e2fsprogs
 exact:partx-utils
 exact:usb-modeswitch
 

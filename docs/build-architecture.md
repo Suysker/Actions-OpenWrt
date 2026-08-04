@@ -580,7 +580,7 @@ selector 只删除合同明确列出的同名源码冲突目录，随后从 sour
 
 | 模块 | 职责与复用边界 |
 |---|---|
-| `profiles/common/required-packages.txt` | 只声明产品需要 `mkf2fs`，不理解它由哪个 source recipe 提供 |
+| `profiles/common/required-packages.txt` | 声明产品保留 `mkf2fs`；同时独立要求当前较小 rootfs_data 会实际调用的 `e2fsprogs` |
 | `profiles/common/source-overlays.json` | 把锁定的 OpenWrt 官方 core 中 `package/utils/f2fs-tools` 映射到同名 Lean 路径；它是 overlay 路径的唯一事实源 |
 | `scripts/source_lock.py` | 每轮解析一次官方 core 最新 commit，并让两个 profile 共用同一不可变 lock |
 | `scripts/sync-source-overlays.sh` | 只消费 lock 和声明式 mapping，原子同步 canonical 子树，不维护 package 版本或补丁枚举 |
@@ -625,7 +625,7 @@ AdGuardHome 保持 package 的 `--no-check-update`：最新版本由 Actions 生
 - MosDNS、SmartDNS、AdGuardHome。
 - ddns-go、nlbwmon、ARP 绑定、自动重启、内存释放、ttyd、TurboACC、WOL。
 - CoreMark、htop、lsof、SFTP server。
-- squashfs block-root 首次启动所需的 `mkf2fs`。
+- squashfs block-root 首次启动所需的 `e2fsprogs` 与 `mkf2fs`，覆盖 Lean fstools 的 ext4/F2FS 两条格式化路径。
 - signed packages、signature check、TLS certificate check、CycloneDX SBOM。
 
 不在产品范围内的应用和替代栈由 `forbidden-packages.txt` 统一约束。精简通过 Kconfig 与最终 manifest 完成，不删除无关源码目录。
@@ -650,7 +650,7 @@ common 的内核/构建策略同样遵循精简原则：
 | DNS | MosDNS、SmartDNS、AdGuardHome；只保证 package/provider/接口，不固化用户端口链 |
 | 运维 | ddns-go、nlbwmon、ARP bind、autoreboot、ramfree、ttyd、TurboACC、WOL |
 | 工具 | CoreMark、htop、lsof、OpenSSH SFTP server |
-| 启动基础 | `mkf2fs`；仅负责首次创建持久 F2FS overlay，不扩展为磁盘管理功能 |
+| 启动基础 | `e2fsprogs` + `mkf2fs`；仅负责首次创建持久 ext4/F2FS overlay，不扩展为分区或自动挂载功能 |
 | 内核网络 | `kmod-tun`、`kmod-tcp-bbr`、`kmod-sched`、`kmod-ipt-fullconenat` |
 | 交付 | build log、config/image metadata、CycloneDX SBOM、签名与 TLS certificate check |
 
@@ -797,27 +797,27 @@ common 只拥有协议与地址，R4S 的物理接口映射由 Lean target 拥�
 - sysupgrade 保留 `/etc/config` 后尊重用户修改；项目不通过源码 patch 强制覆盖运行值。
 - 全新安装保持防火墙和管理面安全基线，用户首次登录后自行设置 root 密码。
 
-### 10.4 `mkf2fs` 与 IPv6-PD 的实现设计
+### 10.4 overlay formatter 与 IPv6-PD 的实现设计
 
 本节是这两项启动能力的实现设计，继续复用现有 profile 模型，不增加平行脚本或新的事实源：
 
 | 模块 | 唯一职责 | 复用接口 |
 |---|---|---|
-| `profiles/common/required-packages.txt` | 声明两个当前 squashfs/block-root profile 都需要 `mkf2fs` | `ProfileRepository` 自动合并 common/device required，渲染 `CONFIG_PACKAGE_mkf2fs=y` |
+| `profiles/common/required-packages.txt` | 两个 squashfs/block-root profile 同时保留 `e2fsprogs` 与 `mkf2fs` | `ProfileRepository` 自动合并 common/device required，渲染两个 formatter package |
 | `profiles/common/source-overlays.json` | 从本轮锁定的 OpenWrt 官方 core 提供 canonical `f2fs-tools` recipe | 复用统一 source lock 与 overlay 同步器，不保存版本/hash 或私有兼容 patch |
 | 设备 `forbidden-packages.txt` | 只保留真正的设备黑名单，不再否定 common 的启动依赖 | 现有 required/forbidden 冲突检查 |
 | `profiles/common/files/etc/uci-defaults/90-common-network` | 网络 UCI 值的唯一事实源，一次性写入 WAN6 DHCPv6-PD 与 LAN RA/DHCPv6 server | OpenWrt `uci batch`；renderer 只复制并拒绝路径冲突，shell 语法检查不复述字段 |
 | `profiles/*/semantics.json` | 只描述仓库外、会随 Lean 漂移的 locked-source 语义 | 现有 `profile_semantics.py`；禁止镜像 rootfs 文件内容 |
-| 最终 package/firmware contract | 证明 `mkf2fs` 经过 `defconfig` 且进入 manifest | 现有 `profile_contract.py` 与 firmware verifier |
+| 最终 package/firmware contract | 证明两个声明的 formatter package 经过 `defconfig` 且进入 manifest | 现有 `profile_contract.py` 与 firmware verifier |
 
 ```mermaid
 flowchart LR
-    SIZE["squashfs rootfs-part > 100 MiB"] --> FST["fstools rootdisk initialization"]
-    REQ["common required: mkf2fs"] --> RENDER["shared ProfileRepository"]
-    RENDER --> CONFIG["CONFIG_PACKAGE_mkf2fs=y"]
+    SIZE["squashfs rootfs_data size"] --> FST["Lean fstools selects ext4/F2FS"]
+    REQ["common required: e2fsprogs + mkf2fs"] --> RENDER["shared ProfileRepository"]
+    RENDER --> CONFIG["both formatter packages"]
     CONFIG --> IMAGE["R4S + N5105 firmware manifest"]
     IMAGE --> FST
-    FST --> PERSIST["persistent F2FS overlay"]
+    FST --> PERSIST["persistent overlay"]
 
     NET["90-common-network"] --> WAN["WAN6: DHCPv6-PD"]
     WAN --> NETIFD["netifd: assign LAN /64"]
@@ -825,7 +825,7 @@ flowchart LR
     LAN --> ODHCPD["odhcpd: publish delegated prefix"]
 ```
 
-命名继续沿用 OpenWrt UCI 域名：`network.lan`、`network.wan`、`network.wan6`、`dhcp.lan`、`dhcp.wan`；不发明设备别名或 helper abstraction。网络值只在 `90-common-network` 修改，`semantics.json`、测试和 checker 都不得维护第二份逐行清单。`mkf2fs` 是首次启动依赖，不扩展为 `block-mount`、完整磁盘管理套件或运行时存储服务。
+命名继续沿用 OpenWrt UCI 域名：`network.lan`、`network.wan`、`network.wan6`、`dhcp.lan`、`dhcp.wan`；不发明设备别名或 helper abstraction。网络值只在 `90-common-network` 修改，`semantics.json`、测试和 checker 都不得维护第二份逐行清单。两个 formatter 都只服务首次启动，不扩展为 `block-mount`、分区管理或运行时存储服务。
 
 ## 11. R4S 专属优化
 
@@ -867,7 +867,7 @@ CONFIG_TARGET_ROOTFS_PARTSIZE=944
 IMAGE_PATTERN=*friendlyarm_nanopi-r4s*squashfs*sysupgrade.img.gz
 ```
 
-944 MiB rootfs partition 为 overlay 留出空间，不代表允许把额外应用塞进 manifest。该空间超过 `fstools` 的 100 MiB F2FS 阈值，因此 common 必须保留 `mkf2fs`，供首次启动格式化 loop-backed `rootfs_data`；镜像仍使用 Lean target 当前的 squashfs/image pipeline，不维护一份 R4S 私有 image Makefile。
+944 MiB rootfs partition 为 overlay 留出空间，不代表允许把额外应用塞进 manifest。当前 Lean 把 F2FS 阈值提高到 1 GiB，因此该 profile 首次启动实际需要 `e2fsprogs` 提供 `mkfs.ext4`；`mkf2fs` 继续保留以兼容后续分区或 fstools 策略变化。镜像仍使用 Lean target 当前的 squashfs/image pipeline，不维护一份 R4S 私有 image Makefile。
 
 selected kernel 由 common testing channel 和本轮 Lean Rockchip metadata 共同决定。设备 seed 不写 `CONFIG_LINUX_6_18` 或 point release，source lock 记录真实 series/version/hash。若 Lean testing channel 前进，R4S 必须同时具备 target config/patch 语义和对应 BBRv3 port，否则整轮停止。
 
@@ -882,7 +882,7 @@ CONFIG_KERNEL_ZRAM_BACKEND_LZ4=y
 CONFIG_KERNEL_ZRAM_DEF_COMP_LZ4=y
 ```
 
-common required 合同提供启动必需的 `mkf2fs`；设备 required 合同包含 `autocore-arm`、`kmod-r8168`、`luci-app-cpufreq`、`kmod-hwmon-pwmfan`、`kmod-zram`、`kmod-lib-lz4` 与 `zram-swap`。LZ4 backend/default 两个 Kconfig 和真实 library package 缺一不可；selected-kernel guard 只修声明可见性，不替换整份 kernel module 定义。
+common required 合同提供启动所需的 `e2fsprogs` 与 `mkf2fs`；设备 required 合同包含 `autocore-arm`、`kmod-r8168`、`luci-app-cpufreq`、`kmod-hwmon-pwmfan`、`kmod-zram`、`kmod-lib-lz4` 与 `zram-swap`。LZ4 backend/default 两个 Kconfig 和真实 library package 缺一不可；selected-kernel guard 只修声明可见性，不替换整份 kernel module 定义。
 
 `autocore-arm` 仅作为 LuCI 状态/端口信息来源。R4S 的 CPU governor、IRQ 与 packet steering 已由 Lean target 处理，不把它误认为第二个调优 daemon。
 
@@ -892,7 +892,7 @@ R4S 明确排除：
 - `irqbalance`，避免重新分配 Lean 已放到 CPU4/CPU5 的板载网口 IRQ。
 - RTL8152/USB-net、USB mode switch、UAS、自动挂载和额外存储工具。
 - DRM/Panfrost、GPU firmware、音频、显示。
-- `e2fsprogs`、`partx-utils` 等非启动必需的分区维护工具；`mkf2fs` 不在此列。
+- `partx-utils` 等非启动必需的分区维护工具；`e2fsprogs` 与 `mkf2fs` 是 overlay formatter，不在此列。
 
 Lean Rockchip target 可能把基础 USB host/storage 能力 built-in。精简合同阻止外接 NIC、UAS、自动挂载、文件系统和存储服务 package，不为删除一个 target 内建且无用户态服务的能力维护整套私有 kernel config。
 
@@ -969,7 +969,7 @@ IMAGE_PATTERN=*x86-64-generic-squashfs-combined-efi.img.gz
 
 不为同一 guest 同时生成 ext4、legacy GRUB、ISO 或五种虚拟磁盘格式；减少的不是可启动性，而是没有实际消费者的产物和驱动组合。
 
-365 MiB squashfs rootfs partition 同样超过 `fstools` 的 F2FS 阈值，因此 N5105 与 R4S 复用 common 的 `mkf2fs` 启动依赖。x86 selected kernel 已 built-in F2FS；这不要求重新引入 `kmod-fs-f2fs`、`block-mount` 或完整磁盘工具集。
+365 MiB squashfs rootfs partition 在当前 Lean 的 1 GiB F2FS 阈值以下，因此 N5105 与 R4S 都实际使用 common 的 `e2fsprogs` 创建 ext4 overlay，同时保留 `mkf2fs` 作为未来兼容。x86 selected kernel 已 built-in F2FS；这不要求重新引入 `kmod-fs-f2fs`、`block-mount` 或完整磁盘工具集。
 
 ```text
 CONFIG_TARGET_OPTIMIZATION="-O2 -pipe -march=x86-64-v2 -mtune=tremont"
@@ -1325,7 +1325,7 @@ make -j"$BUILD_JOBS" world
 - seed 的正/负选择经过两次 defconfig 没有漂移。
 - required package/config 全部存在，forbidden 和父应用残留子选项全部关闭。
 - package provider 与 `providers.tsv` 一致，当前 feeds/source overlays 全部来自 source lock。
-- firewall3/iptables、GCC15、OPKG/签名/TLS、SBOM、OpenSSL/zlib 优化成立，两个 squashfs profile 的 `mkf2fs` 启动依赖进入最终 manifest；LTO/GC/Mold、MPTCP、ALL_KMODS/ALL_NONSHARED 关闭。
+- firewall3/iptables、GCC15、OPKG/签名/TLS、SBOM、OpenSSL/zlib 优化成立，两个 squashfs profile 的 `e2fsprogs` 与 `mkf2fs` 启动依赖进入最终 manifest；LTO/GC/Mold、MPTCP、ALL_KMODS/ALL_NONSHARED 关闭。
 - 两个平台都使用 source lock 选择的同一 stable/testing channel，实际 target/series/version/hash 与 lock 完全一致。
 - R4S target、A72+A53 flags、LZ4 zram backend/default/library、native interface/IRQ、schedutil、crypto/CRC 和 OPP 语义存在。
 - N5105 target、x86-64-v2/Tremont flags、VirtIO built-in、igc、EEE disable、VLAN upstream/backport 等价语义存在。

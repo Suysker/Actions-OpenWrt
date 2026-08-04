@@ -43,6 +43,7 @@ package:ppp-mod-pppoe
 package:odhcp6c
 package:odhcpd-ipv6only
 package:ipv6helper
+package:e2fsprogs
 package:mkf2fs
 package:miniupnpd-iptables
 package:ethtool
