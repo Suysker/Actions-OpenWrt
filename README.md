@@ -80,7 +80,7 @@ feed 索引覆盖全部锁定源，但安装阶段只提交当前 profile 的 re
 
 AdGuardHome、MosDNS、SmartDNS、dnsmasq-full 和 PassWall 都会被编译，但 DNS 端口、上游、缓存、规则、节点、订阅和凭据是用户常用的设备运行时配置，不烘焙进两台设备共用的镜像。它们应按设备实际 UCI/YAML、socket、iptables redirect 和完整查询链验收。
 
-PassWall 在关闭 DNS 劫持并复用系统 dnsmasq 时会通过 UCI `addnmount` 声明生成规则目录。common patch 让 Lean 的 dnsmasq init 把存在的目录纳入只读 procd jail mount，并忽略已经消失的临时路径；PassWall feed 补丁在启停和 DNS 模式切换时先清理旧声明、只登记真实存在的目录，同时让 `ipt2socks` 绑定 `0.0.0.0`/`::` 并使用两个 worker。Kenzo feed 补丁补齐 AdGuardHome redirect 的 TCP/IPv6 规则生成。它们都只修复配置接口，不写入任何 DNS 上游、端口、规则或节点。
+PassWall 在关闭 DNS 劫持并复用系统 dnsmasq 时会通过 UCI `addnmount` 声明生成规则目录。common patch 让 Lean 的 dnsmasq init 把存在的目录纳入只读 procd jail mount，并忽略已经消失的临时路径；PassWall feed 补丁在启停和 DNS 模式切换时先清理旧声明、只登记真实存在的目录，同时让 `ipt2socks` 绑定 `0.0.0.0`/`::` 并使用两个 worker。Kenzo feed 补丁让 AdGuardHome redirect 按 LAN 入接口覆盖 IPv4/IPv6 TCP/UDP 53，并提供默认关闭的 `redirect_local=1` opt-in，把路由器默认 resolver 发往 IPv4/IPv6 loopback 53 的查询汇聚到同一 AdGuard 端口。这些补丁不写入设备运行时 UCI/YAML 中的 DNS 上游、监听端口、过滤规则或代理节点；本机 opt-in 的无环配置前提与迁移顺序见架构文档 10.2.1。
 
 PassWall 自行生成并管理 HAProxy 实例；common factory defaults 禁用官方 HAProxy 软件包自带的示例服务，避免无用途地在所有接口开放 `60000/tcp`。实际 AdGuardHome 由其 LuCI 集成服务管理。
 
