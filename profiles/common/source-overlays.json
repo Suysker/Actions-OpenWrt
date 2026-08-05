@@ -18,6 +18,11 @@
         },
         {
           "kind": "tree",
+          "source": "package/utils/e2fsprogs",
+          "target": "package/utils/e2fsprogs"
+        },
+        {
+          "kind": "tree",
           "source": "package/utils/f2fs-tools",
           "target": "package/utils/f2fs-tools"
         },

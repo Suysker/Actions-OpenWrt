@@ -561,6 +561,7 @@ selector 只删除合同明确列出的同名源码冲突目录，随后从 sour
 |---|---|
 | `package/libs/gmp` | 使用官方已经适配 GCC15/C23 的 canonical 子树 |
 | `package/libs/pcre2` | 当前 HAProxy/wget 等依赖需要，而官方 packages 不再内置该 core 库 |
+| `package/utils/e2fsprogs` | `e2fsprogs` 进入闭包后，Lean 1.47.0 的 `tdb.c` 在 C23 下无条件定义 `bool`；复用官方已增加标准版本保护的 canonical 子树 |
 | `package/utils/f2fs-tools` | `mkf2fs` 进入闭包后，Lean 的旧 recipe 在 GCC15/C23 下因自行定义 `bool` 而失败；复用官方已改用 `stdbool.h` 的 canonical 子树 |
 | `package/system/mtd` | 使用官方已解决当前 GCC15/C23 问题的实现 |
 | 隔离的 SBOM generator 文件 | Lean 保留 SBOM Kconfig 却缺少完整 image 生产链；只补官方生成器及其依赖，不覆盖整个 `include/image.mk` |
@@ -574,14 +575,14 @@ selector 只删除合同明确列出的同名源码冲突目录，随后从 sour
 
 这些规则都不保存 package version、`PKG_HASH` 或 release URL；recipe 漂移到无法证明时直接失败并重新审计。
 
-#### `f2fs-tools`/GCC15 故障的统一设计
+#### overlay formatter/GCC15 故障的统一设计
 
-实际双平台 CI 在选择 `mkf2fs` 后都进入同一个 `package/utils/f2fs-tools` 闭包，并在 GCC15 的 C23 语义下拒绝旧源码中的 `typedef u8 bool`。这不是 R4S 或 N5105 的设备差异，也不应通过降低全局 GCC、删除 `mkf2fs`、写死 package 版本/hash，或再增加一条私有补丁来回避。
+实际双平台 CI 先在 `package/utils/f2fs-tools` 看到 C23 拒绝旧源码的 `typedef u8 bool`；补齐 ext4 formatter 后，R4S 与 N5105 又同时在 Lean `e2fsprogs` 1.47.0 的 `lib/ext2fs/tdb.c` 因 `typedef int bool` 失败。两者都是共享 formatter 闭包与 GCC15/C23 的兼容问题，不是设备差异，也不应通过降低全局 GCC、删除启动依赖、写死 package 版本/hash，或继续增加私有补丁来回避。锁定的官方 OpenWrt core 已分别提供兼容 recipe/source，因此复用同一 canonical overlay 机制。
 
 | 模块 | 职责与复用边界 |
 |---|---|
 | `profiles/common/required-packages.txt` | 声明产品保留 `mkf2fs`；同时独立要求当前较小 rootfs_data 会实际调用的 `e2fsprogs` |
-| `profiles/common/source-overlays.json` | 把锁定的 OpenWrt 官方 core 中 `package/utils/f2fs-tools` 映射到同名 Lean 路径；它是 overlay 路径的唯一事实源 |
+| `profiles/common/source-overlays.json` | 把锁定的 OpenWrt 官方 core 中 `package/utils/e2fsprogs` 与 `package/utils/f2fs-tools` 映射到同名 Lean 路径；它是 overlay 路径的唯一事实源 |
 | `scripts/source_lock.py` | 每轮解析一次官方 core 最新 commit，并让两个 profile 共用同一不可变 lock |
 | `scripts/sync-source-overlays.sh` | 只消费 lock 和声明式 mapping，原子同步 canonical 子树，不维护 package 版本或补丁枚举 |
 | `scripts/collect-build-failure-diagnostics.sh` | 从并行日志解析安全的 `package/...` 语义前缀；允许 OpenWrt 在其后附加 build variant 等说明 |
@@ -589,16 +590,19 @@ selector 只删除合同明确列出的同名源码冲突目录，随后从 sour
 
 ```mermaid
 flowchart LR
-    REQ["common required: mkf2fs"] --> CFG["rendered Kconfig"]
-    CFG --> CLOSURE["package/utils/f2fs-tools build closure"]
+    REQ["common required: e2fsprogs + mkf2fs"] --> CFG["rendered Kconfig"]
+    CFG --> EXT4["package/utils/e2fsprogs build closure"]
+    CFG --> F2FS["package/utils/f2fs-tools build closure"]
     CORE["per-run locked openwrt/openwrt"] --> MAP["source-overlays.json canonical tree mapping"]
-    MAP --> CLOSURE
-    CLOSURE --> WORLD["single parallel make world"]
+    MAP --> EXT4
+    MAP --> F2FS
+    EXT4 --> WORLD["single parallel make world"]
+    F2FS --> WORLD
     WORLD -->|"ERROR: package/... failed to build + optional suffix"| PARSER["safe package target parser"]
     PARSER --> SERIAL["targeted -j1 V=sc diagnostics"]
 ```
 
-命名继续使用上游 canonical 路径 `package/utils/f2fs-tools` 和现有 `failed_package` 概念；不创建 `f2fs-gcc15`、固定版本 patchset 或第二套同步器。这样后续官方 recipe 更新由下一轮 source lock 自动吸收，而 overlay manifest、同步器和测试仍各自只有一个职责。
+命名继续使用上游 canonical 路径 `package/utils/e2fsprogs`、`package/utils/f2fs-tools` 和现有 `failed_package` 概念；不创建 formatter 专用 GCC15 patchset、固定版本副本或第二套同步器。这样后续官方 recipe 更新由下一轮 source lock 自动吸收，而 overlay manifest、同步器和测试仍各自只有一个职责。
 
 ### 8.3 受控最新产物
 
@@ -836,7 +840,7 @@ flowchart LR
 | 模块 | 唯一职责 | 复用接口 |
 |---|---|---|
 | `profiles/common/required-packages.txt` | 两个 squashfs/block-root profile 同时保留 `e2fsprogs` 与 `mkf2fs` | `ProfileRepository` 自动合并 common/device required，渲染两个 formatter package |
-| `profiles/common/source-overlays.json` | 从本轮锁定的 OpenWrt 官方 core 提供 canonical `f2fs-tools` recipe | 复用统一 source lock 与 overlay 同步器，不保存版本/hash 或私有兼容 patch |
+| `profiles/common/source-overlays.json` | 从本轮锁定的 OpenWrt 官方 core 提供 canonical `e2fsprogs` 与 `f2fs-tools` recipe | 复用统一 source lock 与 overlay 同步器，不保存版本/hash 或私有兼容 patch |
 | 设备 `forbidden-packages.txt` | 只保留真正的设备黑名单，不再否定 common 的启动依赖 | 现有 required/forbidden 冲突检查 |
 | `profiles/common/files/etc/uci-defaults/90-common-network` | 网络 UCI 值的唯一事实源，一次性写入 WAN6 DHCPv6-PD 与 LAN RA/DHCPv6 server | OpenWrt `uci batch`；renderer 只复制并拒绝路径冲突，shell 语法检查不复述字段 |
 | `profiles/*/semantics.json` | 只描述仓库外、会随 Lean 漂移的 locked-source 语义 | 现有 `profile_semantics.py`；禁止镜像 rootfs 文件内容 |
@@ -1083,7 +1087,7 @@ BBRv3 适用于路由器本机 IPv4 与 IPv6 TCP socket。它不控制 UDP/QUIC�
 - 已知基线缺少该语义：执行最小、幂等变换。
 - 文件或 recipe 漂移到不再可证明：明确失败并要求重新审计。
 
-当前官方 source overlay 只同步产品闭包需要的窄路径，包括 GMP、PCRE2、F2FS tools、MTD 和隔离的官方 CycloneDX generator 文件。同步目标由 `source-overlays.json` 决定，既不覆盖整份 Lean 核心目录，也不维护未选择 package。
+当前官方 source overlay 只同步产品闭包需要的窄路径，包括 GMP、PCRE2、E2FSProgs、F2FS tools、MTD 和隔离的官方 CycloneDX generator 文件。同步目标由 `source-overlays.json` 决定，既不覆盖整份 Lean 核心目录，也不维护未选择 package。
 
 ### 14.1 target backport 与 upstream 等价语义
 

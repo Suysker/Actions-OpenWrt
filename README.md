@@ -72,7 +72,7 @@ feed 索引覆盖全部锁定源，但安装阶段只提交当前 profile 的 re
 固件只拥有安全、可解释的出厂默认：
 
 - LAN `192.168.2.1/24`，DHCP 从 `.32` 开始、`limit=232`、租期 12 小时；WAN DHCP、WAN6 DHCPv6-PD；LAN 用 RA/DHCPv6 server 发布独立委派前缀，不把 WAN 链路前缀 relay 到客户端；不写死物理 `ethX`。
-- R4S 与 N5105 的 squashfs block-root 镜像同时保留 `mkfs.ext4`（`e2fsprogs`）与 `mkfs.f2fs`（`mkf2fs`）；首次启动由本轮 Lean fstools 按 rootfs_data 大小选择格式并创建持久 overlay，不因此引入分区或自动挂载工具。
+- R4S 与 N5105 的 squashfs block-root 镜像同时保留 `mkfs.ext4`（`e2fsprogs`）与 `mkfs.f2fs`（`mkf2fs`）；两个 formatter recipe 从同一轮锁定的官方 OpenWrt core 窄同步以保持 GCC15/C23 兼容。首次启动由本轮 Lean fstools 按 rootfs_data 大小选择格式并创建持久 overlay，不因此引入分区或自动挂载工具。
 - `Asia/Shanghai` 和启用 NTP client，保留上游 NTP server 列表。
 - `fq`、16 MiB socket buffer 上限。
 - 只有确认 `/sys/module/tcp_bbr/version=3`、`sch_fq` 存在且 TurboACC 已探测到 software flow offload 后，才一次性把 factory CCA 设为 `bbr`；以后尊重用户在 TurboACC 中的选择。
