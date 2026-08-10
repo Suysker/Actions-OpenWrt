@@ -941,6 +941,97 @@ def lock_digest(lock: dict[str, Any]) -> str:
     return f"sha256:{hashlib.sha256(canonical_payload(lock)).hexdigest()}"
 
 
+def _git_source_identity(entry: Any) -> Any:
+    if not isinstance(entry, dict):
+        return entry
+    return {key: value for key, value in entry.items() if key != "commit"}
+
+
+def _artifact_compatibility_identity(entry: Any) -> Any:
+    if not isinstance(entry, dict):
+        return entry
+    identity: dict[str, Any] = {"policy": entry.get("policy")}
+    version = entry.get("version")
+    if isinstance(version, str) and (match := SEMVER_RE.fullmatch(version)):
+        identity["semantic_line"] = f"{match.group(1)}.{match.group(2)}"
+    return identity
+
+
+def _bbr_port_topology(entry: Any) -> Any:
+    if not isinstance(entry, dict):
+        return entry
+    patches = entry.get("patches")
+    if isinstance(patches, list):
+        patch_topology = [
+            {
+                key: patch.get(key)
+                for key in ("order", "origin_path", "artifact_path", "install_name")
+            }
+            if isinstance(patch, dict)
+            else patch
+            for patch in patches
+        ]
+    else:
+        patch_topology = patches
+    return {
+        key: entry.get(key)
+        for key in ("provider", "origin_url", "origin_ref", "install_directory")
+    } | {"patches": patch_topology}
+
+
+def update_compatibility_projection(lock: dict[str, Any]) -> dict[str, Any]:
+    """Return only upstream changes that should bypass the weekly build cadence."""
+    profiles = lock.get("profiles", {})
+    bbr = lock.get("kernel_features", {}).get("bbr3", {})
+    return {
+        "openwrt-source-identity": _git_source_identity(lock.get("openwrt")),
+        "feed-source-identity": {
+            name: _git_source_identity(entry)
+            for name, entry in sorted(lock.get("feeds", {}).items())
+        },
+        "source-overlay-identity": {
+            name: _git_source_identity(entry)
+            for name, entry in sorted(lock.get("source_overlays", {}).items())
+        },
+        "artifact-compatibility-line": {
+            name: _artifact_compatibility_identity(entry)
+            for name, entry in sorted(lock.get("upstream_artifacts", {}).items())
+        },
+        "profile-kernel-compatibility": {
+            name: {
+                key: value
+                for key, value in entry.items()
+                if key not in {"kernel_version", "kernel_source_sha256"}
+            }
+            for name, entry in sorted(profiles.items())
+        },
+        "bbr3-compatibility": {
+            "algorithm": bbr.get("algorithm"),
+            "ports": {
+                series: _bbr_port_topology(entry)
+                for series, entry in sorted(bbr.get("ports", {}).items())
+            },
+        },
+    }
+
+
+def update_impact(old: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
+    old_projection = update_compatibility_projection(old)
+    new_projection = update_compatibility_projection(new)
+    reasons = [
+        domain
+        for domain in sorted(new_projection)
+        if old_projection.get(domain) != new_projection[domain]
+    ]
+    reasons.extend(
+        domain for domain in sorted(set(old_projection) - set(new_projection))
+    )
+    return {
+        "classification": "significant" if reasons else "routine",
+        "reasons": reasons,
+    }
+
+
 def validate_upstream_artifacts(
     artifacts: Any, geodata_contracts: tuple[dict[str, str], ...]
 ) -> None:
@@ -1181,20 +1272,6 @@ def locked_profile_string(
     if not isinstance(value, str) or not value:
         raise ResolutionError(f"profile {profile} has no locked {field}")
     return value
-
-
-def render_profile_identity(lock: dict[str, Any], profile: str) -> str:
-    locked_profile(lock, profile)
-    digest = lock["profile_digests"].get(profile)
-    if not isinstance(digest, str):
-        raise ResolutionError(f"profile {profile} has no source-lock digest")
-    return "\n".join(
-        (
-            f"profile_digest={digest.removeprefix('sha256:')}",
-            f"patch_digest={lock['patch_digest'].removeprefix('sha256:')}",
-            f"openwrt_commit={lock['openwrt']['commit']}",
-        )
-    ) + "\n"
 
 
 def render_profile_kernel_plan(lock: dict[str, Any], profile: str) -> str:
@@ -1724,10 +1801,11 @@ def main(argv: list[str]) -> int:
         print(
             "Usage: source_lock.py resolve <profiles> <output> [kernel-channel] | "
             "materialize <lock> <output-dir> | digest <lock> | "
-            "compare <old> <new> | list-feeds <lock> | "
+            "compare <old> <new> | update-impact <released> <current> | "
+            "list-feeds <lock> | "
             "render-feeds <lock> <output> | overlay-manifest <lock> | "
             "repository-commit <lock> | kernel-versions <lock> | "
-            "profile-names <lock> | profile-identity <lock> <profile> | "
+            "profile-names <lock> | "
             "profile-kernel-plan <lock> <profile> | "
             "bbr-patch-plan <lock> <profile> | "
             "materialized-bbr-paths <lock> <kernel-version> | "
@@ -1767,6 +1845,12 @@ def main(argv: list[str]) -> int:
             return 0
         print(f"changed {old_digest} -> {new_digest}")
         return 1
+    if command == "update-impact" and len(argv) == 4:
+        impact = update_impact(
+            load_lock(pathlib.Path(argv[2])), load_lock(pathlib.Path(argv[3]))
+        )
+        print(json.dumps(impact, sort_keys=True, ensure_ascii=False, indent=2))
+        return 0
     if command == "list-feeds" and len(argv) == 3:
         lock = load_lock(pathlib.Path(argv[2]))
         print("\n".join(name for name, _ in ordered_locked_feeds(lock)))
@@ -1801,12 +1885,6 @@ def main(argv: list[str]) -> int:
         return 0
     if command == "profile-names" and len(argv) == 3:
         print("\n".join(sorted(load_lock(pathlib.Path(argv[2]))["profiles"])))
-        return 0
-    if command == "profile-identity" and len(argv) == 4:
-        print(
-            render_profile_identity(load_lock(pathlib.Path(argv[2])), argv[3]),
-            end="",
-        )
         return 0
     if command == "profile-kernel-plan" and len(argv) == 4:
         print(

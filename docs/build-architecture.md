@@ -2,8 +2,8 @@
 
 ## 1. 文档状态
 
-- 状态：设计修订 6；完成历史方案整合，Linux 6.18 通道代码与本地 fixture 已完成，双平台 CI/Release 验收中
-- 日期：2026-08-03
+- 状态：设计修订 7；完成历史方案整合、Linux 6.18 通道和低频自动构建架构，双平台 CI/Release 验收中
+- 日期：2026-08-10
 - 源码基线：Lean `master`
 - 防火墙：firewall3 / iptables
 - 工具链：Lean 原生 GCC 15
@@ -18,7 +18,7 @@
 2. **动态构建事实**：Lean/feed commit、selected kernel point release、受控 release 版本、BBRv3 port 和 SHA256。它们每轮解析并进入 `source-lock.json`，不能抄进仓库成为永久锁。
 3. **审计依据**：某次上游 commit、历史 Action run 和 Release，用于说明设计曾在什么代码上核验；它们不是 production resolver 的输入。
 
-修订 6 重新整合了最初方案中仍然有效的产品决策、设备假设、模块接口、package/driver 取舍、sbwml 审计、CI 事务、回滚和风险说明；所有表述均以当前 `master` 实现为准，不恢复已被新架构替代的旧 schema、旧分支和重复校验路径。
+修订 6 重新整合了最初方案中仍然有效的产品决策、设备假设、模块接口、package/driver 取舍、sbwml 审计、CI 事务、回滚和风险说明。修订 7 把自动频率收敛为每日轻量判断、每周完整构建和重大兼容变化提前构建，并把 Release 与 Actions 临时存储的所有权分开；不恢复已被新架构替代的旧 schema、旧分支、重复校验或跨 run 大缓存。
 
 ## 2. 目标与边界
 
@@ -107,7 +107,7 @@ R4S、内核和工具链的逐项取舍如下。“原生纳入”表示优化�
 |---|---|
 | GitHub 托管 runner | `ubuntu-latest`，记录当轮 runner 事实并设置磁盘门槛和 timeout |
 | 双设备并行 | 自动发现 profile，`fail-fast: false`、`max-parallel: 2` |
-| ccache 与下载缓存 | 分层保存，key 绑定 profile、GCC、声明 digest、patch digest 和 source-lock digest |
+| 构建缓存 | 只保留当轮 runner 内的 OpenWrt 下载目录与本地 ccache；不把滚动源码对应的大目录跨 run 上传到 Actions cache |
 | 并行失败后串行诊断 | 只重放第一个安全的 `package/.../compile` 目标，保留原 job 失败 |
 | 固件、manifest、buildinfo、hash | 扩展为 SBOM、source-lock、单一 provenance 和 Release 回下载复验 |
 | draft Release | 两个平台聚合后创建，全部资产回下载验证后才公开 |
@@ -142,7 +142,7 @@ N5105 profile 的设备合同是运行在 PVE 中的专用 OpenWrt guest，而�
 | Common | Lean master；可选择的 stable/testing kernel channel；firewall3/iptables；GCC15；共享精简 package 闭包；OpenSSL ASM/speed、zlib speed；BBRv3 + `fq`；software flow offload；签名、SBOM、source lock 与 provenance |
 | R4S | Lean 原生 Rockchip/R4S target；ARMv8 CRC/crypto + A72/A53 tune；r8168；native CPU4/5 IRQ；packet steering；schedutil/PWM fan；512 MiB LZ4 zram；无 irqbalance、RTL8152、DRM/Panfrost |
 | N5105 PVE | x86_64 generic EFI squashfs；x86-64-v2 + Tremont tune；VirtIO built-in + I225/igc；4 queues + irqbalance、RPS off；无 autocore、zram、microcode、USB/GPU/音频 |
-| Actions | prepare 一次解析 source lock；双 profile matrix；四个高价值门禁；失败定向诊断；聚合、draft、回下载复验、公开、保留六个 Release |
+| Actions | 每日轻量解析；每周一次双平台构建，兼容边界发生重大上游变化时提前构建，手动构建随时可用；prepare 一次解析 source lock；四个高价值门禁；聚合、回下载复验、公开、保留六个 Release |
 
 ## 3. 唯一事实源
 
@@ -177,7 +177,7 @@ N5105 profile 的设备合同是运行在 PVE 中的专用 OpenWrt guest，而�
 ```text
 .github/workflows/
   openwrt-builder.yml             # 双平台构建与 Release 事务
-  update-checker.yml              # 定时解析完整上游指纹
+  update-checker.yml              # 每日轻量解析；每周或重大上游变化时派发双平台构建
 
 profiles/
   common/
@@ -230,7 +230,9 @@ lessons.md                        # 跨问题的根因模式和预防规则
 ## 4. 总体数据流
 
 ```text
-repository declarations + rendered common/device intent + floating upstreams
+daily Update Checker or manual OpenWrt Builder dispatch
+  -> weekly due / significant upstream impact decision
+  -> repository declarations + rendered common/device intent + floating upstreams
   -> kernel_selection.py selects stable/testing metadata from locked Lean
   -> source_lock.py resolve/validate/materialize
   -> one immutable source-lock artifact
@@ -245,6 +247,7 @@ repository declarations + rendered common/device intent + floating upstreams
   -> release_assets.py verifies and assembles both profiles
   -> draft Release upload
   -> download every asset -> reconstruct both deliveries -> verify again
+  -> delete verified Actions transaction artifacts
   -> publish the same draft -> retain six verified production Releases
 ```
 
@@ -274,8 +277,8 @@ repository declarations + rendered common/device intent + floating upstreams
 | `scripts/collect-build-provenance.sh` | 从真实 build tree 生成平台交付目录和 `build-provenance.json` |
 | `scripts/verify-firmware-artifacts.sh` | 平台交付的唯一验收器 |
 | `scripts/release_assets.py` | 双平台聚合、专业资产命名、完整包/release index、回下载重建和复验 |
-| `.github/workflows/openwrt-builder.yml` | 编排四层门禁，不解释领域 schema |
-| `.github/workflows/update-checker.yml` | 定时调用同一个 resolver；source digest 变化时派发双平台构建 |
+| `.github/workflows/openwrt-builder.yml` | 编排四层门禁和 Actions 中转制品生命周期，不解释自动频率或领域 schema |
+| `.github/workflows/update-checker.yml` | 唯一拥有自动频率；每日调用同一个 resolver，周一或重大上游变化时派发双平台 source lock |
 
 ### 5.2 复用接口
 
@@ -286,6 +289,9 @@ repository declarations + rendered common/device intent + floating upstreams
 - `render-profile.sh`、`check-profile-contract.sh`、`resolve-source-lock.sh`、`assemble-release.sh` 和 `verify-release-assets.sh` 都是薄 CLI。
 - build、aggregate 和 release-download 三个边界复用 `verify-firmware-artifacts.sh`。
 - 失败日志属于 diagnostics；正式资产只保留可复核交付及一个结构化 provenance。
+- 自动与手动入口都汇入同一个 `openwrt-builder.yml`；不增加 weekly builder、紧急 builder、冷却脚本或第二套 source-lock 解析器。
+- `source_lock.py` 从最近正式 Release 的 lock 与当前 lock 生成兼容性投影：内核 target/channel/series、Git 来源身份、受控 semver 兼容线、BBRv3 算法 commit 和 port 拓扑。只有投影变化属于重大更新；point release、普通 feed commit 与 Geo 数据 tag 漂移由周构建吸收。
+- Release 是长期产品存储，Actions artifact 只是同一 run 内 `prepare -> build -> aggregate` 的事务传输接口；回下载验证通过后由 builder 按 run 动态发现并删除，不维护 artifact 名单。
 
 ### 5.3 命名与风格
 
@@ -297,6 +303,7 @@ repository declarations + rendered common/device intent + floating upstreams
 - report schema 使用明确整数版本；不为旧内部 schema 保留平行解释器。
 - 路径安全检查位于真正执行 clone、copy、remove、archive reconstruction 的边界。
 - 新设备只增加 `profiles/<device>` 声明，不修改 checker 或 matrix 分支。
+- 自动判定统一使用 `weekly`、`significant`、`routine` 三种原因；不把普通 source digest 变化命名为重大更新，也不使用 cache hit 表示发布历史。
 
 ### 5.4 稳定接口
 
@@ -312,6 +319,7 @@ resolve-source-lock.sh resolve <profile-list> <output-json> [stable|testing]
 resolve-source-lock.sh materialize <source-lock.json> <output-directory>
 resolve-source-lock.sh digest <source-lock.json>
 resolve-source-lock.sh compare <old-json> <new-json>
+resolve-source-lock.sh update-impact <released-json> <current-json>
 resolve-source-lock.sh profile-kernel-plan <source-lock.json> <profile>
 resolve-source-lock.sh bbr-patch-plan <source-lock.json> <series>
 
@@ -1134,7 +1142,7 @@ rendered profile intent
 - Release jobs 由当前 ref 自动选择授权：默认分支使用内置 `GITHUB_TOKEN`；非默认分支使用仓库已有的 `ACTIONS_TRIGGER_PAT`，因为当目标 commit 相对默认分支修改 workflow 时，GitHub 不允许内置 token 创建或更新指向该 commit 的 Release。
 - 所有 `gh release` 调用显式使用 `--repo "$GITHUB_REPOSITORY"`。checkout 只为读取仓库脚本和文档服务，Release create/download/edit/list/delete 不依赖当前目录存在 `.git`；因此不需要源码的 publish/cleanup job 可以保持最小权限和零 checkout。
 
-依赖图为 `profile 目录 -> prepare 矩阵 -> build artifacts -> aggregate -> draft -> re-download -> publish`。令牌选择只存在于 Release jobs 的 `GH_TOKEN` 环境边界，不新增第二套发布逻辑。tag 始终指向真实构建 commit，不得为规避权限而错挂到默认分支。
+依赖图为 `每日轻量 schedule -> 当前 lock -> weekly/significant/routine 判定 -> repository dispatch` 或 `手动 dispatch`，随后共同进入 `prepare 矩阵 -> build artifacts -> aggregate -> draft -> re-download -> 删除 Actions 中转制品 -> publish`。自动入口只决定是否提前生成一次最新固件，手动入口只决定用户何时立即构建；两者从 `prepare` 起完全共用同一事务。令牌选择只存在于 Release jobs 的 `GH_TOKEN` 环境边界，不新增第二套发布逻辑。tag 始终指向真实构建 commit，不得为规避权限而错挂到默认分支。
 
 Release job 的授权矩阵是该依赖图的一部分：
 
@@ -1142,7 +1150,7 @@ Release job 的授权矩阵是该依赖图的一部分：
 |---|---|---|---|
 | `aggregate` | 创建 draft 并上传资产 | `contents: write` | 创建和上传本身需要写权限 |
 | `release-verify` | 按 tag 重新发现并下载 draft 资产 | `contents: write` | GitHub 只向具有 push 权限的调用者暴露 draft；只给 `contents: read` 会把已存在的 draft 表现为 `release not found` |
-| `publish-final` | 把同一个已验证 draft 公开 | `contents: write` | 修改 Release 状态 |
+| `publish-final` | 删除本 run 已验证的 Actions 中转制品，再把同一个 draft 公开 | `actions: write`、`contents: write` | Release 已完成回下载复验，中转制品已无后续消费者；修改 Release 状态需要 contents 写权限 |
 | `cleanup` | 删除超过保留数量的已发布 Release | `contents: write` | 删除 Release 与 tag |
 
 这里不增加等待、重试或 Actions artifact fallback：权限不足不是最终一致性问题，而以 artifact 代替回下载会绕过需要验证的 GitHub Release 交付边界。四个 job 继续复用同一个默认分支/非默认分支 `GH_TOKEN` 选择表达式和同一个 release tag 输出，不引入第二套 token helper、资产下载器或发布状态机。
@@ -1180,7 +1188,7 @@ diagnostics 只在失败时上传。成功路径只上传 verified firmware arti
 - `release-index.json` 只保存 profile、主镜像原名/资产名、完整包名、大小和 SHA256，不向 Release 平铺内部 metadata 文件。
 - 创建 draft Release 后，从 GitHub 重新下载所有资产。
 - verifier 校验顶层 SHA256、index 覆盖范围和 tar 安全边界，从完整包重建两套原始目录，证明直接下载镜像与包内原件字节一致，再复用 firmware verifier。
-- 全部通过后公开同一个 draft。
+- 全部通过后动态列出并删除本 run 的 Actions 中转制品，再公开同一个 draft；不得硬编码 profile 或 artifact 名称。
 - 成功发布后只清理超出最近六个的已发布 `openwrt-*` Release。
 
 任何 build、aggregate 或回下载失败都不会公开半套固件，也不会清理已有生产 Release。
@@ -1196,16 +1204,21 @@ diagnostics 只在失败时上传。成功路径只上传 verified firmware arti
 
 `prepare-runner.sh` 只在预期系统前缀内做白名单磁盘整理，先解析真实路径并记录前后空间；不下载第三方 free-disk 脚本，也不对 `$HOME`、workspace 根或不确定路径执行递归删除。构建前可用空间低于门槛时立即失败。
 
-### 15.5 缓存合同
+### 15.5 缓存与存储合同
 
-下载缓存与 ccache 分离：
+双平台构建按周运行，Lean、feeds 和 release metadata 又持续滚动，因此跨 run 的大目录常因 source digest 变化产生新条目。`$OPENWRT_ROOT/dl` 每个 source digest 约产生一份完整下载缓存，现有观测中多个约 1.5 GB 条目会迅速顶满仓库 cache；跨 run ccache 则因架构、GCC15、profile、patch 和 source-lock 身份变化而极少命中。继续上传这些目录只会消耗网络、job 尾部时间和仓库存储。
 
-| 缓存 | 路径与身份 | 信任边界 |
+production 路径因此只保留当轮 runner 本地状态：
+
+| 状态 | 生命周期 | 信任边界 |
 |---|---|---|
-| OpenWrt source downloads | `$OPENWRT_ROOT/dl`；key 绑定 source digest | 恢复后仍由每个 upstream recipe hash 与 `make download` 复验 |
-| ccache | `/builder/.ccache`，上限 5 GiB；key 绑定 runner OS、GCC15、profile、profile digest、patch digest、source-lock digest | R4S/x86 不交叉；restore prefix 也不跨架构、工具链或 profile |
+| OpenWrt source downloads | 本次 build job 的 `$OPENWRT_ROOT/dl` | 每个 upstream recipe hash 与 `make download` 在当轮验证 |
+| local ccache | 本次 build job 的 `/builder/.ccache`，上限 5 GiB | 只减少同一 job 内的重复编译；不跨 R4S/x86 或 run 恢复 |
+| source-lock / firmware Actions artifacts | 同一 run 的 job 间传输；配置 1 天兜底保留，正式双平台 Release 回下载验证后立即删除 | 仅是事务中转，不是用户交付或长期备份 |
+| failure diagnostics | 失败后保留 7 天 | 用于定位本次失败，不进入 Release |
+| verified Release | 保留最近六个生产版本 | 用户下载、回滚和长期审计的唯一产品存储 |
 
-不使用外部预编译 toolchain cache。cache 只减少重复计算，不提供源码真实性；source lock、package hash、最终 config 和成品 verifier 才是发布信任边界。
+不使用 Actions cache、外部预编译 toolchain cache 或第三方缓存。source lock、package hash、最终 config 和成品 verifier 才是发布信任边界。历史 cache/artifact 按其原有平台到期策略自然淘汰；一次性提前删除属于独立、不可逆的仓库运维动作，不由 workflow 迁移隐式执行。
 
 ### 15.6 失败诊断与成功资产
 
@@ -1217,13 +1230,24 @@ make -j1 V=sc package/.../compile
 
 解析器匹配的是 `ERROR: package/... failed to build` 这个稳定语义前缀；末尾既可以是句点，也可以是 `(build variant: default).` 等上游附加信息。捕获结果仍必须通过严格的 package 路径白名单。它只用于收集真实编译器/链接器诊断，并保持原 job 失败；日志没有可安全解析的目标时才允许 whole-world 详细 fallback。不得使用 `make -j || make -j1`、`IGNORE_ERRORS`、`continue-on-error` 或删除 required package，让第二次成功掩盖第一次失败。
 
-失败时上传 30 天 diagnostics，包括并行/串行日志、OpenWrt logs、最终 config、provider/compatibility 信息、ccache 与模块候选。成功路径只上传已经通过 verifier 的 delivery artifact，`compression-level: 0` 避免再次压缩固件镜像。
+失败时上传 7 天 diagnostics，包括并行/串行日志、OpenWrt logs、最终 config、provider/compatibility 信息、当轮本地 ccache 统计与模块候选。成功路径上传已经通过 verifier 的 delivery artifact 供当前事务聚合，`compression-level: 0` 避免再次压缩固件镜像；中转 artifact 的兜底保留期为 1 天，正式双平台 Release 回下载验证后立即删除。
 
-### 15.7 Update checker
+### 15.7 自动频率与 Update Checker
 
-定时 workflow 调用同一个 resolver 生成完整双 profile source lock，以规范化 digest 作为上游指纹。Lean、任一 feed、官方 source overlay、受控 release、selected kernel、Google BBR HEAD、port provider 或 patch 字节变化，都会形成新 digest 并派发携带精确 lock 的 `profile=all` 构建；只有 `resolved_at` 变化不会触发无意义重建。
+`Update Checker` 在 `Asia/Shanghai` 每天 03:17 运行一次。该 job 的现有观测耗时约 20～36 秒，只解析完整双 profile source lock 和 Release 基线，不编译工具链或固件。每周一无条件把当天最新 lock 交给一次 `profile=all` 构建；其余日期只有 `source_lock.py update-impact` 判定为重大上游变化时才提前派发。选择 03:17 而不是整点，是为了避开 GitHub 定时任务的高峰拥塞。需要立即构建时直接手动运行 `OpenWrt Builder`；不再保留 `Update Checker` 的第二个人工入口或 `force_build` 分支。
 
-update checker 不另写版本解析器，也不只检查 Lean commit。它把本次精确 source lock 交给 builder，builder 验证 lock 属于当前 repository commit 和 dispatch digest，再让两个 profile 共同消费。因此“几个月不维护仍追最新”依赖自动解析和真实双平台验收，而不是使用 `latest/download`、`PKG_HASH:=skip` 或设备内自更新。
+重大更新使用最近一个已发布 `openwrt-*` Release 内的 `source-lock.json` 作为持久基线，不使用七天可能淘汰的 Actions cache。比较由 source-lock 领域模块生成兼容性投影，workflow 不读取 schema 字段：
+
+- profile 集合、selected kernel target/channel/series 变化；
+- OpenWrt、feed 或 source overlay 的仓库/ref 身份变化，而普通 commit 前进不算；
+- 任意带标准三段版本的受控 artifact 跨越 `major.minor` 兼容线，而 patch release 与 Geo 日期 tag 不算；
+- BBRv3 算法 commit、模块代际/runtime 身份、port provider 或 patch 拓扑变化，而同一拓扑内的适配内容更新由周构建吸收。
+
+找不到正式 Release、基线资产缺失或基线无法按当前 schema 验证时，checker 必须派发一次构建以重新建立基线，不能静默跳过。判定输出只允许 `weekly`、`significant` 或 `routine`；`weekly`/`significant` 携带当前精确 source lock 派发，`routine` 只写摘要。每周触发和重大更新共用同一个决策点，同一天只派发一次。
+
+旧表达式 `0 */18 * * *` 中的步长只在 0–23 小时字段内展开，实际每天在 00:00 和 18:00 UTC 各运行一次，并形成 18 小时、6 小时交替间隔，不是滑动的“每 18 小时”。上游滚动时，它会让一次约 200 job-minutes 的双平台事务在十天内重复十余次。新策略通常约为四至五次双平台事务/月，加上不足一分钟/天的检查；相较旧频率大幅降低，同时保证每周吸收普通更新、重大兼容变化最多等待到下一次日检。
+
+update checker 不另写版本解析器，也不只检查 Lean commit。它把本次精确 source lock 交给 builder，builder 验证 lock 属于当前 repository commit 和 dispatch digest，再让两个 profile 共同消费。因此“几个月不维护仍追最新”依赖每日轻量判断、每周完整构建和真实双平台验收，而不是把每个 commit 当成紧急事件、使用 `latest/download`、`PKG_HASH:=skip` 或设备内自更新。
 
 ## 16. 交付内容与 provenance
 
@@ -1448,7 +1472,10 @@ Release 级验收在 GitHub 上完成完整闭环：aggregate 先复验两个 de
 | N5105 VLAN backport 文件消失 | 接受 target backport 或 prepared upstream 等价语义，拒绝按版本号猜测 |
 | Action `@main` 或 `ubuntu-latest` 漂移 | 这是明确的最新跟踪策略；只允许官方 action，记录 runner 事实，并由真实构建/交付门禁阻止坏版本发布 |
 | runner 磁盘不足或清理越界 | 白名单 realpath 验证、空间门槛和 timeout；不运行第三方清盘脚本 |
-| ccache/dl 污染 | profile/GCC/digest 分层 identity，下载始终经过 OpenWrt hash，cache 不作为真实性依据 |
+| 高频 schedule 耗尽 Actions minutes | Update Checker 每日只做不足一分钟的解析；每周一构建一次，其他日期仅在 Release 基线的重大兼容投影变化时提前构建 |
+| “重大更新”退化为硬编码版本列表 | `source_lock.py` 按 schema 结构生成兼容投影；workflow 不枚举组件、版本或 profile，普通 commit/patch/tag 漂移留给周构建 |
+| 跨 run cache 吞噬存储且低命中 | 不上传 dl/ccache；只保留当轮本地状态，下载仍由 OpenWrt hash 验证 |
+| 成功 artifact 与 Release 重复占空间 | Actions artifact 只做当前 run 中转；Release 回下载验证后动态删除，兜底 1 天，最近六个 Release 才是长期产品 |
 | 并行失败被串行重试掩盖 | 原 job 保持失败，只重放安全 package target 收集 `V=sc` 诊断 |
 | 非默认分支 Release 返回 403 | tag 始终指真实 build commit；只在 Release job 边界选择具备 workflows 权限的已配置 token |
 | 第二个平台失败或资产不完整 | aggregate 严格依赖完整 matrix；draft 回下载失败不公开、不清理旧版本 |

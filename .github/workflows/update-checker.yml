@@ -1,18 +1,11 @@
 name: Update Checker
 
 on:
-  workflow_dispatch:
-    inputs:
-      force_build:
-        description: Dispatch a dual-profile build even when the lock fingerprint is unchanged
-        required: true
-        default: false
-        type: boolean
   schedule:
-    - cron: '0 */18 * * *'
+    - cron: '17 3 * * *'
+      timezone: Asia/Shanghai
 
 permissions:
-  actions: write
   contents: write
 
 concurrency:
@@ -21,7 +14,7 @@ concurrency:
 
 jobs:
   check:
-    name: Resolve the complete upstream fingerprint
+    name: Decide whether the dual firmware build is due
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -47,21 +40,81 @@ jobs:
           echo "source_digest=${digest#sha256:}" >> "$GITHUB_OUTPUT"
           echo "Resolved complete fingerprint: $digest"
 
-      - name: Look up the exact lock fingerprint
-        id: fingerprint
-        uses: actions/cache@main
-        with:
-          path: .source-state
-          key: source-lock-v5-${{ steps.lock.outputs.source_digest }}
-
-      - name: Show changed immutable inputs
-        if: steps.fingerprint.outputs.cache-hit != 'true' || inputs.force_build == true
+      - name: Compare the released compatibility boundary
+        id: decision
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/source_lock.py summary .source-state/source-lock.json
+          set -euo pipefail
+          reason=routine
+          detail='No compatibility boundary changed; the weekly build is not due.'
+
+          if [ "$(TZ=Asia/Shanghai date +%u)" = 1 ]; then
+            reason=weekly
+            detail='The scheduled weekly refresh is due.'
+          else
+            release_tag=''
+            if release_tag="$(
+              gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+                --json tagName,createdAt,isDraft \
+                --jq '[.[] | select(.isDraft == false and (.tagName | startswith("openwrt-")))] | sort_by(.createdAt) | last | .tagName // ""'
+            )" && [ -n "$release_tag" ]; then
+              mkdir -p .source-state/released
+              if gh release download "$release_tag" \
+                --repo "$GITHUB_REPOSITORY" \
+                --pattern source-lock.json \
+                --dir .source-state/released; then
+                if python3 scripts/source_lock.py update-impact \
+                  .source-state/released/source-lock.json \
+                  .source-state/source-lock.json > .source-state/update-impact.json; then
+                  reason="$(jq -er \
+                    '.classification | select(. == "significant" or . == "routine")' \
+                    .source-state/update-impact.json)"
+                  if [ "$reason" = significant ]; then
+                    impact="$(jq -r '.reasons | join(", ")' \
+                      .source-state/update-impact.json)"
+                    detail="Released compatibility boundary changed: $impact"
+                  fi
+                else
+                  reason=significant
+                  detail='The released source lock cannot be validated; rebuild to establish a current baseline.'
+                fi
+              else
+                reason=significant
+                detail='The latest OpenWrt Release has no readable source-lock baseline.'
+              fi
+            else
+              reason=significant
+              detail='No published OpenWrt Release baseline exists.'
+            fi
+          fi
+
+          case "$reason" in
+            weekly|significant)
+              dispatch=true
+              ;;
+            routine)
+              dispatch=false
+              ;;
+            *)
+              echo "::error::Unknown automatic build decision: $reason"
+              exit 2
+              ;;
+          esac
+
+          printf 'reason=%s\ndispatch=%s\n' "$reason" "$dispatch" >> "$GITHUB_OUTPUT"
+          {
+            echo '### Automatic build decision'
+            echo "- Decision: \`$reason\`"
+            echo "- Detail: $detail"
+            echo "- Current source lock: \`sha256:${{ steps.lock.outputs.source_digest }}\`"
+            echo
+            python3 scripts/source_lock.py summary .source-state/source-lock.json
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Dispatch the exact source lock to the dual build
-        if: steps.fingerprint.outputs.cache-hit != 'true' || inputs.force_build == true
+        if: steps.decision.outputs.dispatch == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -76,7 +129,3 @@ jobs:
             --arg source_digest "$SOURCE_DIGEST" \
             '{event_type: $event_type, client_payload: {profile: $profile, source_lock_b64: $source_lock_b64, source_digest: $source_digest}}' |
             gh api --method POST "repos/${GITHUB_REPOSITORY}/dispatches" --input -
-
-      - name: Report unchanged fingerprint
-        if: steps.fingerprint.outputs.cache-hit == 'true' && inputs.force_build != true
-        run: echo 'Lean, feeds, source overlays, controlled releases, BBRv3 ports, profiles and patches are unchanged.'

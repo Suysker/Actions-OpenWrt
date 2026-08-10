@@ -15,13 +15,14 @@
 解析 Lean/feeds/最新稳定产物 -> source-lock.json
                               -> R4S 完整构建与验证
                               -> N5105 完整构建与验证
-                              -> 聚合为 draft Release
-                              -> 重新下载全部资产并验 SHA/契约
-                              -> 公开同一个 Release
-                              -> 成功后保留最近 6 个生产 Release
+                               -> 聚合为 draft Release
+                               -> 重新下载全部资产并验 SHA/契约
+                               -> 删除本次 Actions 中转 artifact
+                               -> 公开同一个 Release
+                               -> 成功后保留最近 6 个生产 Release
 ```
 
-`prepare` 只解析一次所有浮动输入。两个 build job 随后只使用完整 Git commit、精确 release URL 和 64 位 SHA256，不读取 branch HEAD、GitHub `latest/download`，也不接受 `PKG_HASH:=skip`。正式路径固定为 source lock、最终 config、固件交付、Release 回下载四层门禁；失败只保留诊断 artifact 或 draft，不公开半套固件，也不清理已有生产版本。
+`prepare` 只解析一次所有浮动输入。两个 build job 随后只使用完整 Git commit、精确 release URL 和 64 位 SHA256，不读取 branch HEAD、GitHub `latest/download`，也不接受 `PKG_HASH:=skip`。正式路径固定为 source lock、最终 config、固件交付、Release 回下载四层门禁；失败诊断保留 7 天，未完成的 draft 不公开，也不清理已有生产版本。成功事务在 Release 回下载复验后删除当次 Actions 中转 artifact，Release 才是长期下载与回滚入口。
 
 ## 使用方法
 
@@ -37,7 +38,7 @@
 
 默认分支发布使用 GitHub 内置 token。当非默认分支相对默认分支修改了 workflow，GitHub API 要求一个同时具有仓库与 workflow 写权限的凭据；workflow 只在 Release jobs 中使用仓库已配置的 `ACTIONS_TRIGGER_PAT`。
 
-定时 `Update Checker` 使用同一个 resolver。Lean、任一 feed、四类上游产物、profile 或 patch digest 变化时，它会把已经解析好的完整 source lock 交给一次双平台构建，避免 update checker 与 builder 各自维护一套版本查询逻辑。
+`Update Checker` 每天 03:17（`Asia/Shanghai`）做一次约半分钟的轻量解析，每周一固定把最新完整 source lock 交给双平台构建。其他日期只在最近正式 Release 到当前发生重大兼容变化时提前构建：selected kernel target/channel/series、Git 来源身份、受控组件的 `major.minor` 兼容线、BBRv3 算法 commit 或 port 拓扑。普通 Lean/feed commit、kernel point release、组件 patch release 和 Geo 日期 tag 由周构建吸收。需要立即构建时直接手动运行 `OpenWrt Builder`，没有第二套强制更新入口。
 
 ## Profile 如何维护
 
@@ -142,7 +143,7 @@ GitHub build 还会执行两次 `make defconfig` 及 forbidden 子选项收敛�
 
 ## 产物与迁移说明
 
-每个平台 artifact 包含固件、原始 manifest/buildinfo/SBOM、规范化的 `openwrt-sha256sums`、source lock、最终 `.config`、单一 `build-provenance.json` 和覆盖整个目录的 `SHA256SUMS`。不再保留只有大小写区别、会使 Windows 解压冲突的文件名。
+每个平台的事务 artifact 包含固件、原始 manifest/buildinfo/SBOM、规范化的 `openwrt-sha256sums`、source lock、最终 `.config`、单一 `build-provenance.json` 和覆盖整个目录的 `SHA256SUMS`。它只用于同一 run 内聚合，兜底保留 1 天，并在正式 Release 回下载复验后立即删除；不再保留只有大小写区别、会使 Windows 解压冲突的文件名。
 
 正式 Release 只展示两个可直接刷写的专业命名镜像、每平台一个 `-full.tar.gz` 完整包，以及 `release-index.json`、`source-lock.json` 和顶层 `SHA256SUMS`。完整包保留全部 provenance 和原始产物；发布前会从 GitHub 回下载并重建两套交付目录，证明直接镜像与包内原件一致后复用同一 verifier。
 
@@ -153,6 +154,7 @@ Breaking changes：
 - source lock 当前为 schema 5，profile 内完整记录 selected kernel channel/target/series/version/source hash；Action 执行身份不属于 source lock，feeds/source overlays/kernel/BBRv3 等消费者统一通过 `source_lock.py` 解释。其他 schema 的 incoming lock 需重新运行 resolver，设备配置与 sysupgrade 行为不受影响。
 - 手动 workflow 通过 `kernel_channel` 共同选择 Lean stable/testing channel，默认 stable；本地 resolver 省略该参数时沿用 common seed 的 testing 默认，自动 update 直接消费自己生成并锁定的通道。任何路径都不永久写死 6.12、6.18 或 point release；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析与目标 series 匹配的最新可信 BBRv3 port、物化并锁定 commit/hash。缺少兼容 port 时构建明确失败，不静默降级。
 - GitHub 官方复用 Actions 直接使用 `actions/*@main`，按用户选择追踪最新默认分支；任何上游 runtime/行为不兼容会使门禁直接失败。
+- 自动构建改为每日轻量检查、每周一完整构建、重大兼容变化提前构建；旧 `0 */18 * * *` 实际是每天 00:00/18:00 UTC 两次，不是滑动 18 小时。跨 run 的 `dl`/ccache 不再上传，成功中转 artifact 为 1 天兜底并在发布前删除，失败 diagnostics 保留 7 天，最近 6 个正式 Release 保持不变。
 - `diy-part2.sh` 不做可变 release 查询、服务策略修改或 `PKG_HASH:=skip`；它只应用 source lock 中已经验证的 metadata。PassWall 与 Kenzo 的窄修复均位于独立 feed patchset，由 patch applicator 在各自锁定 Git 工作树中 clean-apply、记录 hash，并在上游语义漂移时失败。
 - 正式 Release 必须由同一 source lock 下两台设备同时通过；任意分支的 `all` 都发布，单 profile 仅提供 Actions artifact。
 

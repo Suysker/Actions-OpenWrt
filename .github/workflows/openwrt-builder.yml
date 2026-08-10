@@ -152,7 +152,7 @@ jobs:
           name: source-lock
           path: ${{ runner.temp }}/source-lock
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
 
   build:
     name: Build ${{ matrix.profile }}
@@ -181,8 +181,7 @@ jobs:
           name: source-lock
           path: source-input
 
-      - name: Load profile and cache identities
-        id: identity
+      - name: Load and verify the profile identity
         shell: bash
         run: |
           set -euo pipefail
@@ -190,8 +189,6 @@ jobs:
           [ "${digest#sha256:}" = "${{ needs.prepare.outputs.source_digest }}" ]
           bash scripts/render-profile.sh env "$PROFILE" "$RUNNER_TEMP/profile.env"
           cat "$RUNNER_TEMP/profile.env" >> "$GITHUB_ENV"
-          python3 scripts/source_lock.py profile-identity \
-            "$SOURCE_LOCK" "$PROFILE" >> "$GITHUB_OUTPUT"
 
       - name: Prepare bounded runner workspace
         id: runner
@@ -228,22 +225,6 @@ jobs:
           git -C "$OPENWRT_ROOT" checkout -q --detach FETCH_HEAD
           [ "$(git -C "$OPENWRT_ROOT" rev-parse HEAD)" = "${source[1]}" ]
           mkdir -p "$OPENWRT_ROOT/dl" "$CCACHE_DIR"
-
-      - name: Restore source downloads
-        uses: actions/cache@main
-        with:
-          path: /builder/openwrt/dl
-          key: openwrt-dl-${{ runner.os }}-${{ needs.prepare.outputs.source_digest }}
-          restore-keys: |
-            openwrt-dl-${{ runner.os }}-
-
-      - name: Restore profile ccache
-        uses: actions/cache@main
-        with:
-          path: /builder/.ccache
-          key: openwrt-ccache-${{ runner.os }}-gcc15-${{ matrix.profile }}-${{ steps.identity.outputs.profile_digest }}-${{ steps.identity.outputs.patch_digest }}-${{ needs.prepare.outputs.source_digest }}
-          restore-keys: |
-            openwrt-ccache-${{ runner.os }}-gcc15-${{ matrix.profile }}-${{ steps.identity.outputs.profile_digest }}-${{ steps.identity.outputs.patch_digest }}-
 
       - name: Render profile declarations
         shell: bash
@@ -417,7 +398,7 @@ jobs:
           name: diagnostics-${{ matrix.profile }}
           path: diagnostics/${{ matrix.profile }}
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
       - name: Upload verified firmware
         uses: actions/upload-artifact@main
@@ -426,7 +407,7 @@ jobs:
           path: delivery/${{ matrix.profile }}
           if-no-files-found: error
           compression-level: 0
-          retention-days: 30
+          retention-days: 1
 
   aggregate:
     name: Assemble draft Release
@@ -547,8 +528,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      actions: write
       contents: write
     steps:
+      - name: Delete verified Actions transaction artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          artifact_ids="$(
+            gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+              --jq '.artifacts[].id'
+          )"
+          if [ -n "$artifact_ids" ]; then
+            while IFS= read -r artifact_id; do
+              gh api --method DELETE \
+                "repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}"
+            done <<< "$artifact_ids"
+          else
+            echo 'No Actions transaction artifacts remain for this run.'
+          fi
+
       - name: Publish the same verified draft
         shell: bash
         env:

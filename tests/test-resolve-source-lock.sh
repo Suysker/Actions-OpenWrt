@@ -424,6 +424,76 @@ assert module.lock_digest(base) == module.lock_digest(changed_time)
 changed_source = json.loads(json.dumps(base))
 changed_source["openwrt"]["commit"] = "8" * 40
 assert module.lock_digest(base) != module.lock_digest(changed_source)
+assert module.update_impact(base, changed_time) == {
+    "classification": "routine",
+    "reasons": [],
+}
+assert module.update_impact(base, changed_source)["classification"] == "routine"
+
+routine_update = json.loads(json.dumps(base))
+routine_update["feeds"]["packages"]["commit"] = "8" * 40
+routine_update["profiles"]["r4s"].update(
+    kernel_version="6.12.101", kernel_source_sha256="8" * 64
+)
+routine_update["kernel_features"]["bbr3"]["ports"]["6.12"].update(
+    origin_commit="8" * 40,
+    version="6.12.101",
+    source_sha256="8" * 64,
+)
+routine_update["kernel_features"]["bbr3"]["ports"]["6.12"]["patches"][0][
+    "raw_url"
+] = module.github_raw_url(
+    "https://github.com/CachyOS/kernel-patches.git", "8" * 40, origin_path
+)
+routine_update["upstream_artifacts"]["haproxy"].update(
+    version="3.4.3",
+    url="https://www.haproxy.org/download/3.4/src/haproxy-3.4.3.tar.gz",
+)
+routine_update["upstream_artifacts"]["geoip"].update(
+    tag="202601020001",
+    url="https://github.com/Loyalsoldier/geoip/releases/download/202601020001/geoip.dat",
+    checksum_url="https://github.com/Loyalsoldier/geoip/releases/download/202601020001/geoip.dat.sha256sum",
+)
+module.validate_lock(routine_update)
+assert module.update_impact(base, routine_update) == {
+    "classification": "routine",
+    "reasons": [],
+}
+
+kernel_transition = json.loads(json.dumps(base))
+kernel_transition["profiles"]["r4s"]["kernel_channel"] = "testing"
+module.validate_lock(kernel_transition)
+assert module.update_impact(base, kernel_transition) == {
+    "classification": "significant",
+    "reasons": ["profile-kernel-compatibility"],
+}
+
+artifact_transition = json.loads(json.dumps(base))
+artifact_transition["upstream_artifacts"]["haproxy"].update(
+    branch="3.6",
+    version="3.6.0",
+    url="https://www.haproxy.org/download/3.6/src/haproxy-3.6.0.tar.gz",
+)
+assert module.update_impact(base, artifact_transition) == {
+    "classification": "significant",
+    "reasons": ["artifact-compatibility-line"],
+}
+
+algorithm_transition = json.loads(json.dumps(base))
+algorithm_transition["kernel_features"]["bbr3"]["algorithm"]["commit"] = "8" * 40
+assert module.update_impact(base, algorithm_transition) == {
+    "classification": "significant",
+    "reasons": ["bbr3-compatibility"],
+}
+
+port_transition = json.loads(json.dumps(base))
+port_transition["kernel_features"]["bbr3"]["ports"]["6.12"]["patches"][0][
+    "install_name"
+] = "996-bbrv3.patch"
+assert module.update_impact(base, port_transition) == {
+    "classification": "significant",
+    "reasons": ["bbr3-compatibility"],
+}
 
 module.validate_action_refs(sorted((root / ".github/workflows").glob("*.yml")))
 with tempfile.TemporaryDirectory() as directory:
