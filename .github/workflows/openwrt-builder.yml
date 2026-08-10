@@ -1,4 +1,4 @@
-name: OpenWrt Builder
+name: OpenWrt Firmware Build & Release
 
 on:
   workflow_dispatch:
@@ -47,7 +47,7 @@ env:
 
 jobs:
   prepare:
-    name: Resolve immutable inputs
+    name: Resolve Immutable Build Inputs
     runs-on: ubuntu-latest
     timeout-minutes: 30
     outputs:
@@ -55,10 +55,10 @@ jobs:
       publish: ${{ steps.select.outputs.publish }}
       source_digest: ${{ steps.lock.outputs.source_digest }}
     steps:
-      - name: Checkout implementation
+      - name: Checkout Pipeline Repository
         uses: actions/checkout@main
 
-      - name: Select profiles
+      - name: Discover Build Profiles
         id: select
         shell: bash
         env:
@@ -91,7 +91,7 @@ jobs:
           printf 'matrix=%s\nprofiles=%s\npublish=%s\n' \
             "$matrix" "$profiles" "$publish" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve or accept one source lock
+      - name: Resolve Immutable Source Lock
         id: lock
         shell: bash
         env:
@@ -136,7 +136,7 @@ jobs:
           echo "Source lock: $digest"
           python3 scripts/source_lock.py summary "$lock" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Preflight the exact BBRv3 kernel ports
+      - name: Validate BBRv3 Kernel Patch Set
         shell: bash
         run: |
           set -euo pipefail
@@ -146,7 +146,7 @@ jobs:
             bash scripts/check-bbrv3-port.sh "$RUNNER_TEMP/source-lock/source-lock.json" "$version"
           done
 
-      - name: Upload immutable build inputs
+      - name: Upload Immutable Build Inputs
         uses: actions/upload-artifact@main
         with:
           name: source-lock
@@ -155,7 +155,7 @@ jobs:
           retention-days: 1
 
   build:
-    name: Build ${{ matrix.profile }}
+    name: Build Firmware (${{ matrix.profile }})
     needs: prepare
     runs-on: ubuntu-latest
     timeout-minutes: 360
@@ -172,16 +172,16 @@ jobs:
       CCACHE_DIR: /builder/.ccache
       CCACHE_MAXSIZE: 5G
     steps:
-      - name: Checkout implementation
+      - name: Checkout Pipeline Repository
         uses: actions/checkout@main
 
-      - name: Download immutable build inputs
+      - name: Download Immutable Build Inputs
         uses: actions/download-artifact@main
         with:
           name: source-lock
           path: source-input
 
-      - name: Load and verify the profile identity
+      - name: Load and Verify Profile Contract
         shell: bash
         run: |
           set -euo pipefail
@@ -190,12 +190,12 @@ jobs:
           bash scripts/render-profile.sh env "$PROFILE" "$RUNNER_TEMP/profile.env"
           cat "$RUNNER_TEMP/profile.env" >> "$GITHUB_ENV"
 
-      - name: Prepare bounded runner workspace
+      - name: Prepare Runner Workspace
         id: runner
         shell: bash
         run: bash scripts/prepare-runner.sh "$GITHUB_WORKSPACE/runner-report.txt"
 
-      - name: Install build prerequisites
+      - name: Install Build Dependencies
         shell: bash
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -213,7 +213,7 @@ jobs:
             rsync scons squashfs-tools subversion swig texinfo unzip wget \
             xmlto xxd zlib1g-dev
 
-      - name: Checkout locked Lean source
+      - name: Checkout Locked Lean Source
         shell: bash
         run: |
           set -euo pipefail
@@ -226,7 +226,7 @@ jobs:
           [ "$(git -C "$OPENWRT_ROOT" rev-parse HEAD)" = "${source[1]}" ]
           mkdir -p "$OPENWRT_ROOT/dl" "$CCACHE_DIR"
 
-      - name: Render profile declarations
+      - name: Render Profile Configuration
         shell: bash
         run: |
           set -euo pipefail
@@ -241,7 +241,7 @@ jobs:
           python3 scripts/kernel_selection.py set-config-channel \
             "$profile_dir/config.seed" "${kernel_plan[0]}"
 
-      - name: Checkout locked feeds and select providers
+      - name: Synchronize Locked Feeds and Providers
         shell: bash
         run: |
           set -euo pipefail
@@ -258,7 +258,7 @@ jobs:
             "$OPENWRT_ROOT" "$GITHUB_WORKSPACE/profile-input/required.txt" \
             "$GITHUB_WORKSPACE/profile-feed-install-report.txt"
 
-      - name: Apply locked artifacts and profile patches
+      - name: Apply Locked Sources and Patch Sets
         shell: bash
         run: |
           set -euo pipefail
@@ -268,7 +268,7 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/apply-profile-patches.sh" \
             "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" "$GITHUB_WORKSPACE/patch-report.txt"
 
-      - name: Install profile configuration and rootfs
+      - name: Install Profile Configuration and Root Filesystem
         shell: bash
         run: |
           set -euo pipefail
@@ -280,7 +280,7 @@ jobs:
           cp -a "$profile_dir/files" "$OPENWRT_ROOT/files"
           cp "$profile_dir/config.seed" "$OPENWRT_ROOT/.config"
 
-      - name: Resolve Kconfig contracts
+      - name: Resolve Kconfig Dependency Closure
         shell: bash
         run: |
           set -euo pipefail
@@ -296,7 +296,7 @@ jobs:
             "$GITHUB_WORKSPACE/forbidden-suboptions-check.txt"
           ./scripts/diffconfig.sh | tee "$GITHUB_WORKSPACE/config.effective"
 
-      - name: Download and prepare selected kernel sources
+      - name: Download Sources and Prepare Selected Kernel
         shell: bash
         run: |
           set -euo pipefail
@@ -304,7 +304,7 @@ jobs:
           make download -j8
           make target/linux/prepare
 
-      - name: Validate final profile contract
+      - name: Validate Final Profile Contract
         shell: bash
         run: |
           set -euo pipefail
@@ -312,7 +312,7 @@ jobs:
             "$PROFILE" "$OPENWRT_ROOT" "$SOURCE_LOCK" \
             "$GITHUB_WORKSPACE/profile-contract-report.txt" "$GITHUB_WORKSPACE"
 
-      - name: Compile firmware once in parallel
+      - name: Compile OpenWrt Firmware
         shell: bash
         env:
           BUILD_JOBS: ${{ steps.runner.outputs.build_jobs }}
@@ -331,7 +331,7 @@ jobs:
           fi
           ccache --show-stats | tee "$GITHUB_WORKSPACE/ccache-stats.txt"
 
-      - name: Collect and verify firmware provenance
+      - name: Collect and Verify Firmware Provenance
         shell: bash
         run: |
           set -euo pipefail
@@ -343,7 +343,7 @@ jobs:
             "$GITHUB_WORKSPACE/runner-report.txt" "$delivery"
           bash scripts/verify-firmware-artifacts.sh "$PROFILE" "$delivery" "$SOURCE_LOCK"
 
-      - name: Collect diagnostics
+      - name: Collect Failure Diagnostics
         if: failure()
         shell: bash
         run: |
@@ -391,7 +391,7 @@ jobs:
           fi
           df -hT > "$diagnostics/disk-final.txt"
 
-      - name: Upload diagnostics
+      - name: Upload Failure Diagnostics
         if: failure()
         uses: actions/upload-artifact@main
         with:
@@ -400,7 +400,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload verified firmware
+      - name: Upload Verified Firmware
         uses: actions/upload-artifact@main
         with:
           name: firmware-${{ matrix.profile }}
@@ -410,7 +410,7 @@ jobs:
           retention-days: 1
 
   aggregate:
-    name: Assemble draft Release
+    name: Assemble Release Candidate
     needs: [prepare, build]
     if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
@@ -420,22 +420,22 @@ jobs:
     outputs:
       release_tag: ${{ steps.release.outputs.release_tag }}
     steps:
-      - name: Checkout implementation
+      - name: Checkout Pipeline Repository
         uses: actions/checkout@main
 
-      - name: Download source lock
+      - name: Download Source Lock
         uses: actions/download-artifact@main
         with:
           name: source-lock
           path: source-input
 
-      - name: Download every profile firmware
+      - name: Download Verified Firmware Artifacts
         uses: actions/download-artifact@main
         with:
           pattern: firmware-*
           path: aggregate
 
-      - name: Name Release
+      - name: Generate Release Identity
         id: naming
         shell: bash
         run: |
@@ -445,7 +445,7 @@ jobs:
           printf 'release_id=%s\nrelease_tag=openwrt-%s\n' \
             "$release_id" "$release_id" >> "$GITHUB_OUTPUT"
 
-      - name: Re-verify and assemble collision-free assets
+      - name: Re-verify and Assemble Release Assets
         shell: bash
         env:
           RELEASE_ID: ${{ steps.naming.outputs.release_id }}
@@ -466,7 +466,7 @@ jobs:
           bash scripts/assemble-release.sh \
             "$lock" release-assets "$RELEASE_ID" "${inputs[@]}"
 
-      - name: Create draft Release
+      - name: Create Draft Release Candidate
         id: release
         shell: bash
         env:
@@ -501,29 +501,29 @@ jobs:
           echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
   release-verify:
-    name: Re-download and verify draft
+    name: Verify Release Candidate
     needs: aggregate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
     steps:
-      - name: Checkout implementation
+      - name: Checkout Pipeline Repository
         uses: actions/checkout@main
 
-      - name: Download every draft asset
+      - name: Download Draft Release Assets
         shell: bash
         env:
           GH_TOKEN: ${{ github.ref_name == github.event.repository.default_branch && github.token || secrets.ACTIONS_TRIGGER_PAT }}
           RELEASE_TAG: ${{ needs.aggregate.outputs.release_tag }}
         run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir downloaded-release
 
-      - name: Verify the downloaded transaction
+      - name: Verify Downloaded Release
         shell: bash
         run: bash scripts/verify-release-assets.sh downloaded-release
 
   publish-final:
-    name: Publish verified Release
+    name: Publish Verified Release
     needs: [aggregate, release-verify]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -531,7 +531,7 @@ jobs:
       actions: write
       contents: write
     steps:
-      - name: Delete verified Actions transaction artifacts
+      - name: Delete Verified Transaction Artifacts
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -551,7 +551,7 @@ jobs:
             echo 'No Actions transaction artifacts remain for this run.'
           fi
 
-      - name: Publish the same verified draft
+      - name: Publish Verified Release
         shell: bash
         env:
           GH_TOKEN: ${{ github.ref_name == github.event.repository.default_branch && github.token || secrets.ACTIONS_TRIGGER_PAT }}
@@ -559,14 +559,14 @@ jobs:
         run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
 
   cleanup:
-    name: Retain six verified production Releases
+    name: Apply Release Retention Policy
     needs: [aggregate, publish-final]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - name: Delete only excess published OpenWrt Releases
+      - name: Delete Superseded OpenWrt Releases
         shell: bash
         env:
           GH_TOKEN: ${{ github.ref_name == github.event.repository.default_branch && github.token || secrets.ACTIONS_TRIGGER_PAT }}

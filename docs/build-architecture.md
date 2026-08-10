@@ -230,7 +230,7 @@ lessons.md                        # 跨问题的根因模式和预防规则
 ## 4. 总体数据流
 
 ```text
-daily Update Checker or manual OpenWrt Builder dispatch
+daily OpenWrt Upstream Update Monitor or manual OpenWrt Firmware Build & Release dispatch
   -> weekly due / significant upstream impact decision
   -> repository declarations + rendered common/device intent + floating upstreams
   -> kernel_selection.py selects stable/testing metadata from locked Lean
@@ -1137,7 +1137,7 @@ rendered profile intent
 
 构建选择与 Release 授权是两个独立职责：
 
-- `prepare / Select profiles` 只从 profile 目录发现构建矩阵；选择 `all` 就进入完整 Release 事务，不枚举或特判分支名。
+- `prepare / Discover Build Profiles` 只从 profile 目录发现构建矩阵；选择 `all` 就进入完整 Release 事务，不枚举或特判分支名。
 - `build` 只依赖 profile 矩阵和 source lock，不理解发布令牌、tag 或资产命名。
 - Release jobs 由当前 ref 自动选择授权：默认分支使用内置 `GITHUB_TOKEN`；非默认分支使用仓库已有的 `ACTIONS_TRIGGER_PAT`，因为当目标 commit 相对默认分支修改 workflow 时，GitHub 不允许内置 token 创建或更新指向该 commit 的 Release。
 - 所有 `gh release` 调用显式使用 `--repo "$GITHUB_REPOSITORY"`。checkout 只为读取仓库脚本和文档服务，Release create/download/edit/list/delete 不依赖当前目录存在 `.git`；因此不需要源码的 publish/cleanup job 可以保持最小权限和零 checkout。
@@ -1232,9 +1232,9 @@ make -j1 V=sc package/.../compile
 
 失败时上传 7 天 diagnostics，包括并行/串行日志、OpenWrt logs、最终 config、provider/compatibility 信息、当轮本地 ccache 统计与模块候选。成功路径上传已经通过 verifier 的 delivery artifact 供当前事务聚合，`compression-level: 0` 避免再次压缩固件镜像；中转 artifact 的兜底保留期为 1 天，正式双平台 Release 回下载验证后立即删除。
 
-### 15.7 自动频率与 Update Checker
+### 15.7 自动频率与 OpenWrt Upstream Update Monitor
 
-`Update Checker` 在 `Asia/Shanghai` 每天 03:17 运行一次。该 job 的现有观测耗时约 20～36 秒，只解析完整双 profile source lock 和 Release 基线，不编译工具链或固件。每周一无条件把当天最新 lock 交给一次 `profile=all` 构建；其余日期只有 `source_lock.py update-impact` 判定为重大上游变化时才提前派发。选择 03:17 而不是整点，是为了避开 GitHub 定时任务的高峰拥塞。需要立即构建时直接手动运行 `OpenWrt Builder`；不再保留 `Update Checker` 的第二个人工入口或 `force_build` 分支。
+`OpenWrt Upstream Update Monitor` 在 `Asia/Shanghai` 每天 03:17 运行一次。该 job 的现有观测耗时约 20～36 秒，只解析完整双 profile source lock 和 Release 基线，不编译工具链或固件。每周一无条件把当天最新 lock 交给一次 `profile=all` 构建；其余日期只有 `source_lock.py update-impact` 判定为重大上游变化时才提前派发。选择 03:17 而不是整点，是为了避开 GitHub 定时任务的高峰拥塞。需要立即构建时直接手动运行 `OpenWrt Firmware Build & Release`；不再保留 monitor 的第二个人工入口或 `force_build` 分支。
 
 重大更新使用最近一个已发布 `openwrt-*` Release 内的 `source-lock.json` 作为持久基线，不使用七天可能淘汰的 Actions cache。比较由 source-lock 领域模块生成兼容性投影，workflow 不读取 schema 字段：
 
@@ -1472,7 +1472,7 @@ Release 级验收在 GitHub 上完成完整闭环：aggregate 先复验两个 de
 | N5105 VLAN backport 文件消失 | 接受 target backport 或 prepared upstream 等价语义，拒绝按版本号猜测 |
 | Action `@main` 或 `ubuntu-latest` 漂移 | 这是明确的最新跟踪策略；只允许官方 action，记录 runner 事实，并由真实构建/交付门禁阻止坏版本发布 |
 | runner 磁盘不足或清理越界 | 白名单 realpath 验证、空间门槛和 timeout；不运行第三方清盘脚本 |
-| 高频 schedule 耗尽 Actions minutes | Update Checker 每日只做不足一分钟的解析；每周一构建一次，其他日期仅在 Release 基线的重大兼容投影变化时提前构建 |
+| 高频 schedule 耗尽 Actions minutes | OpenWrt Upstream Update Monitor 每日只做不足一分钟的解析；每周一构建一次，其他日期仅在 Release 基线的重大兼容投影变化时提前构建 |
 | “重大更新”退化为硬编码版本列表 | `source_lock.py` 按 schema 结构生成兼容投影；workflow 不枚举组件、版本或 profile，普通 commit/patch/tag 漂移留给周构建 |
 | 跨 run cache 吞噬存储且低命中 | 不上传 dl/ccache；只保留当轮本地状态，下载仍由 OpenWrt hash 验证 |
 | 成功 artifact 与 Release 重复占空间 | Actions artifact 只做当前 run 中转；Release 回下载验证后动态删除，兜底 1 天，最近六个 Release 才是长期产品 |

@@ -1,4 +1,4 @@
-name: Update Checker
+name: OpenWrt Upstream Update Monitor
 
 on:
   schedule:
@@ -14,14 +14,14 @@ concurrency:
 
 jobs:
   check:
-    name: Decide whether the dual firmware build is due
+    name: Evaluate Scheduled Firmware Build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Checkout current default-branch implementation
+      - name: Checkout Monitoring Configuration
         uses: actions/checkout@main
 
-      - name: Resolve one dual-profile source lock
+      - name: Resolve Current Dual-Profile Source Lock
         id: lock
         shell: bash
         env:
@@ -40,7 +40,7 @@ jobs:
           echo "source_digest=${digest#sha256:}" >> "$GITHUB_OUTPUT"
           echo "Resolved complete fingerprint: $digest"
 
-      - name: Compare the released compatibility boundary
+      - name: Evaluate Released Compatibility Boundary
         id: decision
         shell: bash
         env:
@@ -113,7 +113,7 @@ jobs:
             python3 scripts/source_lock.py summary .source-state/source-lock.json
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Dispatch the exact source lock to the dual build
+      - name: Dispatch Scheduled Firmware Build
         if: steps.decision.outputs.dispatch == 'true'
         shell: bash
         env:

@@ -26,7 +26,7 @@
 
 ## 使用方法
 
-1. 在 GitHub Actions 中选择 `OpenWrt Builder`。
+1. 在 GitHub Actions 中选择 `OpenWrt Firmware Build & Release`。
 2. 点击 `Run workflow`。
 3. `kernel_channel` 选择 `stable`（默认，2026-08-02 审计对应 6.12）或 `testing`（当时对应 6.18）；实际 series、point release 和源码 hash 以该次 source lock 为准。
 4. 任意分支选择 `profile=all` 都会构建两个平台并发布正式 Release；`r4s` 或 `x86-n5105-pve` 只构建对应 Actions artifact。
@@ -38,7 +38,7 @@
 
 默认分支发布使用 GitHub 内置 token。当非默认分支相对默认分支修改了 workflow，GitHub API 要求一个同时具有仓库与 workflow 写权限的凭据；workflow 只在 Release jobs 中使用仓库已配置的 `ACTIONS_TRIGGER_PAT`。
 
-`Update Checker` 每天 03:17（`Asia/Shanghai`）做一次约半分钟的轻量解析，每周一固定把最新完整 source lock 交给双平台构建。其他日期只在最近正式 Release 到当前发生重大兼容变化时提前构建：selected kernel target/channel/series、Git 来源身份、受控组件的 `major.minor` 兼容线、BBRv3 算法 commit 或 port 拓扑。普通 Lean/feed commit、kernel point release、组件 patch release 和 Geo 日期 tag 由周构建吸收。需要立即构建时直接手动运行 `OpenWrt Builder`，没有第二套强制更新入口。
+`OpenWrt Upstream Update Monitor` 每天 03:17（`Asia/Shanghai`）做一次约半分钟的轻量解析，每周一固定把最新完整 source lock 交给双平台构建。其他日期只在最近正式 Release 到当前发生重大兼容变化时提前构建：selected kernel target/channel/series、Git 来源身份、受控组件的 `major.minor` 兼容线、BBRv3 算法 commit 或 port 拓扑。普通 Lean/feed commit、kernel point release、组件 patch release 和 Geo 日期 tag 由周构建吸收。需要立即构建时直接手动运行 `OpenWrt Firmware Build & Release`，没有第二套强制更新入口。
 
 ## Profile 如何维护
 
