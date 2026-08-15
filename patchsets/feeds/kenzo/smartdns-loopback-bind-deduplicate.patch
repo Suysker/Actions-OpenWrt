@@ -1,0 +1,15 @@
+diff --git a/smartdns/patches/100-deduplicate-loopback-bind.patch b/smartdns/patches/100-deduplicate-loopback-bind.patch
+new file mode 100644
+--- /dev/null
++++ b/smartdns/patches/100-deduplicate-loopback-bind.patch
+@@ -0,0 +1,10 @@
++--- a/package/openwrt/files/etc/init.d/smartdns
+++++ b/package/openwrt/files/etc/init.d/smartdns
++@@ -540 +540,6 @@ conf_append_bind()
++-	[ ! -z "$devices" ] && devices="$devices lo"
+++	if [ -n "$devices" ]; then
+++		case " $devices " in
+++			*" lo "*) ;;
+++			*) devices="$devices lo" ;;
+++		esac
+++	fi

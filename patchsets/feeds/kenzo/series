@@ -1,1 +1,2 @@
 adguardhome-dns-redirect-dualstack.patch
+smartdns-loopback-bind-deduplicate.patch

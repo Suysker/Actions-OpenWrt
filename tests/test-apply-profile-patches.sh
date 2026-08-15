@@ -492,6 +492,31 @@ if grep -Fq 'redirect_local' "$adguard_init"; then
 fi
 grep -Eq '^applied_feed_kenzo=adguardhome-dns-redirect-dualstack\.patch sha256:[0-9a-f]{64}$' \
   "$report"
+smartdns_bind_patch="$openwrt/feeds/kenzo/smartdns/patches/100-deduplicate-loopback-bind.patch"
+[ -f "$smartdns_bind_patch" ]
+grep -Fqx $'+\tif [ -n "$devices" ]; then' "$smartdns_bind_patch"
+grep -Fqx $'+\t\tcase " $devices " in' "$smartdns_bind_patch"
+grep -Fqx $'+\t\t\t*" lo "*) ;;' "$smartdns_bind_patch"
+grep -Fqx $'+\t\t\t*) devices="$devices lo" ;;' "$smartdns_bind_patch"
+smartdns_source="$tmpdir/smartdns-source"
+mkdir -p "$smartdns_source/package/openwrt/files/etc/init.d"
+cat > "$smartdns_source/package/openwrt/files/etc/init.d/smartdns" <<'EOF'
+conf_append_bind() {
+	devices=$(echo "$devices" | sed 's/,/ /g')
+	[ ! -z "$devices" ] && devices="$devices lo"
+	[ -z "$devices" ] && devices="-"
+}
+EOF
+patch -d "$smartdns_source" -p1 --batch --forward < "$smartdns_bind_patch"
+smartdns_init="$smartdns_source/package/openwrt/files/etc/init.d/smartdns"
+grep -Fqx $'\tif [ -n "$devices" ]; then' "$smartdns_init"
+grep -Fqx $'\t\t\t*" lo "*) ;;' "$smartdns_init"
+if grep -Fq '[ ! -z "$devices" ] && devices="$devices lo"' "$smartdns_init"; then
+  echo "SmartDNS package patch retained the duplicate loopback append" >&2
+  exit 1
+fi
+grep -Eq '^applied_feed_kenzo=smartdns-loopback-bind-deduplicate\.patch sha256:[0-9a-f]{64}$' \
+  "$report"
 grep -Fxq $'\t$(MAKE) -C $(PKG_BUILD_DIR) $(TARGET_CONFIGURE_OPTS) CC="$(TARGET_CC)" CFLAGS="$(TARGET_CFLAGS) -Wall" LDFLAGS="$(TARGET_LDFLAGS)"' \
   "$openwrt/feeds/small/tcping/Makefile"
 if grep -Eq '^PKG_(VERSION|HASH):=' "$openwrt/feeds/small/tcping/Makefile"; then
@@ -586,6 +611,8 @@ grep -Eq '^present_feed_passwall=ipt2socks-dualstack\.patch sha256:[0-9a-f]{64}$
 grep -Eq '^present_feed_passwall=dnsmasq-addnmount-lifecycle\.patch sha256:[0-9a-f]{64}$' \
   "$second_report"
 grep -Eq '^present_feed_kenzo=adguardhome-dns-redirect-dualstack\.patch sha256:[0-9a-f]{64}$' \
+  "$second_report"
+grep -Eq '^present_feed_kenzo=smartdns-loopback-bind-deduplicate\.patch sha256:[0-9a-f]{64}$' \
   "$second_report"
 grep -qx 'selected_kernel_ppp_tx_scatter_gather_status=compatibility-present' "$second_report"
 grep -qx 'bbrv3_module_version_status=compatibility-present' "$second_report"

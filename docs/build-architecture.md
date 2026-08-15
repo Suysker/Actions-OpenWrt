@@ -200,7 +200,7 @@ patchsets/
     bbr3-module-version.patch     # module stripping 的窄兼容补丁
   common/series                   # 仓库 common patch 顺序
   feeds/passwall/series           # PassWall feed-local patch 顺序
-  feeds/kenzo/series              # AdGuardHome feed-local patch 顺序
+  feeds/kenzo/series              # AdGuardHome/SmartDNS feed-local patch 顺序
   r4s/series                      # R4S patch 顺序
   x86-n5105-pve/series            # N5105 patch 顺序
 
@@ -791,7 +791,7 @@ common 只拥有协议与地址，R4S 的物理接口映射由 Lean target 拥�
 
 ### 10.2 DNS 与私密配置边界
 
-同时编译五个 DNS/代理组件不等于让五个服务争抢 `:53`。构建阶段只负责 package、provider、iptables 依赖、安全 package default 和配置接口兼容；其中 Kenzo feed compatibility 保证 AdGuardHome 的 redirect 同时覆盖 TCP/IPv6，PassWall compatibility 保证临时 dnsmasq 规则目录的 jail mount 声明与目录生命周期一致。SmartDNS 对相同类型和地址的重复 bind 会自行告警并跳过，不为无功能影响的日志噪声维护源码补丁。实际 listener、redirect 端口、upstream、cache、域名规则、PassWall DNS mode、节点和订阅仍由设备上的 UCI/YAML 决定。
+同时编译五个 DNS/代理组件不等于让五个服务争抢 `:53`。构建阶段只负责 package、provider、iptables 依赖、安全 package default 和配置接口兼容；其中 Kenzo feed compatibility 保证 AdGuardHome 的 redirect 同时覆盖 TCP/IPv6，并修复 SmartDNS 启动脚本在显式 loopback 设备后再次追加 `lo` 的问题；PassWall compatibility 保证临时 dnsmasq 规则目录的 jail mount 声明与目录生命周期一致。SmartDNS 本身虽然会记录“already configured, skip”，但重复生成的 UDP/TCP loopback bind 已在实机上造成接收队列耗尽和解析链 SERVFAIL，因此 package patch 必须在配置生成前去重。实际 listener、redirect 端口、upstream、cache、域名规则、PassWall DNS mode、节点和订阅仍由设备上的 UCI/YAML 决定。
 
 #### 10.2.1 AdGuard-first 的统一 53 入口
 
@@ -812,6 +812,8 @@ flowchart LR
     OUT --> AGH
     AGH -->|"public DNS"| MOS["MosDNS :5335"]
     AGH -->|".lan / private PTR"| DNSMASQ["192.168.2.1:53 dnsmasq"]
+    MOS -->|"domestic"| SMART["SmartDNS :6053 on lo"]
+    MOS -->|"overseas"| REMOTE["remote encrypted DNS"]
 ```
 
 启用 `redirect` 之前，设备配置必须同时满足以下合同：
@@ -820,6 +822,7 @@ flowchart LR
 2. AdGuard 继续监听 `5553`；`upstream_dns` 中的 `[/lan/]127.0.0.1:53` 改为 `[/lan/]192.168.2.1:53`，`local_ptr_upstreams` 同样改为 `192.168.2.1:53`。这里使用设备当前 LAN 网关；LAN 地址变化时必须同步更新，补丁本身不写死该地址。
 3. 旧配置迁移必须先提交 YAML 中的两处本地上游，再启动或重启新版 AdGuard；确认四条 OUTPUT 规则存在且本机解析正常后，才执行 `uci -q del_list dhcp.@dnsmasq[0].server='127.0.0.1#5553'`、提交并 reload dnsmasq。不能把仍指向 `127.0.0.1:53` 的旧 YAML 与新版 `redirect` 同时启用，否则 AdGuard 的本地查询会被 OUTPUT 送回自身。验证失败时应先关闭现有 redirect 模式，而不是继续删除回退路径。
 4. PassWall 关闭自己的 DNS 劫持。新版 AdGuard redirect 已在 mangle 阶段保护 53；PassWall 的 TCP/UDP 53“不转发”条目可以继续保留，作为配置层的重复保护且不改变链路结果。若以后希望精简，也只能在新版规则实机生效后删除；旧固件没有这层保护，不能提前删除。
+5. SmartDNS 在 `lo:6053` 只生成一组 UDP/TCP 监听；Kenzo package patch 对隐式追加的 `lo` 去重，若上游启动脚本变化导致补丁失配，package 构建必须失败。当前链路已有 AdGuard optimistic cache 与 MosDNS lazy cache，SmartDNS 的 `prefetch_domain`、`serve_expired` 和全局极低 `rr_ttl_min` 默认不再叠加启用，除非通过压力测试证明有明确收益。
 
 这条链中 dnsmasq 不再把公网查询回送给 AdGuard；它只接受 AdGuard 对 `.lan` 和私网 PTR 的定向查询。LAN 客户端与路由器默认 resolver 的第一站都是 AdGuard，同时不改变 dnsmasq 的监听端口和 DHCP 职责。该拓扑是设备运行时配置，不作为 R4S/N5105 的跨设备 factory default。
 

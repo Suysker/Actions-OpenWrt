@@ -81,9 +81,9 @@ feed 索引覆盖全部锁定源，但安装阶段只提交当前 profile 的 re
 
 AdGuardHome、MosDNS、SmartDNS、dnsmasq-full 和 PassWall 都会被编译，但 DNS 端口、上游、缓存、规则、节点、订阅和凭据是用户常用的设备运行时配置，不烘焙进两台设备共用的镜像。它们应按设备实际 UCI/YAML、socket、iptables redirect 和完整查询链验收。
 
-PassWall 在关闭 DNS 劫持并复用系统 dnsmasq 时会通过 UCI `addnmount` 声明生成规则目录。common patch 让 Lean 的 dnsmasq init 把存在的目录纳入只读 procd jail mount，并忽略已经消失的临时路径；PassWall feed 补丁在启停和 DNS 模式切换时先清理旧声明、只登记真实存在的目录，同时让 `ipt2socks` 绑定 `0.0.0.0`/`::` 并使用两个 worker。Kenzo feed 补丁让 AdGuardHome redirect 按 LAN 入接口覆盖 IPv4/IPv6 TCP/UDP 53，在 mangle 阶段阻止 PassWall TPROXY 抢先接管 DNS，并在同一生命周期内把路由器默认 resolver 发往 IPv4/IPv6 loopback 53 的查询汇聚到同一 AdGuard 端口，不维护第二个隐藏开关；规则变更使用进程锁串行化，清理时会删净历史重复项。这些补丁不写入设备运行时 UCI/YAML 中的 DNS 上游、监听端口、过滤规则或代理节点；无环配置前提与迁移顺序见架构文档 10.2.1。
+PassWall 在关闭 DNS 劫持并复用系统 dnsmasq 时会通过 UCI `addnmount` 声明生成规则目录。common patch 让 Lean 的 dnsmasq init 把存在的目录纳入只读 procd jail mount，并忽略已经消失的临时路径；PassWall feed 补丁在启停和 DNS 模式切换时先清理旧声明、只登记真实存在的目录，同时让 `ipt2socks` 绑定 `0.0.0.0`/`::` 并使用两个 worker。Kenzo feed 补丁让 AdGuardHome redirect 按 LAN 入接口覆盖 IPv4/IPv6 TCP/UDP 53，在 mangle 阶段阻止 PassWall TPROXY 抢先接管 DNS，并在同一生命周期内把路由器默认 resolver 发往 IPv4/IPv6 loopback 53 的查询汇聚到同一 AdGuard 端口，不维护第二个隐藏开关；规则变更使用进程锁串行化，清理时会删净历史重复项。Kenzo 的 SmartDNS package patch 还会在启动脚本追加隐式 loopback 监听前先去重，避免显式 `bind_device_name='lo'` 生成两组相同 UDP/TCP bind。这些补丁不写入设备运行时 UCI/YAML 中的 DNS 上游、监听端口、过滤规则或代理节点；无环配置前提与迁移顺序见架构文档 10.2.1。
 
-PassWall 自行生成并管理 HAProxy 实例；common factory defaults 禁用官方 HAProxy 软件包自带的示例服务，避免无用途地在所有接口开放 `60000/tcp`。实际 AdGuardHome 由其 LuCI 集成服务管理。
+PassWall 自行生成并管理 HAProxy 实例；common factory defaults 禁用官方 HAProxy 软件包自带的示例服务，避免无用途地在所有接口开放 `60000/tcp`。PassWall HAProxy 的运行时健康检查 URL 必须覆盖实际要保障的目标能力，不能用一个更宽松、与故障站点无关的探针替代。实际 AdGuardHome 由其 LuCI 集成服务管理。
 
 BBRv3 同时适用于本机 IPv4 TCP 与 IPv6 TCP。Linux 的 IPv6 TCP socket 同样进入通用 `tcp_init_sock()` 和 `tcp_congestion_ops`，所以源码位于 `net/ipv4/tcp_bbr.c` 不代表“只支持 IPv4”。它不接管 UDP/QUIC，也不会改变普通 NAT 转发连接在 LAN 客户端/远端服务器上的端到端拥塞控制；PassWall/Xray 在路由器本机建立的 TCP outbound 才会直接使用它。
 
