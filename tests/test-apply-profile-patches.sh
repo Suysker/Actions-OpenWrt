@@ -104,16 +104,12 @@ lock = {
             "tag": "202601010001",
             "url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat",
             "sha256": "d" * 64,
-            "checksum_url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat.sha256sum",
-            "checksum_sha256": "e" * 64,
         },
         "geosite": {
             "policy": "latest-stable",
             "tag": "202601010002",
             "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat",
             "sha256": "f" * 64,
-            "checksum_url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat.sha256sum",
-            "checksum_sha256": "0" * 64,
         },
     },
     "profiles": {
@@ -221,11 +217,7 @@ dnsmasq_start()
 EOF
 cat > "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh" <<'EOF'
 run_ipt2socks() {
-	case "$proto" in
-	*)
-		flag="${flag}_TCP_UDP"
-	;;
-	esac
+	flag="${flag}_TCP_UDP"
 	_extra_param="${_extra_param} -o 60 -n 65535 -v"
 	ln_run "$(first_type ipt2socks)" "ipt2socks_${flag}" $log_file -l $local_port -b 0.0.0.0 -s $socks_address -p $socks_port ${_extra_param}
 }
@@ -240,6 +232,7 @@ start_dns() {
 			-USE_DIRECT_LIST "${USE_DIRECT_LIST}" -USE_PROXY_LIST "${USE_PROXY_LIST}" -USE_BLOCK_LIST "${USE_BLOCK_LIST}" -USE_GFW_LIST "${USE_GFW_LIST}" -CHN_LIST "${CHN_LIST}" \
 			-TCP_NODE ${TCP_NODE} -DEFAULT_PROXY_MODE ${TCP_PROXY_MODE} -NO_PROXY_IPV6 ${DNSMASQ_FILTER_PROXY_IPV6:-0} -NFTFLAG ${nftflag:-0} \
 			-NO_LOGIC_LOG ${NO_LOGIC_LOG:-0}
+		uci -q delete dhcp.@dnsmasq[0].min_cache_ttl
 		uci -q add_list dhcp.@dnsmasq[0].addnmount=${GLOBAL_DNSMASQ_CONF_PATH}
 		uci -q commit dhcp
 		lua $APP_PATH/helper_dnsmasq.lua logic_restart -LOG 1

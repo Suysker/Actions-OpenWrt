@@ -290,7 +290,7 @@ daily OpenWrt Upstream Update Monitor or manual OpenWrt Firmware Build & Release
 - build、aggregate 和 release-download 三个边界复用 `verify-firmware-artifacts.sh`。
 - 失败日志属于 diagnostics；正式资产只保留可复核交付及一个结构化 provenance。
 - 自动与手动入口都汇入同一个 `openwrt-builder.yml`；不增加 weekly builder、紧急 builder、冷却脚本或第二套 source-lock 解析器。
-- `source_lock.py` 从最近正式 Release 的 lock 与当前 lock 生成兼容性投影：内核 target/channel/series、Git 来源身份、受控 semver 兼容线、BBRv3 算法 commit 和 port 拓扑。只有投影变化属于重大更新；point release、普通 feed commit 与 Geo 数据 tag 漂移由周构建吸收。
+- `source_lock.py update-projection` 从当前 lock 生成兼容性投影，与上次已派发状态比较；首次启用时从最近正式 Release 初始化基线。投影包含内核 target/channel/series、Git 来源身份、受控 semver 兼容线、BBRv3 算法 commit 和 port 拓扑。只有投影变化属于重大更新；point release、普通 feed commit 与 Geo 数据 tag 漂移由周构建吸收。
 - Release 是长期产品存储，Actions artifact 只是同一 run 内 `prepare -> build -> aggregate` 的事务传输接口；回下载验证通过后由 builder 按 run 动态发现并删除，不维护 artifact 名单。
 
 ### 5.3 命名与风格
@@ -440,7 +440,7 @@ GitHub Actions 不写入 source lock。Action 在 workflow 开始时已由 GitHu
 ### 6.3 hash 策略
 
 - release asset 必须有真实 SHA256。
-- Geo 数据同时校验发布方 checksum 资产。
+- Geo 数据采用 GitHub Release API 提供的 asset digest，交给 OpenWrt 原生下载流程校验。
 - BBRv3 patch 下载后计算 hash，并对精确 Linux version clean-apply。
 - package metadata 不允许 `PKG_HASH:=skip` 或 `releases/latest/download`。
 - `make download -j8` 是 OpenWrt 全部 source 的统一 hash 门禁。
@@ -618,10 +618,12 @@ flowchart LR
 |---|---|---|
 | HAProxy | 官方仍受支持的最高 LTS 分支最新 patch release | HAProxy 官方 release metadata 与 SHA256 |
 | AdGuardHome | GitHub 最新非 prerelease stable | 精确 tag/commit、源码与 frontend 资产 hash |
-| GeoIP | `Loyalsoldier/geoip` 最新非 prerelease | `geoip.dat` asset digest 与发布 checksum |
-| Geosite | `Loyalsoldier/v2ray-rules-dat` 最新非 prerelease | `geosite.dat` asset digest 与发布 checksum |
+| GeoIP | `Loyalsoldier/geoip` 最新非 prerelease | `geoip.dat` asset digest |
+| Geosite | `Loyalsoldier/v2ray-rules-dat` 最新非 prerelease | `geosite.dat` asset digest |
 
 resolver 在 prepare 中解析一次，applicator 只把 lock 中的精确版本、不可变 URL 和 64 位 SHA256 写进当前 worktree；它不访问网络，也不解析 `latest`。若 feed recipe 已是同一版本就只核验，若落后就更新本轮工作目录。`make download` 再使用 OpenWrt 自身的 hash 校验全部 source。
+
+HAProxy、AdGuardHome frontend 和 Geo 数据直接采用上游发布元数据中的摘要，解析阶段不下载这些 payload。AdGuardHome 自动生成的源码归档没有上述发布资产摘要，因此仍需下载计算本轮 `PKG_HASH`；这是生成原生下载所需输入，不是重复验证已有上游摘要。版本与摘要每轮一起解析，无需手工更新。
 
 因此仓库中看见的某个上游 recipe `PKG_HASH` 是该 recipe 自身的 metadata，不代表项目永久锁死；项目新增的普通上游版本/hash不得写死。允许稳定固定的是用户明确选择的功能/ABI 代际，例如 GCC15、BBRv3 module version 3 和 N5105 x86-64-v2 基线。
 
@@ -1237,16 +1239,18 @@ make -j1 V=sc package/.../compile
 
 ### 15.7 自动频率与 OpenWrt Upstream Update Monitor
 
-`OpenWrt Upstream Update Monitor` 在 `Asia/Shanghai` 每天 03:17 运行一次。该 job 的现有观测耗时约 20～36 秒，只解析完整双 profile source lock 和 Release 基线，不编译工具链或固件。每周一无条件把当天最新 lock 交给一次 `profile=all` 构建；其余日期只有 `source_lock.py update-impact` 判定为重大上游变化时才提前派发。选择 03:17 而不是整点，是为了避开 GitHub 定时任务的高峰拥塞。需要立即构建时直接手动运行 `OpenWrt Firmware Build & Release`；不再保留 monitor 的第二个人工入口或 `force_build` 分支。
+`OpenWrt Upstream Update Monitor` 在 `Asia/Shanghai` 每天 03:17 运行一次，只解析完整双 profile source lock 和调度基线，不编译工具链或固件。每周一把当天最新 lock 交给一次 `profile=all` 构建，不受兼容性去重限制；其余日期只有兼容性投影变化时才提前派发。选择 03:17 而不是整点，是为了避开 GitHub 定时任务的高峰拥塞。需要立即构建时直接手动运行 `OpenWrt Firmware Build & Release`；不再保留 monitor 的第二个人工入口或 `force_build` 分支。
 
-重大更新使用最近一个已发布 `openwrt-*` Release 内的 `source-lock.json` 作为持久基线，不使用七天可能淘汰的 Actions cache。比较由 source-lock 领域模块生成兼容性投影，workflow 不读取 schema 字段：
+重大更新使用独立 `build-monitor-state` 分支中的 `compatibility.json` 作为上次已派发的持久基线，不使用会被淘汰的 Actions cache。该分支只保存一个投影文件，不保存源码、固件或完整 lock；每次以无父提交更新，不累计状态历史，也不参与固件源码构建。分支尚不存在时，按发布时间选最近一个正式 `openwrt-*` Release，从其 `source-lock.json` 初始化比较基线。投影始终由 `source_lock.py update-projection` 生成规范化 JSON，workflow 不枚举 schema 字段：
 
 - profile 集合、selected kernel target/channel/series 变化；
 - OpenWrt、feed 或 source overlay 的仓库/ref 身份变化，而普通 commit 前进不算；
 - 任意带标准三段版本的受控 artifact 跨越 `major.minor` 兼容线，而 patch release 与 Geo 日期 tag 不算；
 - BBRv3 算法 commit、模块代际/runtime 身份、port provider 或 patch 拓扑变化，而同一拓扑内的适配内容更新由周构建吸收。
 
-找不到正式 Release、基线资产缺失或基线无法按当前 schema 验证时，checker 必须派发一次构建以重新建立基线，不能静默跳过。判定输出只允许 `weekly`、`significant` 或 `routine`；`weekly`/`significant` 携带当前精确 source lock 派发，`routine` 只写摘要。每周触发和重大更新共用同一个决策点，同一天只派发一次。
+状态分支和正式 Release 都不存在时，checker 首次派发构建。网络、权限、资产缺失或状态损坏必须报错，不把读取失败解释为重大更新。判定输出只允许 `weekly`、`significant` 或 `routine`；`weekly`/`significant` 携带当前精确 source lock 派发，`routine` 只写摘要。GitHub 接受 dispatch 后才保存投影，不等待固件成功或 Release 发布；因此同一兼容状态下的失败不会触发每日重试，修复后可手动构建或等待周构建。新兼容变化仍可提前派发。
+
+monitor 串行运行且不主动取消正在执行的任务，状态更新使用精确旧 ref 的 `force-with-lease`，拒绝覆盖并发修改。dispatch 与 Git 状态写入不是跨 API 原子事务：若 dispatch 已接受但状态写入失败，monitor 必须报错，下次检查可能重复派发；不能预先记为已派发而永久漏掉未被接受的构建。周触发和重大更新共用一个决策点，一次检查最多派发一次。
 
 旧表达式 `0 */18 * * *` 中的步长只在 0–23 小时字段内展开，实际每天在 00:00 和 18:00 UTC 各运行一次，并形成 18 小时、6 小时交替间隔，不是滑动的“每 18 小时”。上游滚动时，它会让一次约 200 job-minutes 的双平台事务在十天内重复十余次。新策略通常约为四至五次双平台事务/月，加上不足一分钟/天的检查；相较旧频率大幅降低，同时保证每周吸收普通更新、重大兼容变化最多等待到下一次日检。
 
@@ -1297,6 +1301,8 @@ SHA256SUMS
 实际直接镜像角色从各 profile 的 `IMAGE_PATTERN` 和 release assembler 规则确定；Release 不展示 `<profile>--<internal-file>` 形式的内部映射，也不把几十个 build metadata 文件平铺给用户。每个平台的 `-full.tar.gz` 保留原始 delivery 目录，供复核、故障定位和完整回滚。
 
 OpenWrt 原始 `sha256sums` 在 delivery 边界规范化为 `openwrt-sha256sums`，避免与项目顶层 `SHA256SUMS` 混淆，也避免 Windows 大小写不敏感文件系统解压冲突。
+
+delivery 以项目级 `SHA256SUMS` 作为完整性校验入口；`openwrt-sha256sums` 作为上游原始资料保存，其自身也被项目校验表覆盖。Release 验证先计算并验证顶层资产摘要，index 对账和直接镜像对比复用本次已验证结果，不再次读取同一顶层大文件。包内重建目录及跨 job/Release 回下载仍属于独立交付边界，需要各自验证。
 
 `release-index.json` 将 profile、直接镜像资产、包内原名、完整包名、大小和 SHA256 连接起来。回下载 verifier 要证明：
 
@@ -1475,7 +1481,7 @@ Release 级验收在 GitHub 上完成完整闭环：aggregate 先复验两个 de
 | N5105 VLAN backport 文件消失 | 接受 target backport 或 prepared upstream 等价语义，拒绝按版本号猜测 |
 | Action `@main` 或 `ubuntu-latest` 漂移 | 这是明确的最新跟踪策略；只允许官方 action，记录 runner 事实，并由真实构建/交付门禁阻止坏版本发布 |
 | runner 磁盘不足或清理越界 | 白名单 realpath 验证、空间门槛和 timeout；不运行第三方清盘脚本 |
-| 高频 schedule 耗尽 Actions minutes | OpenWrt Upstream Update Monitor 每日只做不足一分钟的解析；每周一构建一次，其他日期仅在 Release 基线的重大兼容投影变化时提前构建 |
+| 高频 schedule 耗尽 Actions minutes | OpenWrt Upstream Update Monitor 每日只做轻量解析；每周一构建一次，其他日期仅在相对上次已派发状态的兼容投影变化时提前构建；失败不触发每日重复派发 |
 | “重大更新”退化为硬编码版本列表 | `source_lock.py` 按 schema 结构生成兼容投影；workflow 不枚举组件、版本或 profile，普通 commit/patch/tag 漂移留给周构建 |
 | 跨 run cache 吞噬存储且低命中 | 不上传 dl/ccache；只保留当轮本地状态，下载仍由 OpenWrt hash 验证 |
 | 成功 artifact 与 Release 重复占空间 | Actions artifact 只做当前 run 中转；Release 回下载验证后动态删除，兜底 1 天，最近六个 Release 才是长期产品 |

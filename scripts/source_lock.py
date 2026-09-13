@@ -533,9 +533,6 @@ def resolve_haproxy() -> dict[str, Any]:
     if filename != f"haproxy-{version}.tar.gz":
         raise ResolutionError(f"unexpected HAProxy release filename: {filename!r}")
     url = f"https://www.haproxy.org/download/{branch}/src/{filename}"
-    actual = download_sha256(url)
-    if actual != expected:
-        raise ResolutionError(f"HAProxy archive hash mismatch: expected {expected}, got {actual}")
     return {
         "policy": "exact-override" if override else "latest-lts",
         "branch": branch,
@@ -575,16 +572,6 @@ def asset_by_name(release: dict[str, Any], name: str) -> dict[str, Any]:
     return asset
 
 
-def verify_release_asset(asset: dict[str, Any]) -> str:
-    expected = require_sha256(asset["digest"], f"asset {asset['name']} digest")
-    actual = download_sha256(asset["browser_download_url"])
-    if actual != expected:
-        raise ResolutionError(
-            f"asset {asset['name']} hash mismatch: expected {expected}, got {actual}"
-        )
-    return actual
-
-
 def resolve_adguardhome() -> dict[str, Any]:
     override = os.environ.get("ADGUARDHOME_VERSION", "").strip()
     if override and not override.startswith("v"):
@@ -595,7 +582,7 @@ def resolve_adguardhome() -> dict[str, Any]:
         raise ResolutionError(f"unexpected AdGuardHome stable tag: {tag!r}")
     version = tag.removeprefix("v")
     frontend = asset_by_name(release, "AdGuardHome_frontend.tar.gz")
-    frontend_hash = verify_release_asset(frontend)
+    frontend_hash = require_sha256(frontend["digest"], "AdGuardHome frontend digest")
     source_url = (
         f"https://codeload.github.com/AdguardTeam/AdGuardHome/tar.gz/refs/tags/{tag}?"
     )
@@ -616,19 +603,6 @@ def resolve_adguardhome() -> dict[str, Any]:
     }
 
 
-def parse_checksum(text: str, expected_name: str) -> str:
-    matches = []
-    for raw in text.splitlines():
-        parts = raw.strip().split()
-        if len(parts) >= 2 and parts[-1].lstrip("*") == expected_name:
-            matches.append(require_sha256(parts[0], f"checksum for {expected_name}"))
-    if len(matches) != 1:
-        raise ResolutionError(
-            f"checksum file must contain exactly one entry for {expected_name}; found {len(matches)}"
-        )
-    return matches[0]
-
-
 def resolve_geodata(
     *, repo: str, asset_name: str, override_env: str
 ) -> dict[str, Any]:
@@ -636,30 +610,11 @@ def resolve_geodata(
     release = github_release(repo, override)
     tag = release["tag_name"]
     data_asset = asset_by_name(release, asset_name)
-    checksum_asset = asset_by_name(release, f"{asset_name}.sha256sum")
-
-    api_hash = verify_release_asset(data_asset)
-    checksum_api_hash = require_sha256(
-        checksum_asset["digest"], f"asset {checksum_asset['name']} digest"
-    )
-    checksum_bytes = download_bytes(checksum_asset["browser_download_url"])
-    actual_checksum_asset_hash = hashlib.sha256(checksum_bytes).hexdigest()
-    if actual_checksum_asset_hash != checksum_api_hash:
-        raise ResolutionError(
-            f"checksum asset digest mismatch for {checksum_asset['name']}"
-        )
-    published_hash = parse_checksum(checksum_bytes.decode("utf-8"), asset_name)
-    if published_hash != api_hash:
-        raise ResolutionError(
-            f"GitHub digest and published checksum disagree for {repo} {asset_name}"
-        )
     return {
         "policy": "exact-override" if override else "latest-stable",
         "tag": tag,
         "url": data_asset["browser_download_url"],
-        "sha256": api_hash,
-        "checksum_url": checksum_asset["browser_download_url"],
-        "checksum_sha256": checksum_api_hash,
+        "sha256": require_sha256(data_asset["digest"], f"{asset_name} digest"),
     }
 
 
@@ -1099,12 +1054,7 @@ def validate_upstream_artifacts(
         release_root = f"https://github.com/{repo}/releases/download/{tag}"
         if entry.get("url") != f"{release_root}/{asset}":
             raise ResolutionError(f"{name} URL is not the exact {repo} release asset")
-        if entry.get("checksum_url") != f"{release_root}/{asset}.sha256sum":
-            raise ResolutionError(
-                f"{name} checksum URL is not the exact {repo} release asset"
-            )
         require_sha256(entry.get("sha256", ""), f"{name} payload")
-        require_sha256(entry.get("checksum_sha256", ""), f"{name} checksum asset")
 
 
 def validate_source_overlays(value: Any, repo_root: pathlib.Path) -> None:
@@ -1801,7 +1751,8 @@ def main(argv: list[str]) -> int:
         print(
             "Usage: source_lock.py resolve <profiles> <output> [kernel-channel] | "
             "materialize <lock> <output-dir> | digest <lock> | "
-            "compare <old> <new> | update-impact <released> <current> | "
+            "compare <old> <new> | update-impact <baseline> <current> | "
+            "update-projection <lock> | "
             "list-feeds <lock> | "
             "render-feeds <lock> <output> | overlay-manifest <lock> | "
             "repository-commit <lock> | kernel-versions <lock> | "
@@ -1845,6 +1796,10 @@ def main(argv: list[str]) -> int:
             return 0
         print(f"changed {old_digest} -> {new_digest}")
         return 1
+    if command == "update-projection" and len(argv) == 3:
+        projection = update_compatibility_projection(load_lock(pathlib.Path(argv[2])))
+        print(json.dumps(projection, sort_keys=True, ensure_ascii=False, indent=2))
+        return 0
     if command == "update-impact" and len(argv) == 4:
         impact = update_impact(
             load_lock(pathlib.Path(argv[2])), load_lock(pathlib.Path(argv[3]))

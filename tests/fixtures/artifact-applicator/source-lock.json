@@ -148,17 +148,13 @@
       "policy": "latest-stable",
       "tag": "202601010001",
       "url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat",
-      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-      "checksum_url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat.sha256sum",
-      "checksum_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
     },
     "geosite": {
       "policy": "latest-stable",
       "tag": "202601010002",
       "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat",
-      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-      "checksum_url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat.sha256sum",
-      "checksum_sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
     }
   },
   "profile_digests": {"r4s": "sha256:6666666666666666666666666666666666666666666666666666666666666666"},

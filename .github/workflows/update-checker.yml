@@ -10,7 +10,10 @@ permissions:
 
 concurrency:
   group: openwrt-update-checker
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+env:
+  MONITOR_STATE_REF: refs/heads/build-monitor-state
 
 jobs:
   check:
@@ -40,7 +43,7 @@ jobs:
           echo "source_digest=${digest#sha256:}" >> "$GITHUB_OUTPUT"
           echo "Resolved complete fingerprint: $digest"
 
-      - name: Evaluate Released Compatibility Boundary
+      - name: Evaluate Scheduled Compatibility Boundary
         id: decision
         shell: bash
         env:
@@ -49,44 +52,45 @@ jobs:
           set -euo pipefail
           reason=routine
           detail='No compatibility boundary changed; the weekly build is not due.'
+          python3 scripts/source_lock.py update-projection \
+            .source-state/source-lock.json > .source-state/compatibility.json
+
+          # A missing ref is bootstrap; authentication/network errors are failures.
+          state_commit=''
+          if remote_state="$(git ls-remote --exit-code origin "$MONITOR_STATE_REF")"; then
+            state_commit="${remote_state%%$'\t'*}"
+            git fetch --no-tags --depth=1 origin "$state_commit"
+            git show "$state_commit:compatibility.json" > .source-state/baseline.json
+            jq -e 'type == "object"' .source-state/baseline.json > /dev/null
+          else
+            status=$?
+            [ "$status" -eq 2 ] || exit "$status"
+            release_tag="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '[.[] | select(.draft == false and (.tag_name | startswith("openwrt-")))] | sort_by(.published_at) | last | .tag_name // ""')"
+            if [ -n "$release_tag" ]; then
+              mkdir -p .source-state/released
+              gh release download "$release_tag" --repo "$GITHUB_REPOSITORY" \
+                --pattern source-lock.json --dir .source-state/released
+              python3 scripts/source_lock.py update-projection \
+                .source-state/released/source-lock.json > .source-state/baseline.json
+            fi
+          fi
+          echo "state_commit=$state_commit" >> "$GITHUB_OUTPUT"
 
           if [ "$(TZ=Asia/Shanghai date +%u)" = 1 ]; then
             reason=weekly
             detail='The scheduled weekly refresh is due.'
+          elif [ ! -f .source-state/baseline.json ]; then
+            reason=significant
+            detail='No previous dispatch or published Release baseline exists.'
           else
-            release_tag=''
-            if release_tag="$(
-              gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
-                --json tagName,createdAt,isDraft \
-                --jq '[.[] | select(.isDraft == false and (.tagName | startswith("openwrt-")))] | sort_by(.createdAt) | last | .tagName // ""'
-            )" && [ -n "$release_tag" ]; then
-              mkdir -p .source-state/released
-              if gh release download "$release_tag" \
-                --repo "$GITHUB_REPOSITORY" \
-                --pattern source-lock.json \
-                --dir .source-state/released; then
-                if python3 scripts/source_lock.py update-impact \
-                  .source-state/released/source-lock.json \
-                  .source-state/source-lock.json > .source-state/update-impact.json; then
-                  reason="$(jq -er \
-                    '.classification | select(. == "significant" or . == "routine")' \
-                    .source-state/update-impact.json)"
-                  if [ "$reason" = significant ]; then
-                    impact="$(jq -r '.reasons | join(", ")' \
-                      .source-state/update-impact.json)"
-                    detail="Released compatibility boundary changed: $impact"
-                  fi
-                else
-                  reason=significant
-                  detail='The released source lock cannot be validated; rebuild to establish a current baseline.'
-                fi
-              else
-                reason=significant
-                detail='The latest OpenWrt Release has no readable source-lock baseline.'
-              fi
+            if diff -u .source-state/baseline.json .source-state/compatibility.json; then
+              detail='This compatibility state has already been dispatched or released.'
             else
+              status=$?
+              [ "$status" -eq 1 ] || exit "$status"
               reason=significant
-              detail='No published OpenWrt Release baseline exists.'
+              detail='Compatibility changed since the previous dispatch or bootstrap Release.'
             fi
           fi
 
@@ -119,6 +123,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_DIGEST: ${{ steps.lock.outputs.source_digest }}
+          STATE_COMMIT: ${{ steps.decision.outputs.state_commit }}
         run: |
           set -euo pipefail
           source_lock_b64="$(base64 -w0 .source-state/source-lock.json)"
@@ -129,3 +134,15 @@ jobs:
             --arg source_digest "$SOURCE_DIGEST" \
             '{event_type: $event_type, client_payload: {profile: $profile, source_lock_b64: $source_lock_b64, source_digest: $source_digest}}' |
             gh api --method POST "repos/${GITHUB_REPOSITORY}/dispatches" --input -
+
+          # Record accepted dispatches, not successful builds. A failed build is
+          # retried by the weekly schedule or explicitly by the user.
+          export GIT_AUTHOR_NAME='github-actions[bot]'
+          export GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
+          export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+          export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+          blob="$(git hash-object -w .source-state/compatibility.json)"
+          tree="$(printf '100644 blob %s\tcompatibility.json\n' "$blob" | git mktree)"
+          commit="$(printf 'Record firmware dispatch %s\n' "$GITHUB_RUN_ID" | git commit-tree "$tree")"
+          git push --force-with-lease="$MONITOR_STATE_REF:$STATE_COMMIT" \
+            origin "$commit:$MONITOR_STATE_REF"

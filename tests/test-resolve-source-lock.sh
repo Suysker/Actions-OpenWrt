@@ -22,6 +22,49 @@ assert spec.loader is not None
 spec.loader.exec_module(module)
 fixtures = root / "tests/fixtures/source-lock"
 
+# Resolution consumes published metadata, not a second copy of every payload.
+from unittest import mock
+with mock.patch.dict(module.os.environ, {}, clear=True), \
+     mock.patch.object(module, "download_sha256", side_effect=AssertionError("duplicate payload download")), \
+     mock.patch.object(module, "download_text", side_effect=[
+         (fixtures / "haproxy-index.html").read_text(),
+         (fixtures / "haproxy-releases.json").read_text(),
+     ]):
+    resolved = module.resolve_haproxy()
+    assert resolved["version"] == "3.4.2"
+    assert resolved["sha256"] == "c" * 64
+
+release = {"tag_name": "202601010001", "assets": [{
+    "name": "geoip.dat", "digest": "sha256:" + "d" * 64,
+    "browser_download_url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat",
+}]}
+with mock.patch.dict(module.os.environ, {}, clear=True), \
+     mock.patch.object(module, "github_release", return_value=release), \
+     mock.patch.object(module, "download_bytes", side_effect=AssertionError("unexpected checksum download")), \
+     mock.patch.object(module, "download_sha256", side_effect=AssertionError("duplicate payload download")):
+    resolved = module.resolve_geodata(repo="Loyalsoldier/geoip", asset_name="geoip.dat", override_env="GEOIP_TAG")
+    assert resolved["sha256"] == "d" * 64
+    assert set(resolved) == {"policy", "tag", "url", "sha256"}
+    release["assets"][0]["digest"] = "invalid"
+    try:
+        module.resolve_geodata(repo="Loyalsoldier/geoip", asset_name="geoip.dat", override_env="GEOIP_TAG")
+    except module.ResolutionError:
+        pass
+    else:
+        raise AssertionError("invalid upstream hash was accepted")
+
+release = {"tag_name": "v0.107.78", "assets": [{
+    "name": "AdGuardHome_frontend.tar.gz", "digest": "sha256:" + "e" * 64,
+    "browser_download_url": "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.78/AdGuardHome_frontend.tar.gz",
+}]}
+with mock.patch.dict(module.os.environ, {}, clear=True), \
+     mock.patch.object(module, "github_release", return_value=release), \
+     mock.patch.object(module, "resolve_tag_commit", return_value="a" * 40), \
+     mock.patch.object(module, "download_sha256", return_value="f" * 64) as download:
+    resolved = module.resolve_adguardhome()
+    download.assert_called_once_with(resolved["source"]["url"])
+    assert resolved["frontend"]["sha256"] == "e" * 64
+
 geodata_contracts = module.load_geodata_contracts(root)
 assert [item["id"] for item in geodata_contracts] == ["geoip", "geosite"]
 assert [item["repository"] for item in geodata_contracts] == [
@@ -249,7 +292,6 @@ else:
     raise AssertionError("prerelease was accepted")
 module.api_json = original_api_json
 
-assert module.parse_checksum("d" * 64 + "  geoip.dat\n", "geoip.dat") == "d" * 64
 for bad in ("skip", "latest", "a" * 63):
     try:
         module.require_sha256(bad, "fixture")
@@ -318,16 +360,12 @@ base = {
             "tag": "202601010001",
             "url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat",
             "sha256": "1" * 64,
-            "checksum_url": "https://github.com/Loyalsoldier/geoip/releases/download/202601010001/geoip.dat.sha256sum",
-            "checksum_sha256": "2" * 64,
         },
         "geosite": {
             "policy": "latest-stable",
             "tag": "202601010002",
             "url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat",
             "sha256": "3" * 64,
-            "checksum_url": "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/202601010002/geosite.dat.sha256sum",
-            "checksum_sha256": "4" * 64,
         },
     },
     "profiles": {
@@ -452,13 +490,28 @@ routine_update["upstream_artifacts"]["haproxy"].update(
 routine_update["upstream_artifacts"]["geoip"].update(
     tag="202601020001",
     url="https://github.com/Loyalsoldier/geoip/releases/download/202601020001/geoip.dat",
-    checksum_url="https://github.com/Loyalsoldier/geoip/releases/download/202601020001/geoip.dat.sha256sum",
 )
 module.validate_lock(routine_update)
 assert module.update_impact(base, routine_update) == {
     "classification": "routine",
     "reasons": [],
 }
+
+# Persisted monitor projections must use the same canonical domain representation
+# as the existing impact comparison, independent of routine source churn.
+import contextlib
+import io
+with tempfile.TemporaryDirectory() as directory:
+    projections = []
+    for lock in (base, routine_update):
+        path = pathlib.Path(directory) / "lock.json"
+        path.write_text(json.dumps(lock), encoding="utf-8")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            assert module.main(["source_lock.py", "update-projection", str(path)]) == 0
+        projections.append(output.getvalue())
+        assert json.loads(output.getvalue()) == module.update_compatibility_projection(lock)
+    assert projections[0] == projections[1]
 
 kernel_transition = json.loads(json.dumps(base))
 kernel_transition["profiles"]["r4s"]["kernel_channel"] = "testing"

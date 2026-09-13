@@ -191,7 +191,63 @@ PROFILE_ROOT_OVERRIDE="$profiles" \
 [ -s "$release/openwrt-fixture-2026.08.02-r1-full.tar.gz" ]
 [ "$(find "$release" -maxdepth 1 -type f | wc -l)" -eq 5 ]
 PROFILE_ROOT_OVERRIDE="$profiles" \
-  bash "$repo_root/scripts/verify-release-assets.sh" "$release"
+  python3 - "$repo_root" "$release" <<'PY'
+import collections
+import json
+import pathlib
+import sys
+from unittest import mock
+
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "scripts"))
+import release_assets
+
+release = pathlib.Path(sys.argv[2]).resolve()
+reads = collections.Counter()
+original_sha256 = release_assets.sha256
+
+def tracked_sha256(path):
+    reads[path.resolve()] += 1
+    return original_sha256(path)
+
+with mock.patch.object(release_assets, "sha256", side_effect=tracked_sha256):
+    assert release_assets.verify(["release_assets.py", "verify", str(release)]) == 0
+for path in release.iterdir():
+    if path.name != "SHA256SUMS":
+        assert reads[path.resolve()] == 1, f"repeated top-level hash calculation: {path.name}"
+
+index_path = release / "release-index.json"
+original_index = index_path.read_bytes()
+index = json.loads(original_index)
+image_record = index["profiles"]["fixture"]["primary_image"]
+image = release / image_record["asset_name"]
+
+# File corruption must still be rejected by the authoritative top-level table.
+with image.open("r+b") as handle:
+    first = handle.read(1)
+    handle.seek(0)
+    handle.write(bytes([first[0] ^ 1]))
+try:
+    release_assets.verify(["release_assets.py", "verify", str(release)])
+except release_assets.ReleaseError as exc:
+    assert "release asset hash mismatch" in str(exc)
+else:
+    raise AssertionError("corrupt image was accepted")
+with image.open("r+b") as handle:
+    handle.write(first)
+
+# A valid top-level checksum does not excuse an inconsistent index.
+image_record["sha256"] = "0" * 64
+index_path.write_text(json.dumps(index), encoding="utf-8")
+release_assets.write_sums(release)
+try:
+    release_assets.verify(["release_assets.py", "verify", str(release)])
+except release_assets.ReleaseError as exc:
+    assert "indexed asset is missing or changed" in str(exc)
+else:
+    raise AssertionError("inconsistent index was accepted")
+index_path.write_bytes(original_index)
+release_assets.write_sums(release)
+PY
 
 cat > "$temporary/inconsistent.c" <<'C'
 static const char version[]

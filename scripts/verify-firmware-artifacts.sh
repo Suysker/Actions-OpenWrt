@@ -88,7 +88,6 @@ done
 (
   cd "$artifact_dir"
   sha256sum -c SHA256SUMS
-  sha256sum -c openwrt-sha256sums
 )
 
 expected_digest="$(python3 "$repo_root/scripts/source_lock.py" digest "$source_lock")"

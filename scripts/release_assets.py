@@ -238,7 +238,7 @@ def read_top_sums(directory: pathlib.Path) -> dict[str, str]:
 
 
 def checked_asset(
-    directory: pathlib.Path, record: object, label: str
+    directory: pathlib.Path, record: object, label: str, verified_sums: dict[str, str]
 ) -> pathlib.Path:
     if not isinstance(record, dict):
         raise ReleaseError(f"invalid {label} record")
@@ -252,7 +252,7 @@ def checked_asset(
     if not isinstance(size, int) or size < 0:
         raise ReleaseError(f"invalid {label} asset size")
     path = directory / name
-    if not path.is_file() or path.stat().st_size != size or sha256(path) != digest:
+    if not path.is_file() or path.stat().st_size != size or verified_sums.get(name) != digest:
         raise ReleaseError(f"indexed asset is missing or changed: {name}")
     return path
 
@@ -311,7 +311,7 @@ def verify(argv: list[str]) -> int:
     release_id = index.get("release_id")
     if not isinstance(release_id, str) or not RELEASE_ID_RE.fullmatch(release_id):
         raise ReleaseError("release index has an invalid release id")
-    if index.get("source_lock_sha256") != sha256(source_lock):
+    if index.get("source_lock_sha256") != sums["source-lock.json"]:
         raise ReleaseError("release index source-lock hash mismatch")
 
     profile_entries = index.get("profiles")
@@ -331,8 +331,8 @@ def verify(argv: list[str]) -> int:
                 raise ReleaseError(f"invalid release profile entry: {profile}")
             image_record = profile_entry.get("primary_image")
             bundle_record = profile_entry.get("full_bundle")
-            image = checked_asset(directory, image_record, f"{profile} primary image")
-            bundle = checked_asset(directory, bundle_record, f"{profile} full bundle")
+            image = checked_asset(directory, image_record, f"{profile} primary image", sums)
+            bundle = checked_asset(directory, bundle_record, f"{profile} full bundle", sums)
             expected_base = f"openwrt-{profile}-{release_id}"
             original = image_record.get("original_name")  # type: ignore[union-attr]
             if not isinstance(original, str) or not re.fullmatch(r"[^/]+", original):
@@ -350,7 +350,7 @@ def verify(argv: list[str]) -> int:
             reconstructed.mkdir()
             extract_full_bundle(bundle, reconstructed)
             bundled_image = reconstructed / original
-            if not bundled_image.is_file() or sha256(bundled_image) != sha256(image):
+            if not bundled_image.is_file() or sha256(bundled_image) != sums[image.name]:
                 raise ReleaseError(
                     f"direct primary image differs from the {profile} full bundle"
                 )
