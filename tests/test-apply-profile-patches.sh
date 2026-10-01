@@ -219,7 +219,7 @@ cat > "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh"
 run_ipt2socks() {
 	flag="${flag}_TCP_UDP"
 	_extra_param="${_extra_param} -o 60 -n 65535 -v"
-	ln_run "$(first_type ipt2socks)" "ipt2socks_${flag}" $log_file -l $local_port -b 0.0.0.0 -s $socks_address -p $socks_port ${_extra_param}
+	ln_run "$(first_type ipt2socks)" "ipt2socks_${flag}" $log_file -l $local_port -b 0.0.0.0 -B :: -s $socks_address -p $socks_port ${_extra_param}
 }
 
 run_singbox() {
@@ -243,7 +243,7 @@ start_dns() {
 
 stop() {
 	unset SS_SYSTEM_DNS_RESOLVER_FORCE_BUILTIN
-	stop_crontab
+	stop_crontab $1
 	source $APP_PATH/helper_smartdns.sh del
 	rm -rf $GLOBAL_DNSMASQ_CONF
 	rm -rf $GLOBAL_DNSMASQ_CONF_PATH
@@ -432,7 +432,7 @@ grep -Eq '^applied_common=dnsmasq-addnmount-jail\.patch sha256:[0-9a-f]{64}$' \
   "$report"
 grep -Fqx $'\tln_run "$(first_type ipt2socks)" "ipt2socks_${flag}" $log_file -l $local_port -b 0.0.0.0 -B :: -j 2 -s $socks_address -p $socks_port ${_extra_param}' \
   "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh"
-grep -Eq '^applied_feed_passwall=ipt2socks-dualstack\.patch sha256:[0-9a-f]{64}$' \
+grep -Eq '^applied_feed_passwall=ipt2socks-workers\.patch sha256:[0-9a-f]{64}$' \
   "$report"
 grep -Fqx $'\t\tuci -q del_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"' \
   "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh"
@@ -599,7 +599,7 @@ grep -qx 'source_compatibility_zram_selected_kernel_backend_status=upstream' "$s
 grep -qx 'source_compatibility_image_cyclonedx_sbom_status=upstream' "$second_report"
 grep -Eq '^present_common=dnsmasq-addnmount-jail\.patch sha256:[0-9a-f]{64}$' \
   "$second_report"
-grep -Eq '^present_feed_passwall=ipt2socks-dualstack\.patch sha256:[0-9a-f]{64}$' \
+grep -Eq '^present_feed_passwall=ipt2socks-workers\.patch sha256:[0-9a-f]{64}$' \
   "$second_report"
 grep -Eq '^present_feed_passwall=dnsmasq-addnmount-lifecycle\.patch sha256:[0-9a-f]{64}$' \
   "$second_report"

@@ -10,9 +10,7 @@ diff --git a/luci-app-passwall/root/usr/share/passwall/app.sh b/luci-app-passwal
  		uci -q commit dhcp
  		lua $APP_PATH/helper_dnsmasq.lua logic_restart -LOG 1
  	else
-@@ -1927,6 +1929,10 @@ stop() {
- 	unset SS_SYSTEM_DNS_RESOLVER_FORCE_BUILTIN
- 	stop_crontab
+@@ -1740,4 +1742,8 @@ stop() {
  	source $APP_PATH/helper_smartdns.sh del
 +	[ -z "${GLOBAL_DNSMASQ_CONF_PATH}" ] || {
 +		uci -q del_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"

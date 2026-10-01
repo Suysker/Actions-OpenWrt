@@ -293,6 +293,8 @@ daily OpenWrt Upstream Update Monitor or manual OpenWrt Firmware Build & Release
 - `source_lock.py update-projection` 从当前 lock 生成兼容性投影，与上次已派发状态比较；首次启用时从最近正式 Release 初始化基线。投影包含内核 target/channel/series、Git 来源身份、受控 semver 兼容线、BBRv3 算法 commit 和 port 拓扑。只有投影变化属于重大更新；point release、普通 feed commit 与 Geo 数据 tag 漂移由周构建吸收。
 - Release 是长期产品存储，Actions artifact 只是同一 run 内 `prepare -> build -> aggregate` 的事务传输接口；回下载验证通过后由 builder 按 run 动态发现并删除，不维护 artifact 名单。
 
+PassWall 的 IPv6 ipt2socks 监听参数 `-B ::` 由上游提供；本地 `ipt2socks-workers.patch` 仅添加双工作线程参数 `-j 2`。上游部分吸收补丁时，应收敛本地差异，而不是跳过补丁失败检查；正向应用和完整已应用检查均不通过时仍终止构建。
+
 ### 5.3 命名与风格
 
 - profile 与文件名使用 kebab-case，例如 `x86-n5105-pve`。

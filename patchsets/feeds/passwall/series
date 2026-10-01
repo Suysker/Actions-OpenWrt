@@ -1,2 +1,2 @@
-ipt2socks-dualstack.patch
+ipt2socks-workers.patch
 dnsmasq-addnmount-lifecycle.patch
