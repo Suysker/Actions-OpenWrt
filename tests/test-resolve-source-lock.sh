@@ -712,6 +712,11 @@ with tempfile.TemporaryDirectory() as directory, \
         else:
             raise AssertionError(f"accepted wrong {field}")
         materialized_patch[field] = saved
+    # A lock that froze upstream bytes requests no derivation, even for this hunk.
+    materialized_patch.pop("origin_sha256")
+    materialized_patch["sha256"] = hashlib.sha256(timer_original).hexdigest()
+    assert module.materialize_bbr_patches(materialized_lock, output) == 1
+    assert (output / rebased["artifact_path"]).read_bytes() == timer_original
 
 print("Source-lock resolver fixture tests passed.")
 PY

@@ -880,7 +880,8 @@ def materialize_bbr_patches(lock: dict[str, Any], output: pathlib.Path) -> int:
                     f"BBRv3 patch hash mismatch for {patch.get('origin_path')}: "
                     f"expected {expected}, got {actual}"
                 )
-            payload = rebase_timer_context(payload)
+            if "origin_sha256" in patch:
+                payload = rebase_timer_context(payload)
             if hashlib.sha256(payload).hexdigest() != patch["sha256"]:
                 raise ResolutionError(
                     f"BBRv3 materialized patch hash mismatch for {patch['origin_path']}"
