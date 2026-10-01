@@ -24,15 +24,6 @@
       ]
     },
     {
-      "name": "common.ppp-tx-scatter-gather",
-      "glob": "build_dir/target-*/linux-*/linux-{kernel_version}/drivers/net/ppp/ppp_generic.c",
-      "contains": [
-        "dev->features = NETIF_F_SG | NETIF_F_FRAGLIST;",
-        "dev->hw_features = dev->features;",
-        "!chan->direct_xmit && skb_linearize(skb)"
-      ]
-    },
-    {
       "name": "common.pppoe-gro-gso-ipv4-ipv6",
       "glob": "build_dir/target-*/linux-*/linux-{kernel_version}/drivers/net/ppp/pppoe.c",
       "contains": [
