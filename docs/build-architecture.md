@@ -33,6 +33,7 @@
 
 - 跟踪 Lean `master`，不切换到固定稳定分支。
 - 使用 firewall3/iptables，不引入 firewall4/nftables 平行栈。
+  `kmod-ipt-offload → kmod-nf-flow → kmod-nft-core` 是当前上游的软件卸载依赖链：共享 `nf_tables.ko` 内核基础设施不代表使用 nftables 管理防火墙。允许这一个公共 core，继续禁止 firewall4、所有 nftables 用户态变体和 nft 专用功能模块；不删除真实模块依赖来满足旧黑名单。
 - `CONFIG_GCC_USE_VERSION_15=y` 是明确的工具链代际合同。
 - common 只声明本地与自动 resolver 的 testing 回退值；手动 workflow 显式选择 stable/testing（默认 stable），且不永久写死 Linux point release。
 - BBRv3 是内核能力，运行时名称保持 `bbr`，package 名保持 Lean 的 `kmod-tcp-bbr`。
@@ -972,6 +973,7 @@ N5105 profile 面向固定虚拟化合同：
 - 接口缺失、重复或不能达到 4 队列时保留首次启动脚本并重试，不猜测接口角色。
 - 验证 I225 EEE disable 与 igc VLAN offload 语义存在于本轮 Lean target patch stack 或 selected upstream kernel source。
 - 排除未使用的通用物理网卡、USB、音频、GPU 和磁盘镜像格式。
+  上游 generic x86 默认选中的 `ixgbevf` 会强制拉入 `ixgbe`；N5105 profile 同时关闭两者，保留 VirtIO 内建网络和 I225/igc 直通合同。
 
 推荐 PVE 配置：
 

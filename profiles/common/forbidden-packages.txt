@@ -39,7 +39,7 @@ exact:zerotier
 
 # firewall3/iptables is the only firewall stack.
 exact:firewall4
-exact:nftables
+regex:^nftables(?:-|$)
 exact:iptables-nft
 exact:ip6tables-nft
 exact:xtables-nft
@@ -47,7 +47,9 @@ exact:miniupnpd-nftables
 exact:natflow
 exact:kmod-natflow
 exact:luci-app-natflow
-regex:^kmod-nft-
+# nf-flow depends on nf_tables.ko; shared kernel infrastructure is not a firewall stack.
+# Keep nft-specific consumers excluded without breaking iptables software offload.
+regex:^kmod-nft-(?!core$)
 
 # Keep ddns-go only.
 exact:luci-app-ddns
