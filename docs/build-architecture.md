@@ -283,6 +283,7 @@ daily OpenWrt Upstream Update Monitor or manual OpenWrt Firmware Build & Release
 - shell 只编排进程与文件，JSON/schema 解释由 Python 模块拥有。
 - `source_lock.py`、`profile_contract.py` 和 patch applicator 不再分别用正则解释 `KERNEL_PATCHVER`；它们只消费 `kernel_selection.py` 的统一结果。
 - BBRv3 resolver 与 clean-apply checker 不再分别解析 patch 路径；它们只消费 `kernel_patch.py` 的同一规范化 touched-path 集合。
+- BBRv3 provider 的 TCP timer app-limited hunk 若仍以旧 `icsk_timeout(icsk)` 为前置上下文，`bbr3_patch.py` 在解析/物化边界仅移除这一无关上下文行，保留全部功能变更及两行前置、三行后置上下文。原因是 Linux stable 提交 `d87f96c0d779` 将 helper 改名为 `tcp_timeout_expires(sk)`。source-lock 同时保存变更前 `origin_sha256` 与冻结产物 `sha256`；下载先验证原始哈希，再重放适配并验证最终哈希，checker 与 build 均只消费冻结产物，仍执行严格 clean-apply。上游已刷新时原字节透传；待 provider 不再携带旧 hunk 后删除该窄适配，不扩展为通用 fuzz 或内核回退。
 - `apply-profile-patches.sh` 把 source-lock 中已经解析完成的 `kernel_series` 传给源码兼容执行器；兼容规则不得重新读取 target Makefile、猜测版本或维护第二份 series 映射。
 - `render-profile.sh`、`check-profile-contract.sh`、`resolve-source-lock.sh`、`assemble-release.sh` 和 `verify-release-assets.sh` 都是薄 CLI。
 - build、aggregate 和 release-download 三个边界复用 `verify-firmware-artifacts.sh`。

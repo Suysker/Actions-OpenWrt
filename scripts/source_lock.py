@@ -21,6 +21,7 @@ from typing import Any, Iterable
 
 from bbr3_module_version import BBRModuleVersionError, validate_policy_compatibility
 from kernel_patch import KernelPatchError, inspect_patch
+from bbr3_patch import rebase_timer_context
 from kernel_selection import (
     KernelSelectionError,
     apply_channel_override,
@@ -775,6 +776,9 @@ def resolve_bbr_port(policy: dict[str, Any], kernel_series: str) -> dict[str, An
         for index, origin_path in enumerate(origin_paths, start=1):
             raw_url = github_raw_url(repo_url, resolved["commit"], origin_path)
             payload = download_bytes(raw_url)
+            origin_sha256 = hashlib.sha256(payload).hexdigest()
+            payload = rebase_timer_context(payload)
+            artifact_sha256 = hashlib.sha256(payload).hexdigest()
             try:
                 inspect_patch(payload)
             except KernelPatchError as exc:
@@ -809,9 +813,13 @@ def resolve_bbr_port(policy: dict[str, Any], kernel_series: str) -> dict[str, An
                     "order": index,
                     "origin_path": origin_path,
                     "raw_url": raw_url,
-                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "sha256": artifact_sha256,
                     "artifact_path": f"bbr3/{kernel_series}/{artifact_name}",
                     "install_name": install_name,
+                    **(
+                        {"origin_sha256": origin_sha256}
+                        if origin_sha256 != artifact_sha256 else {}
+                    ),
                 }
             )
 
@@ -864,12 +872,18 @@ def materialize_bbr_patches(lock: dict[str, Any], output: pathlib.Path) -> int:
             payload = download_bytes(expected_url)
             actual = hashlib.sha256(payload).hexdigest()
             expected = require_sha256(
-                patch.get("sha256", ""), f"BBRv3 patch {patch.get('origin_path')}"
+                patch.get("origin_sha256", patch.get("sha256", "")),
+                f"BBRv3 origin patch {patch.get('origin_path')}"
             )
             if actual != expected:
                 raise ResolutionError(
                     f"BBRv3 patch hash mismatch for {patch.get('origin_path')}: "
                     f"expected {expected}, got {actual}"
+                )
+            payload = rebase_timer_context(payload)
+            if hashlib.sha256(payload).hexdigest() != patch["sha256"]:
+                raise ResolutionError(
+                    f"BBRv3 materialized patch hash mismatch for {patch['origin_path']}"
                 )
             try:
                 inspect_patch(payload)
@@ -1475,6 +1489,8 @@ def validate_lock(
             require_sha256(
                 patch.get("sha256", ""), f"BBRv3 {kernel_series}/{origin_path}"
             )
+            if "origin_sha256" in patch:
+                require_sha256(patch["origin_sha256"], f"BBRv3 origin {origin_path}")
             artifact_path = patch.get("artifact_path", "")
             safe_artifact_path(artifact_path, kernel_series)
             if artifact_path in artifact_paths:

@@ -679,5 +679,39 @@ try:
 finally:
     module.download_bytes = original_download_bytes
 
+# Context rebasing must preserve upstream provenance and reject either hash drifting.
+import runpy
+timer_fixture = runpy.run_path(str(root / "tests/test-bbr3-patch.py"))
+timer_original = timer_fixture["original"]
+timer_expected = timer_fixture["expected"]
+with mock.patch.object(module, "resolve_git_ref", return_value={
+    "commit": "c" * 40, "resolved_ref": "refs/heads/main",
+}), mock.patch.object(module, "github_tree_files", return_value={"6.12/bbr3.patch"}), \
+     mock.patch.object(module, "download_bytes", return_value=timer_original):
+    rebased = module.resolve_bbr_port(policy, "6.12")["patches"][0]
+assert rebased["origin_sha256"] == hashlib.sha256(timer_original).hexdigest()
+assert rebased["sha256"] == hashlib.sha256(timer_expected).hexdigest()
+materialized_patch.update(rebased)
+materialized_patch["raw_url"] = module.github_raw_url(
+    materialized_lock["kernel_features"]["bbr3"]["ports"]["6.12"]["origin_url"],
+    materialized_lock["kernel_features"]["bbr3"]["ports"]["6.12"]["origin_commit"],
+    rebased["origin_path"],
+)
+with tempfile.TemporaryDirectory() as directory, \
+     mock.patch.object(module, "download_bytes", return_value=timer_original):
+    output = pathlib.Path(directory)
+    assert module.materialize_bbr_patches(materialized_lock, output) == 1
+    assert (output / rebased["artifact_path"]).read_bytes() == timer_expected
+    for field in ("origin_sha256", "sha256"):
+        saved = materialized_patch[field]
+        materialized_patch[field] = "0" * 64
+        try:
+            module.materialize_bbr_patches(materialized_lock, output)
+        except module.ResolutionError as exc:
+            assert "hash mismatch" in str(exc), str(exc)
+        else:
+            raise AssertionError(f"accepted wrong {field}")
+        materialized_patch[field] = saved
+
 print("Source-lock resolver fixture tests passed.")
 PY
