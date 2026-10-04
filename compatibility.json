@@ -1,0 +1,191 @@
+{
+  "artifact-compatibility-line": {
+    "adguardhome": {
+      "policy": "latest-stable",
+      "semantic_line": "0.107"
+    },
+    "geoip": {
+      "policy": "latest-stable"
+    },
+    "geosite": {
+      "policy": "latest-stable"
+    },
+    "haproxy": {
+      "policy": "latest-lts",
+      "semantic_line": "3.4"
+    }
+  },
+  "bbr3-compatibility": {
+    "algorithm": {
+      "commit": "90210de4b779d40496dee0b89081780eeddf2a60",
+      "module_version": 3,
+      "requested_ref": "v3",
+      "resolved_ref": "refs/heads/v3",
+      "runtime_name": "bbr",
+      "url": "https://github.com/google/bbr.git"
+    },
+    "ports": {
+      "6.12": {
+        "install_directory": "hack-6.12",
+        "origin_ref": "master",
+        "origin_url": "https://github.com/CachyOS/kernel-patches.git",
+        "patches": [
+          {
+            "artifact_path": "bbr3/6.12/0001-bbrv3.patch",
+            "install_name": "995-bbrv3.patch",
+            "order": 1,
+            "origin_path": "6.12/0002-bbr3.patch"
+          }
+        ],
+        "provider": "cachyos-single"
+      }
+    }
+  },
+  "feed-source-identity": {
+    "helloworld": {
+      "order": 4,
+      "origin": "default",
+      "requested_ref": "HEAD",
+      "resolved_ref": "refs/heads/dev",
+      "type": "src-git",
+      "url": "https://github.com/fw876/helloworld.git"
+    },
+    "kenzo": {
+      "order": 1,
+      "origin": "custom",
+      "requested_ref": "HEAD",
+      "resolved_ref": "refs/heads/master",
+      "type": "src-git",
+      "url": "https://github.com/kenzok8/openwrt-packages.git"
+    },
+    "luci": {
+      "order": 1,
+      "origin": "default",
+      "requested_ref": "openwrt-25.12",
+      "resolved_ref": "refs/heads/openwrt-25.12",
+      "type": "src-git",
+      "url": "https://github.com/coolsnowwolf/luci.git"
+    },
+    "packages": {
+      "order": 5,
+      "origin": "custom",
+      "requested_ref": "master",
+      "resolved_ref": "refs/heads/master",
+      "type": "src-git",
+      "url": "https://github.com/openwrt/packages.git"
+    },
+    "passwall": {
+      "order": 4,
+      "origin": "custom",
+      "requested_ref": "main",
+      "resolved_ref": "refs/heads/main",
+      "type": "src-git",
+      "url": "https://github.com/Openwrt-Passwall/openwrt-passwall.git"
+    },
+    "routing": {
+      "order": 2,
+      "origin": "default",
+      "requested_ref": "HEAD",
+      "resolved_ref": "refs/heads/main",
+      "type": "src-git",
+      "url": "https://github.com/coolsnowwolf/routing.git"
+    },
+    "sbwml": {
+      "order": 2,
+      "origin": "custom",
+      "requested_ref": "HEAD",
+      "resolved_ref": "refs/heads/v5",
+      "type": "src-git",
+      "url": "https://github.com/sbwml/luci-app-mosdns.git"
+    },
+    "small": {
+      "order": 0,
+      "origin": "custom",
+      "requested_ref": "HEAD",
+      "resolved_ref": "refs/heads/master",
+      "type": "src-git",
+      "url": "https://github.com/kenzok8/small.git"
+    },
+    "telephony": {
+      "order": 3,
+      "origin": "default",
+      "requested_ref": "HEAD",
+      "resolved_ref": "refs/heads/master",
+      "type": "src-git",
+      "url": "https://github.com/coolsnowwolf/telephony.git"
+    },
+    "xiaorouji": {
+      "order": 3,
+      "origin": "custom",
+      "requested_ref": "main",
+      "resolved_ref": "refs/heads/main",
+      "type": "src-git",
+      "url": "https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git"
+    }
+  },
+  "openwrt-source-identity": {
+    "requested_ref": "master",
+    "resolved_ref": "refs/heads/master",
+    "url": "https://github.com/coolsnowwolf/lede.git"
+  },
+  "profile-kernel-compatibility": {
+    "r4s": {
+      "image_pattern": "*friendlyarm_nanopi-r4s*squashfs*sysupgrade.img.gz",
+      "kernel_channel": "testing",
+      "kernel_series": "6.12",
+      "kernel_target": "rockchip",
+      "target_check_regex": "^CONFIG_TARGET_rockchip_armv8_DEVICE_friendlyarm_nanopi-r4s=y$"
+    },
+    "x86-n5105-pve": {
+      "image_pattern": "*x86-64-generic-squashfs-combined-efi.img.gz",
+      "kernel_channel": "testing",
+      "kernel_series": "6.12",
+      "kernel_target": "x86",
+      "target_check_regex": "^CONFIG_TARGET_x86_64_DEVICE_generic=y$"
+    }
+  },
+  "source-overlay-identity": {
+    "openwrt-core": {
+      "mappings": [
+        {
+          "kind": "tree",
+          "source": "package/libs/gmp",
+          "target": "package/libs/gmp"
+        },
+        {
+          "kind": "tree",
+          "source": "package/libs/pcre2",
+          "target": "package/libs/pcre2"
+        },
+        {
+          "kind": "tree",
+          "source": "package/utils/e2fsprogs",
+          "target": "package/utils/e2fsprogs"
+        },
+        {
+          "kind": "tree",
+          "source": "package/utils/f2fs-tools",
+          "target": "package/utils/f2fs-tools"
+        },
+        {
+          "kind": "tree",
+          "source": "package/system/mtd",
+          "target": "package/system/mtd"
+        },
+        {
+          "kind": "file",
+          "source": "scripts/package-metadata.pl",
+          "target": "scripts/openwrt-sbom/package-metadata.pl"
+        },
+        {
+          "kind": "file",
+          "source": "scripts/metadata.pm",
+          "target": "scripts/openwrt-sbom/metadata.pm"
+        }
+      ],
+      "requested_ref": "master",
+      "resolved_ref": "refs/heads/master",
+      "url": "https://github.com/openwrt/openwrt.git"
+    }
+  }
+}
