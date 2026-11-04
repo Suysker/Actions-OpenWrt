@@ -205,9 +205,26 @@ dnsmasq_start()
 EOF
 cat > "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh" <<'EOF'
 run_ipt2socks() {
+	local flag tcp_tproxy local_port socks_address socks_port socks_username socks_password log_file param
+	for param in "$@"; do
+		case "$param" in
+			flag=*) flag="${param#*=}" ;;
+			tcp_tproxy=*) tcp_tproxy="${param#*=}" ;;
+			local_port=*) local_port="${param#*=}" ;;
+			socks_address=*) socks_address="${param#*=}" ;;
+			socks_port=*) socks_port="${param#*=}" ;;
+			socks_username=*) socks_username="${param#*=}" ;;
+			socks_password=*) socks_password="${param#*=}" ;;
+			log_file=*) log_file="${param#*=}" ;;
+		esac
+	done
+	[ -n "$log_file" ] || log_file="/dev/null"
+	socks_address=$(get_host_ip "ipv4" "$socks_address")
+	set -- -o 60 -n 65535 -v
+	[ -n "$socks_username" ] && [ -n "$socks_password" ] && set -- "$@" -a "$socks_username" -k "$socks_password"
+	[ -n "$tcp_tproxy" ] || set -- "$@" -R
 	flag="${flag}_TCP_UDP"
-	_extra_param="${_extra_param} -o 60 -n 65535 -v"
-	ln_run "$(first_type ipt2socks)" "ipt2socks_${flag}" $log_file -l $local_port -b 0.0.0.0 -B :: -s $socks_address -p $socks_port ${_extra_param}
+	ln_run "$(first_type ipt2socks)" "ipt2socks_${flag}" "$log_file" -l "$local_port" -b 0.0.0.0 -B :: -s "$socks_address" -p "$socks_port" "$@"
 }
 
 run_singbox() {
@@ -224,15 +241,14 @@ start_dns() {
 		uci -q add_list dhcp.@dnsmasq[0].addnmount=${GLOBAL_DNSMASQ_CONF_PATH}
 		uci -q commit dhcp
 		lua $APP_PATH/helper_dnsmasq.lua logic_restart -LOG 1
-	else
+	elif [ "${DNS_SHUNT}" = "smartdns" ]; then
 		:
 	fi
 }
 
 stop() {
 	unset SS_SYSTEM_DNS_RESOLVER_FORCE_BUILTIN
-	stop_crontab $1
-	source $APP_PATH/helper_smartdns.sh del
+	stop_crontab "$1"
 	rm -rf $GLOBAL_DNSMASQ_CONF
 	rm -rf $GLOBAL_DNSMASQ_CONF_PATH
 	[ "1" = "1" ] && {
@@ -413,8 +429,31 @@ grep -Fqx $'\tconfig_list_foreach "$cfg" "addnmount" append_addnmount' \
   "$openwrt/package/network/services/dnsmasq/files/dnsmasq.init"
 grep -Eq '^applied_common=dnsmasq-addnmount-jail\.patch sha256:[0-9a-f]{64}$' \
   "$report"
-grep -Fqx $'\tln_run "$(first_type ipt2socks)" "ipt2socks_${flag}" $log_file -l $local_port -b 0.0.0.0 -B :: -j 2 -s $socks_address -p $socks_port ${_extra_param}' \
-  "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh"
+# Exercise the generated launch arguments, including values that must remain a
+# single argument after upstream's switch to positional-parameter construction.
+PASSWALL_APP="$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall/app.sh" \
+CAPTURE="$tmpdir/ipt2socks-args" bash <<'SH'
+set -e
+source "$PASSWALL_APP"
+first_type() { printf '%s\n' "$1"; }
+get_host_ip() { printf '%s\n' "$2"; }
+ln_run() { printf '%s\0' "$@" > "$CAPTURE"; }
+run_ipt2socks flag=test tcp_tproxy=1 local_port=1234 \
+  socks_address=127.0.0.1 socks_port=1080 \
+  'socks_username=user name' 'socks_password=pass word' 'log_file=/tmp/test log'
+SH
+python3 - "$tmpdir/ipt2socks-args" <<'PY'
+from pathlib import Path
+import sys
+
+args = Path(sys.argv[1]).read_bytes().decode().rstrip('\0').split('\0')
+assert args[:3] == ['ipt2socks', 'ipt2socks_test_TCP_UDP', '/tmp/test log'], args
+for option, expected in {'-j': '2', '-l': '1234', '-b': '0.0.0.0', '-B': '::',
+                         '-s': '127.0.0.1', '-p': '1080', '-a': 'user name',
+                         '-k': 'pass word', '-o': '60', '-n': '65535'}.items():
+    assert args.count(option) == 1 and args[args.index(option) + 1] == expected, args
+assert '-v' in args and '-R' not in args, args
+PY
 grep -Eq '^applied_feed_passwall=ipt2socks-workers\.patch sha256:[0-9a-f]{64}$' \
   "$report"
 grep -Fqx $'\t\tuci -q del_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"' \

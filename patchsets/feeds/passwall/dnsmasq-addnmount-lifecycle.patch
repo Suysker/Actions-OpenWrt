@@ -1,7 +1,7 @@
 diff --git a/luci-app-passwall/root/usr/share/passwall/app.sh b/luci-app-passwall/root/usr/share/passwall/app.sh
 --- a/luci-app-passwall/root/usr/share/passwall/app.sh
 +++ b/luci-app-passwall/root/usr/share/passwall/app.sh
-@@ -1322,5 +1322,7 @@ start_dns() {
+@@ -1322,4 +1322,6 @@ start_dns() {
  		uci -q delete dhcp.@dnsmasq[0].min_cache_ttl
 -		uci -q add_list dhcp.@dnsmasq[0].addnmount=${GLOBAL_DNSMASQ_CONF_PATH}
 +		uci -q del_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"
@@ -9,9 +9,7 @@ diff --git a/luci-app-passwall/root/usr/share/passwall/app.sh b/luci-app-passwal
 +			uci -q add_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"
  		uci -q commit dhcp
  		lua $APP_PATH/helper_dnsmasq.lua logic_restart -LOG 1
- 	else
-@@ -1740,4 +1742,8 @@ stop() {
- 	source $APP_PATH/helper_smartdns.sh del
+@@ -1741,3 +1743,7 @@ stop() {
 +	[ -z "${GLOBAL_DNSMASQ_CONF_PATH}" ] || {
 +		uci -q del_list dhcp.@dnsmasq[0].addnmount="${GLOBAL_DNSMASQ_CONF_PATH}"
 +		uci -q commit dhcp

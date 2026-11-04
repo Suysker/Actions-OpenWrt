@@ -38,7 +38,7 @@
 
 默认分支发布使用 GitHub 内置 token。当非默认分支相对默认分支修改了 workflow，GitHub API 要求一个同时具有仓库与 workflow 写权限的凭据；workflow 只在 Release jobs 中使用仓库已配置的 `ACTIONS_TRIGGER_PAT`。
 
-`OpenWrt Upstream Update Monitor` 每天 03:17（`Asia/Shanghai`）做一次约半分钟的轻量解析，每周一固定把最新完整 source lock 交给双平台构建。其他日期只在最近正式 Release 到当前发生重大兼容变化时提前构建：selected kernel target/channel/series、Git 来源身份、受控组件的 `major.minor` 兼容线、BBRv3 算法 commit 或 port 拓扑。普通 Lean/feed commit、kernel point release、组件 patch release 和 Geo 日期 tag 由周构建吸收。需要立即构建时直接手动运行 `OpenWrt Firmware Build & Release`，没有第二套强制更新入口。
+`OpenWrt Upstream Update Monitor` 每天 03:23（`Asia/Shanghai`）做一次约半分钟的轻量解析，每周一固定把最新完整 source lock 交给双平台构建。其他日期只在最近正式 Release 到当前发生重大兼容变化时提前构建：selected kernel target/channel/series、Git 来源身份、受控组件的 `major.minor` 兼容线、BBRv3 算法 commit 或 port 拓扑。普通 Lean/feed commit、kernel point release、组件 patch release 和 Geo 日期 tag 由周构建吸收。需要立即构建时直接手动运行 `OpenWrt Firmware Build & Release`，没有第二套强制更新入口。
 
 ## Profile 如何维护
 
