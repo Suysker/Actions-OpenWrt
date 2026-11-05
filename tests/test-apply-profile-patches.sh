@@ -13,6 +13,7 @@ mkdir -p "$lock_dir/bbr3/6.12" \
   "$openwrt/target/linux/generic/hack-6.12" \
   "$openwrt/feeds/passwall/luci-app-passwall/root/usr/share/passwall" \
   "$openwrt/feeds/kenzo/luci-app-adguardhome/root/etc/init.d" \
+  "$openwrt/package/network/config/firewall/files" \
   "$openwrt/package/network/services/dnsmasq/files" \
   "$openwrt/package/libs/libsepol" \
   "$openwrt/package/lean/wol" \
@@ -402,8 +403,106 @@ endef
 EOF
 
 report="$tmpdir/patch-report.txt"
+firewall_files="$openwrt/package/network/config/firewall/files"
+cat > "$firewall_files/firewall.config" <<'EOF'
+config defaults
+	option synflood_protect	1
+	option input		ACCEPT
+	option output		ACCEPT
+	option forward		REJECT
+	option fullcone		0
+# Uncomment this line to disable ipv6 rules
+#	option disable_ipv6	1
+EOF
+cat > "$firewall_files/firewall.init" <<'EOF'
+#!/bin/sh /etc/rc.common
+restart() {
+	unset_lock
+	set_lock
+	fw3 restart
+	unset_lock
+}
+
+start_service() {
+	set_lock
+	fw3 ${QUIET} start
+	unset_lock
+}
+
+stop_service() {
+	fw3 flush
+	unset_lock
+}
+
+reload_service() {
+  unset_lock
+  set_lock
+	reload_config firewall
+	fw3 reload
+	unset_lock
+}
+
+boot() {
+	# Be silent on boot, firewall might be started by hotplug already,
+	# so don't complain in syslog.
+	QUIET=-q
+	start
+}
+EOF
 bash "$repo_root/scripts/apply-profile-patches.sh" \
   r4s "$openwrt" "$lock_dir/source-lock.json" "$report"
+
+FW_INIT="$firewall_files/firewall.init" bash <<'SH'
+set -eu
+source "$FW_INIT"
+calls=()
+QUIET=-q
+cca=bbr
+module_version=3
+fw_status=0
+sysctl_status=0
+set_lock() { calls+=(lock); }
+unset_lock() { calls+=(unlock); }
+reload_config() { calls+=("read:$*"); }
+fw3() { calls+=("fw3:$*"); return "$fw_status"; }
+uci() { [ -n "$cca" ] && printf '%s\n' "$cca"; }
+cat() { [ "$1" = /sys/module/tcp_bbr/version ] && printf '%s\n' "$module_version"; }
+sysctl() { calls+=("sysctl:${*: -1}"); return "$sysctl_status"; }
+assert_calls() {
+  [ "${calls[*]}" = "$*" ] || { printf 'Unexpected FW3 calls: %s\n' "${calls[*]}" >&2; exit 1; }
+  calls=()
+}
+start_service
+assert_calls lock 'fw3:-q start' sysctl:net.ipv4.tcp_congestion_control=bbr unlock
+cca=reno
+reload_service
+assert_calls unlock lock read:firewall fw3:reload sysctl:net.ipv4.tcp_congestion_control=reno unlock
+cca=
+restart
+assert_calls unlock lock fw3:restart unlock
+cca=bbr
+fw_status=9
+status=0
+reload_service || status=$?
+[ "$status" -eq 9 ]
+assert_calls unlock lock read:firewall fw3:reload unlock
+fw_status=0
+module_version=1
+status=0
+start_service || status=$?
+[ "$status" -ne 0 ]
+assert_calls lock 'fw3:-q start' unlock
+cca=cubic
+sysctl_status=7
+status=0
+restart || status=$?
+[ "$status" -eq 7 ]
+assert_calls unlock lock fw3:restart sysctl:net.ipv4.tcp_congestion_control=cubic unlock
+SH
+grep -Eq '^[[:space:]]*option flow_offloading[[:space:]]+1$' "$firewall_files/firewall.config"
+grep -Eq '^[[:space:]]*option flow_offloading_hw[[:space:]]+0$' "$firewall_files/firewall.config"
+grep -Eq '^[[:space:]]*option tcpcca[[:space:]]+bbr$' "$firewall_files/firewall.config"
+grep -Eq '^[[:space:]]*option fullcone[[:space:]]+1$' "$firewall_files/firewall.config"
 
 [ "$(sha256sum "$openwrt/target/linux/generic/hack-6.12/995-bbrv3.patch" | awk '{print $1}')" = "$patch_sha" ]
 module_version_patch="$openwrt/target/linux/generic/hack-6.12/996-bbrv3-module-version.patch"

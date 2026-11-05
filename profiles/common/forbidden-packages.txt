@@ -72,6 +72,7 @@ exact:v2ray-plugin
 exact:shadowsocks-rust
 regex:^shadowsocks-
 exact:kmod-tcp-bbr3
+exact:luci-app-turboacc
 exact:kmod-fast-classifier
 exact:kmod-shortcut-fe
 exact:kmod-shortcut-fe-cm

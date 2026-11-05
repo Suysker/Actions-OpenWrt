@@ -35,6 +35,7 @@ package:iptables-mod-socket
 package:iptables-mod-tproxy
 package:ip6tables
 package:kmod-ipt-fullconenat
+package:kmod-ipt-offload
 package:kmod-tun
 package:kmod-tcp-bbr
 package:kmod-sched
@@ -80,9 +81,6 @@ package:luci-app-autoreboot
 package:luci-app-ramfree
 package:luci-app-ttyd
 package:ttyd
-package:luci-app-turboacc
-config:CONFIG_PACKAGE_TURBOACC_INCLUDE_FLOW_OFFLOADING
-config:CONFIG_PACKAGE_TURBOACC_INCLUDE_BBR_CCA
 package:luci-app-upnp
 package:luci-app-wol
 package:wol

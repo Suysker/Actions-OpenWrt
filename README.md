@@ -5,7 +5,7 @@
 - NanoPi R4S：RK3399、原生 Lean 启动链与网口 IRQ 策略、ARMv8 CRC/crypto、R8168、PWM fan、512 MiB LZ4 zram。
 - N5105 PVE：`x86-64-v2 + mtune=tremont`、squashfs combined EFI、VirtIO NET/SCSI、I225/igc 直通、4 队列与 irqbalance。
 
-两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、可选择的 Lean stable/testing kernel channel 和按所选内核系列动态解析的 BBRv3。仓库不写死 Linux point release：手动构建默认选择 stable，也可以选择 testing；每轮从同一份 Lean master 分别解析目标的 channel/series/version/source hash，并把精确结果写进 source lock。2026-08-02 审计时，两个目标的 stable/testing 分别对应 Linux 6.12/6.18，这只是通道映射证据，不是永久版本常量。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP、PCRE2、F2FS tools、MTD 以及 Lean 缺失的官方 CycloneDX image generator 从同一轮锁定的 OpenWrt 官方 core 窄同步。`libsepol`、旧 `wol` CLI、current `small/tcping`、R4S ZRAM backend guard 和共享 image manifest 只保留经真实构建证明必要的窄语义兼容；系列相关规则只消费本轮 source-lock 的 selected kernel，不固定 point release，不降低全局编译器，也不覆盖整份 Lean 核心文件。完整设计、取舍依据和验收规范见 [docs/build-architecture.md](docs/build-architecture.md)。
+两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、可选择的 Lean stable/testing kernel channel 和按所选内核系列动态解析的 BBRv3。仓库不写死 Linux point release：手动构建默认选择 stable，也可以选择 testing；每轮从同一份 Lean master 分别解析目标的 channel/series/version/source hash，并把精确结果写进 source lock。2026-08-02 审计时，两个目标的 stable/testing 分别对应 Linux 6.12/6.18，这只是通道映射证据，不是永久版本常量。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP、PCRE2、F2FS tools、MTD 以及 Lean 缺失的官方 CycloneDX image generator 从同一轮锁定的 OpenWrt 官方 core 窄同步。`libsepol`、旧 `wol` CLI、current `small/tcping`、R4S ZRAM backend guard 和共享 image manifest 只保留经真实构建证明必要的窄语义兼容；系列相关规则只消费本轮 source-lock 的 selected kernel，不固定 point release，不降低全局编译器，也不覆盖整份 Lean 核心文件。完整设计、取舍依据和验收规范见 [构建架构](docs/CON-001-architecture.md)。
 
 ## 构建模型
 
@@ -66,9 +66,9 @@ feed 索引覆盖全部锁定源，但安装阶段只提交当前 profile 的 re
 
 ## 固件内容与边界
 
-共同应用包括 LuCI、PassWall（Xray/Hysteria/HAProxy/geodata）、MosDNS、SmartDNS、AdGuardHome、ddns-go、nlbwmon、ARP 绑定、自动重启、内存释放、ttyd、TurboACC、iptables UPnP、WOL、CoreMark、htop、lsof 和 SFTP server。
+共同应用包括 LuCI、PassWall（Xray/Hysteria/HAProxy/geodata）、MosDNS、SmartDNS、AdGuardHome、ddns-go、nlbwmon、ARP 绑定、自动重启、内存释放、ttyd、iptables UPnP、WOL、CoreMark、htop、lsof 和 SFTP server。
 
-明确排除 default-settings、Docker、Samba、旧 DDNS scripts、VLMCS、VSFTP、OpenList、qBittorrent、ZeroTier、HomeProxy、Nikki、Mihomo、SSR Plus、firewall4/nftables、natflow、SFE 和第二套 BBR package provider 等不在需求内的组件。
+明确排除 default-settings、Docker、Samba、旧 DDNS scripts、VLMCS、VSFTP、OpenList、qBittorrent、ZeroTier、HomeProxy、Nikki、Mihomo、SSR Plus、firewall4/nftables、TurboACC、natflow、SFE 和第二套 BBR package provider 等不在需求内的组件。
 
 固件只拥有安全、可解释的出厂默认：
 
@@ -76,7 +76,7 @@ feed 索引覆盖全部锁定源，但安装阶段只提交当前 profile 的 re
 - R4S 与 N5105 的 squashfs block-root 镜像同时保留 `mkfs.ext4`（`e2fsprogs`）与 `mkfs.f2fs`（`mkf2fs`）；两个 formatter recipe 从同一轮锁定的官方 OpenWrt core 窄同步以保持 GCC15/C23 兼容。首次启动由本轮 Lean fstools 按 rootfs_data 大小选择格式并创建持久 overlay，不因此引入分区或自动挂载工具。
 - `Asia/Shanghai` 和启用 NTP client，保留上游 NTP server 列表。
 - `fq`、16 MiB socket buffer 上限。
-- 只有确认 `/sys/module/tcp_bbr/version=3`、`sch_fq` 存在且 TurboACC 已探测到 software flow offload 后，才一次性把 factory CCA 设为 `bbr`；以后尊重用户在 TurboACC 中的选择。
+- 在 LuCI「网络 → 防火墙」管理软件流卸载、全锥形 NAT 和 TCP 拥塞控制。新装默认软件流卸载开启、硬件卸载关闭、使用 `FULLCONENAT` 和 `bbr`；FW3 应用 `bbr` 前核对加载的模块是 BBRv3。升级保留已有防火墙设置，只有缺少 `firewall.tcpcca` 时才迁移原 TurboACC 的 CCA 值。
 - 不内置固定 root 密码、不关闭签名校验、不添加私有软件源、不开放 WAN 管理入口。
 
 AdGuardHome、MosDNS、SmartDNS、dnsmasq-full 和 PassWall 都会被编译，但 DNS 端口、上游、缓存、规则、节点、订阅和凭据是用户常用的设备运行时配置，不烘焙进两台设备共用的镜像。它们应按设备实际 UCI/YAML、socket、iptables redirect 和完整查询链验收。

@@ -18,6 +18,6 @@ assert_lf_policy "README.md"
 assert_lf_policy "feeds.custom.conf"
 assert_lf_policy "patchsets/common/series"
 assert_lf_policy "profiles/common/files/etc/uci-defaults/90-common-network"
-assert_lf_policy "profiles/common/files/etc/uci-defaults/zz-common-turboacc"
+assert_lf_policy "profiles/common/files/etc/uci-defaults/zz-migrate-firewall-cca"
 
 echo "Repository text policy tests passed."

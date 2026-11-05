@@ -20,4 +20,3 @@ tcping	tcping	feeds/small/tcping/Makefile	feeds/xiaorouji/tcping
 xray-core	xray-core	feeds/xiaorouji/xray-core/Makefile	feeds/small/xray-core,feeds/packages/net/xray-core
 geoip	v2ray-geoip	feeds/xiaorouji/v2ray-geodata/Makefile	feeds/packages/net/v2ray-geodata,feeds/small/v2ray-geodata
 geosite	v2ray-geosite	feeds/xiaorouji/v2ray-geodata/Makefile	feeds/packages/net/v2ray-geodata,feeds/small/v2ray-geodata
-turboacc	luci-app-turboacc	feeds/luci/applications/luci-app-turboacc/Makefile	-

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+# Upgrade from firmware that saved the user's CCA only in TurboACC.
+# The existing firewall setting, including on a fresh image, takes precedence.
+if uci -q get 'firewall.@defaults[0].tcpcca' >/dev/null; then
+	exit 0
+fi
+if tcpcca="$(uci -q get turboacc.config.tcpcca)" && [ -n "$tcpcca" ]; then
+	uci set "firewall.@defaults[0].tcpcca=$tcpcca"
+	uci commit firewall
+fi

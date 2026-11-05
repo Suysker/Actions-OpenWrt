@@ -2,25 +2,13 @@
   "schema": 3,
   "source": [
     {
-      "name": "common.turboacc-flow-detection",
-      "path": "feeds/luci/applications/luci-app-turboacc/root/etc/uci-defaults/turboacc",
+      "name": "common.firewall-luci-acceleration-controls",
+      "path": "feeds/luci/applications/luci-app-firewall/htdocs/luci-static/resources/view/firewall/zones.js",
       "contains": [
-        "/lib/modules/$kernel_ver/xt_FLOWOFFLOAD.ko",
-        "turboacc.config.fastpath\"=\"flow_offloading",
-        "turboacc.config.fastpath_fo_hw\"=\"0",
-        "/etc/init.d/turboacc enable",
-        "/etc/init.d/turboacc start"
-      ]
-    },
-    {
-      "name": "common.turboacc-software-flow-runtime",
-      "path": "feeds/luci/applications/luci-app-turboacc/root/etc/init.d/turboacc",
-      "contains": [
-        "\"flow_offloading\")",
-        "flow_offloading=\"1\"",
-        "uci -q set \"firewall.@defaults[0].flow_offloading\"=\"$flow_offloading\"",
-        "uci -q set \"firewall.@defaults[0].flow_offloading_hw\"=\"$flow_offloading_hw\"",
-        "sysctl -w net.ipv4.tcp_congestion_control=\"$tcpcca\""
+        "form.Map('firewall',",
+        "'tcpcca'",
+        "'fullcone'",
+        "uci.set('firewall', section_id, 'flow_offloading',"
       ]
     },
     {

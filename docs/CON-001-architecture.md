@@ -1,5 +1,9 @@
 # Lean master + firewall3/iptables 的 R4S 与 N5105 OpenWrt 构建架构
 
+> ID: CON-001 · Status: Current
+> Created: 2026-07-31 · Updated: 2026-11-06
+> Purpose: 说明共享构建合同、双平台优化、上游来源和固件交付验收边界。
+
 ## 1. 文档状态
 
 - 状态：设计修订 7；完成历史方案整合、Linux 6.18 通道和低频自动构建架构，双平台 CI/Release 验收中
@@ -49,7 +53,7 @@
 | Lean master、iptables/firewall3、GCC15 | 已实现 | 保持 |
 | 精简 package 闭包、provider、source lock、provenance | 已实现 | 保持 |
 | 双平台构建、固件验收、Release 回下载复验 | Linux 6.12 已通过 | Linux 6.18 迁移后重新完整通过 |
-| BBRv3 + `fq` + TurboACC factory default | Linux 6.12 已通过 | selected kernel 的 port 必须 clean-apply 并保留 module version 3 |
+| BBRv3 + `fq` + FW3 出厂默认 | 内核门禁已在历史构建验证；FW3 接管逻辑由行为测试验证 | selected kernel 的 port 必须 clean-apply 并保留 module version 3 |
 | R4S target、IRQ、OPP、zram、r8168、ARM crypto | 配置与源码语义已实现 | 保留 Lean 原生 steering |
 | N5105 VirtIO、igc、4 queues、irqbalance | 配置与源码语义已实现 | 保持 `x86-64-v2` + Tremont tune；固件不配置 PVE host |
 | Linux 6.18 | selected-kernel/schema 5、本地 fixture 已实现 | 同一 source lock 下完成双平台 CI/Release 验收 |
@@ -96,7 +100,7 @@ R4S、内核和工具链的逐项取舍如下。“原生纳入”表示优化�
 | DRM/Panfrost、iGPU、音频 | 排除 | 两个平台都是无显示路由器/虚拟路由器 |
 | zram | 仅 R4S 纳入 | 512 MiB LZ4、低 swappiness，作为 OOM 保险；固定内存的 N5105 guest 不启用 |
 | BBRv3 | common 纳入 | 按 selected series 动态解析公开 port，保留 Lean package/module/runtime 名称，并验证 ELF version `3` |
-| software flow offload | common 纳入 | 由 TurboACC/UCI 唯一管理；hardware flow offload 固定关闭 |
+| software flow offload | common 纳入 | 由 firewall/UCI 唯一管理；hardware flow offload 出厂关闭 |
 | SFE/shortcut-fe/natflow | 排除 | 不和 iptables fullcone、PassWall、Lean software flow offload 叠加多条 fast path |
 | firewall4/nftables | 排除 | 与冻结的 firewall3/iptables 产品合同冲突 |
 | MPTCP、PSI | 排除 | 当前没有 consumer 或产品用例，不把观测/多路径能力误称为转发优化 |
@@ -221,7 +225,7 @@ scripts/
 tests/
   test-*                          # 与上述共享模块一一对应的 fixtures
 
-docs/build-architecture.md        # 本架构与决策依据
+docs/CON-001-architecture.md      # 本架构与决策依据
 lessons.md                        # 跨问题的根因模式和预防规则
 ```
 
@@ -369,8 +373,8 @@ flowchart LR
 | BBRv3 provider 与算法身份策略 | `bbr3-sources.json` |
 | selected kernel channel/series/version/hash | common Kconfig intent + `kernel_selection.py` + source lock |
 | BBRv3/`fq` 是否进入固件 | common required Kconfig/package contract |
-| 初次 CCA 选择 | `zz-common-turboacc`，仅在 module version `3` 和 `sch_fq` 成立后执行一次 |
-| 后续 CCA 与 software flow offload | TurboACC UCI/init；项目不建立第二个 sysctl 所有者 |
+| 出厂 CCA 与流卸载 | FW3 自带的 `/etc/config/firewall`；升级保留已有配置 |
+| 后续 CCA 与 software flow offload | 防火墙 LuCI/UCI 与 FW3 服务；不建立第二个 sysctl 所有者 |
 | common qdisc/socket buffer | `90-router-performance.conf` |
 | DHCP `.32/232` 与 IPv6-PD LAN 发布 | `90-common-network` |
 | 服务角色去重 | `90-common-system` 只禁用官方 HAProxy 示例服务；PassWall 与 LuCI AdGuardHome 实例分别拥有实际进程 |
@@ -388,7 +392,7 @@ flowchart LR
 
 - Lean `master`
 - `feeds.custom.conf` 中每个 feed 的目标分支或默认分支
-- OpenWrt 官方 core source overlay
+- canonical source overlay 来源与映射
 - 当前受支持的最高 HAProxy LTS 分支最新 patch release
 - 最新 AdGuardHome stable release
 - `Loyalsoldier/geoip` 最新 `geoip.dat`
@@ -533,6 +537,8 @@ GeoIP 与 Geosite 的角色只在 `geodata-sources.json` 定义。resolver、val
 | `xiaorouji` | `Openwrt-Passwall/openwrt-passwall-packages` 中的代理核心与依赖 |
 | `passwall` | `Openwrt-Passwall/openwrt-passwall` 的 LuCI 应用 |
 
+Lean 默认 LuCI 进入 `openwrt-25.12` 后，该分支在 2026-10-29 移除了 TurboACC。现有产品改用同一 LuCI feed 自带的防火墙入口，不回补旧插件。FW3 与 TCP CCA 的运行时所有权见 §9.4。
+
 历史 owner `xiaorouji/*` 已迁移时，合同使用 GitHub 返回的 canonical `Openwrt-Passwall/*` 仓库；不依赖重定向或已经删除的旧入口。feed 名仍保持 `xiaorouji`，因为它是仓库内部稳定标识，不等于远端 owner。
 
 关键 provider 由 `providers.tsv` 单点声明，例如：
@@ -548,7 +554,6 @@ GeoIP 与 Geosite 的角色只在 `geodata-sources.json` 定义。resolver、val
 | Xray、Hysteria、Geoview、ipt2socks | `feeds/xiaorouji` |
 | GeoIP/Geosite package | `feeds/xiaorouji/v2ray-geodata` |
 | tcping、dns2socks、v2dat | `feeds/small` |
-| TurboACC | locked Lean LuCI feed |
 
 selector 只删除合同明确列出的同名源码冲突目录，随后从 source lock 枚举全部 feed 并重建索引。provider 选择决定“哪个 recipe 提供某 package”，required 文件决定“是否安装该 package”；两者不能混成一份表。
 
@@ -639,7 +644,7 @@ AdGuardHome 保持 package 的 `--no-check-update`：最新版本由 Actions 生
 - firewall3/iptables、dnsmasq-full、IPv4/IPv6、PPPoE、iptables UPnP。
 - PassWall 的 Xray、Hysteria、HAProxy、GeoIP/Geosite。
 - MosDNS、SmartDNS、AdGuardHome。
-- ddns-go、nlbwmon、ARP 绑定、自动重启、内存释放、ttyd、TurboACC、WOL。
+- ddns-go、nlbwmon、ARP 绑定、自动重启、内存释放、ttyd、WOL。
 - CoreMark、htop、lsof、SFTP server。
 - squashfs block-root 首次启动所需的 `e2fsprogs` 与 `mkf2fs`，覆盖 Lean fstools 的 ext4/F2FS 两条格式化路径。
 - signed packages、signature check、TLS certificate check、CycloneDX SBOM。
@@ -664,10 +669,10 @@ common 的内核/构建策略同样遵循精简原则：
 | 代理 | PassWall iptables transparent proxy、Xray、Hysteria、HAProxy、ipt2socks |
 | Geo | `v2ray-geoip`、`v2ray-geosite` 与 `geoview`；数据分别来自 Loyalsoldier 两个可信 release |
 | DNS | MosDNS、SmartDNS、AdGuardHome；只保证 package/provider/接口，不固化用户端口链 |
-| 运维 | ddns-go、nlbwmon、ARP bind、autoreboot、ramfree、ttyd、TurboACC、WOL |
+| 运维 | ddns-go、nlbwmon、ARP bind、autoreboot、ramfree、ttyd、WOL |
 | 工具 | CoreMark、htop、lsof、OpenSSH SFTP server |
 | 启动基础 | `e2fsprogs` + `mkf2fs`；仅负责首次创建持久 ext4/F2FS overlay，不扩展为分区或自动挂载功能 |
-| 内核网络 | `kmod-tun`、`kmod-tcp-bbr`、`kmod-sched`、`kmod-ipt-fullconenat` |
+| 内核网络 | `kmod-tun`、`kmod-tcp-bbr`、`kmod-sched`、`kmod-ipt-offload`、`kmod-ipt-fullconenat` |
 | 交付 | build log、config/image metadata、CycloneDX SBOM、签名与 TLS certificate check |
 
 firewall/PassWall 的关键代际合同是：
@@ -675,12 +680,12 @@ firewall/PassWall 的关键代际合同是：
 ```text
 firewall + iptables + ip6tables + ipset
 iptables-mod-extra/fullconenat/iprange/socket/tproxy
-kmod-ipt-fullconenat + kmod-tun
+kmod-ipt-fullconenat + kmod-ipt-offload + kmod-tun
 luci-app-passwall_Iptables_Transparent_Proxy=y
 luci-app-passwall_Nftables_Transparent_Proxy=n
 ```
 
-`kmod-tcp-bbr` 是 Lean/TurboACC 依赖的 package symbol，`tcp_bbr.ko` 是模块名，`bbr` 是运行名；它们保持不变。代际由 source lock、prepared source 和 ELF `.modinfo version=3` 证明，不用另一个 `kmod-tcp-bbr3` package 名制造平行 provider。
+`kmod-tcp-bbr` 是 Lean 的 package symbol，`tcp_bbr.ko` 是模块名，`bbr` 是运行名；它们保持不变。代际由 source lock、prepared source 和 ELF `.modinfo version=3` 证明，不用另一个 `kmod-tcp-bbr3` package 名制造平行 provider。
 
 `net.core.default_qdisc=fq` 必须有真实 provider。Lean 的 `fq_codel` 与 `fq` 不是同一 qdisc，因此 common 显式选择 `kmod-sched`，firmware verifier 同时检查 `sch_fq.ko` 和 selected kernel vermagic。
 
@@ -732,7 +737,7 @@ OpenSSL ASM/runtime dispatch 分别利用 R4S ARMv8 crypto 和 N5105 AES/PCLMUL/
 
 OPKG、package 签名和 TLS certificate check 保持启用。固件不嵌入公开固定 root 密码、不追加私有可变软件源、不关闭 WAN firewall，也不把 Actions secret 烘焙成可复用设备凭据。
 
-### 9.4 Runtime sysctl 与 TurboACC
+### 9.4 Runtime sysctl 与 FW3
 
 项目不复制 Lean `/etc/sysctl.d/10-default.conf`。common 只拥有三项窄设置：
 
@@ -744,15 +749,11 @@ net.core.wmem_max=16777216
 
 16 MiB 是 Hysteria/QUIC 等本机高吞吐 UDP socket 的上限，不会为每条连接预分配 16 MiB。未经当前产品语义证明的 conntrack timeout、backlog、dirty ratio 等“万能调优”不进入固件。
 
-`zz-common-turboacc` 只在上游 TurboACC factory 初始化之后运行一次：
+LuCI 防火墙页面是软件流卸载、全锥形 NAT 与 TCP CCA 的唯一配置入口；三者使用 `/etc/config/firewall`。Lean LuCI 同时向 FW3/FW4 提供 `tcpcca` 选项，但其下发至内核的服务实现只有 FW4，因此 `firewall-tcpcca.patch` 在 FW3 的成功启动、重启、重载路径上应用该值。选择 `bbr` 时要求加载模块的 version 为 `3`；内核拒绝设置时保持失败可见。独立 sysctl 文件不保存第二份 CCA 值。
 
-1. 加载并确认 `tcp_bbr` module version 为 `3`，`sch_fq` 存在且 available CCA 包含 `bbr`。
-2. 要求上游已探测为 software `flow_offloading`，同时 `fastpath_fo_hw=0`。
-3. 只设置 `turboacc.config.tcpcca=bbr` 和保护上游配置的 `global.set=1`，不改写 fullcone 或其他探测值。
-4. reload 后确认实际 `tcp_congestion_control=bbr`，成功才写 `project_factory_applied=1`。
-5. sysupgrade 保留 UCI 时不再覆盖用户后来选择的 CCA。
+出厂配置随 FW3 包交付：软件流卸载开启、硬件卸载关闭、`FULLCONENAT` 和 `bbr`。sysupgrade 保留已有防火墙配置，包括 LuCI 以缺省字段表达的关闭状态。`zz-migrate-firewall-cca` 只在防火墙没有 CCA 值且旧 TurboACC 配置存在该值时迁移，不启动旧服务、不复制其他字段；停止支持从含 TurboACC 的镜像直接升级后可移除。
 
-TCP CCA 此后只由 TurboACC/UCI 管理，不在 sysctl 文件维护第二份值。BBRv3用于路由器本机建立或终止的 IPv4/IPv6 TCP；UDP/QUIC 和普通 NAT 转发连接不由路由器本机 CCA 接管。普通转发性能仍主要取决于规则复杂度、software flow offload、IRQ、RPS/XPS 与网卡队列。
+BBRv3 用于路由器本机建立或终止的 IPv4/IPv6 TCP；UDP/QUIC 和普通 NAT 转发连接不由路由器本机 CCA 接管。普通转发性能仍主要取决于规则复杂度、software flow offload、IRQ、RPS/XPS 与网卡队列。
 
 ## 10. 出厂配置与运行时边界
 
@@ -844,7 +845,7 @@ flowchart LR
 
 - `90-common-*` 与 `91-<device>-*` 都必须幂等，只写本层拥有的字段。
 - OpenWrt uci-defaults 在成功后移除；需要等待硬件出现的 N5105 接口脚本在合同不成立时失败并保留，hotplug 后续继续恢复 4 queues。
-- `zz-common-turboacc` 有持久 marker，成功后只应用一次；模块或上游 fastpath 尚未准备好时不写完成标记。
+- 防火墙默认值由 FW3 包配置持有，升级不复写已有设置；旧 CCA 的一次性迁移以新字段存在作为完成条件。
 - sysupgrade 保留 `/etc/config` 后尊重用户修改；项目不通过源码 patch 强制覆盖运行值。
 - 全新安装保持防火墙和管理面安全基线，用户首次登录后自行设置 root 密码。
 
@@ -1067,7 +1068,7 @@ BBRv3 不能作为与内核无关的普通 kmod 下载。正确路径是：
 3. 下载 patch，计算 SHA256，并对精确 pristine Linux tag clean-apply。
 4. 把当轮 patch 物化到 source-lock artifact。
 5. 安装进 Lean 对应 `hack-*`/`backport-*` patch stack。
-6. 继续使用 Lean `kmod-tcp-bbr`、`tcp_bbr.ko` 和运行名 `bbr`，保持 TurboACC 依赖关系。
+6. 继续使用 Lean `kmod-tcp-bbr`、`tcp_bbr.ko` 和运行名 `bbr`，由 FW3 应用配置。
 7. 从 build tree 的每一份 `tcp_bbr.ko` ELF `.modinfo` 读取 `version=3` 和 vermagic。
 8. 同时验证 `sch_fq.ko` 与同一 locked kernel vermagic。
 
@@ -1084,14 +1085,7 @@ Lean 的 module stripping 会去掉普通 `MODULE_VERSION`。兼容合同仅在 
 
 BBRv3 适用于路由器本机 IPv4 与 IPv6 TCP socket。它不控制 UDP/QUIC，也不改变普通 NAT 转发连接的端到端拥塞算法。PassWall/Xray 在路由器本机建立的 TCP outbound 会直接使用它。
 
-首次启动只有在以下条件同时成立时才把 factory CCA 设置为 BBR：
-
-- `/sys/module/tcp_bbr/version` 为 `3`。
-- `sch_fq` 已加载。
-- kernel 报告可用 CCA 包含 `bbr`。
-- TurboACC 已选择 software flow offload，hardware flow offload 关闭。
-
-脚本写入一次性标记；以后尊重用户的 TurboACC/CCA 选择。
+FW3 每次应用 `bbr` 都要求 `/sys/module/tcp_bbr/version` 为 `3`，由内核确认算法可用；`sch_fq` 独立通过成品模块门禁。出厂设置、升级和配置所有权见 §9.4。
 
 ## 14. 源码兼容策略
 
