@@ -608,6 +608,30 @@ quilt_patch_payload = (
 original_resolve_git_ref = module.resolve_git_ref
 original_github_tree_files = module.github_tree_files
 original_download_bytes = module.download_bytes
+with mock.patch.object(module, "api_json", return_value={
+    "truncated": False, "tree": [{"type": "blob", "path": None}]
+}):
+    try:
+        module.github_tree_files("https://github.com/example/ports.git", "c" * 40)
+    except module.ResolutionError as exc:
+        assert "invalid Git tree" in str(exc)
+    else:
+        raise AssertionError("malformed Git tree was accepted as an empty provider")
+unproven_native = json.loads(json.dumps(base))
+bbr = unproven_native["kernel_features"]["bbr3"]
+bbr["algorithm"] = None
+original_port = bbr["ports"]["6.12"]
+bbr["ports"]["6.12"] = {
+    "provider": "in-tree", "version": original_port["version"],
+    "source_sha256": original_port["source_sha256"],
+    "checked_providers": [{"name": None, "url": None, "ref": None, "commit": "c" * 40, "path": None}],
+}
+try:
+    module.validate_lock(unproven_native)
+except module.ResolutionError as exc:
+    assert "provider absence evidence" in str(exc)
+else:
+    raise AssertionError("unproven absence was accepted as native BBR")
 try:
     module.resolve_git_ref = lambda url, ref: {
         "url": url,

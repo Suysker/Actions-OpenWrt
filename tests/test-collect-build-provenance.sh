@@ -272,22 +272,21 @@ grep -Fq 'modules report inconsistent vermagic' "$temporary/rejected.log"
 # In-tree BBR may legitimately have no version field. The same release gate
 # must still validate the actual ELF, matching kernel, and BBR identity.
 native_lock="$lock_dir/native.json"
-python3 - "$lock_dir/source-lock.json" "$native_lock" <<'PY'
+PYTHONPATH="$repo_root/scripts" python3 - "$lock_dir/source-lock.json" "$native_lock" "$repo_root" <<'PY'
 import json
 import pathlib
 import sys
+from unittest import mock
+import source_lock
 
-source, output = map(pathlib.Path, sys.argv[1:])
+source, output, repo = map(pathlib.Path, sys.argv[1:])
 lock = json.loads(source.read_text())
 bbr = lock["kernel_features"]["bbr3"]
 bbr["algorithm"] = None
-bbr["ports"]["6.12"] = {
-    "provider": "in-tree",
-    "version": "6.12.100",
-    "source_sha256": "3" * 64,
-    "checked_providers": [{"name": "fixture", "url": "https://github.com/example/ports.git",
-                           "ref": "main", "commit": "c" * 40, "path": "6.12/bbr3.patch"}],
-}
+with mock.patch.object(source_lock, "resolve_git_ref", return_value={"commit": "c" * 40}), \
+     mock.patch.object(source_lock, "github_tree_files", return_value=set()):
+    native = source_lock.resolve_bbr_port(source_lock.load_bbr_policy(repo), "6.12")
+bbr["ports"]["6.12"] = native | {"version": "6.12.100", "source_sha256": "3" * 64}
 output.write_text(json.dumps(lock))
 PY
 native_digest="$(python3 "$repo_root/scripts/source_lock.py" digest "$native_lock")"

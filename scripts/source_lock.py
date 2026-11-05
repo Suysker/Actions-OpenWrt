@@ -667,17 +667,23 @@ def github_tree_files(repo_url: str, commit: str) -> set[str]:
     tree = api_json(
         f"https://api.github.com/repos/{slug}/git/trees/{commit}?recursive=1"
     )
-    if not isinstance(tree, dict) or not isinstance(tree.get("tree"), list):
+    if (
+        not isinstance(tree, dict) or not isinstance(tree.get("tree"), list)
+        or not isinstance(tree.get("truncated"), bool)
+    ):
         raise ResolutionError(f"invalid Git tree response for {repo_url}@{commit}")
-    if tree.get("truncated"):
+    if tree["truncated"]:
         raise ResolutionError(f"Git tree is truncated for {repo_url}@{commit}")
-    return {
-        entry["path"]
-        for entry in tree["tree"]
-        if isinstance(entry, dict)
-        and entry.get("type") == "blob"
-        and isinstance(entry.get("path"), str)
-    }
+    files = set()
+    for entry in tree["tree"]:
+        if (
+            not isinstance(entry, dict) or entry.get("type") not in ("blob", "tree", "commit")
+            or not isinstance(entry.get("path"), str) or not entry["path"]
+        ):
+            raise ResolutionError(f"invalid Git tree entry for {repo_url}@{commit}")
+        if entry["type"] == "blob":
+            files.add(entry["path"])
+    return files
 
 
 def expand_series_template(value: str, kernel_series: str, label: str) -> str:
@@ -718,6 +724,16 @@ def resolve_bbr_algorithm(policy: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
+def bbr_provider_lookup(provider: dict[str, Any], kernel_series: str) -> dict[str, str]:
+    name = provider.get("name", "")
+    path = expand_series_template(
+        provider.get("path_template", ""), kernel_series, f"provider {name} path"
+    ).strip("/")
+    if not path or ".." in pathlib.PurePosixPath(path).parts:
+        raise ResolutionError(f"unsafe BBRv3 provider path for {name}: {path}")
+    return {"name": name, "url": provider.get("url", ""), "ref": provider.get("ref", ""), "path": path}
+
+
 def resolve_bbr_port(
     policy: dict[str, Any],
     kernel_series: str,
@@ -732,9 +748,8 @@ def resolve_bbr_port(
     for provider in policy["providers"]:
         if not isinstance(provider, dict):
             raise ResolutionError("BBRv3 provider entries must be objects")
-        name = provider.get("name", "")
-        repo_url = provider.get("url", "")
-        requested_ref = provider.get("ref", "")
+        lookup = bbr_provider_lookup(provider, kernel_series)
+        name, repo_url, requested_ref = (lookup[key] for key in ("name", "url", "ref"))
         mode = provider.get("mode", "")
         if name == IN_TREE_BBR or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
             raise ResolutionError(f"invalid BBRv3 provider name: {name!r}")
@@ -745,11 +760,7 @@ def resolve_bbr_port(
             resolved = resolve_git_ref(repo_url, requested_ref)
             snapshots[identity] = (resolved, github_tree_files(repo_url, resolved["commit"]))
         resolved, files = snapshots[identity]
-        source_path = expand_series_template(
-            provider.get("path_template", ""), kernel_series, f"provider {name} path"
-        ).strip("/")
-        if not source_path or ".." in pathlib.PurePosixPath(source_path).parts:
-            raise ResolutionError(f"unsafe BBRv3 provider path for {name}: {source_path}")
+        source_path = lookup["path"]
 
         if mode == "single":
             origin_paths = [source_path] if source_path in files else []
@@ -773,10 +784,7 @@ def resolve_bbr_port(
                     f"BBRv3 provider directory contains no recognized patches: {name}:{source_path}"
                 )
         if not origin_paths:
-            checked.append({
-                "name": name, "url": repo_url, "ref": requested_ref,
-                "commit": resolved["commit"], "path": source_path,
-            })
+            checked.append(lookup | {"commit": resolved["commit"]})
             continue
 
         install_directory = expand_series_template(
@@ -1461,6 +1469,7 @@ def validate_lock(
     ports = bbr.get("ports")
     if not isinstance(ports, dict) or not ports:
         raise ResolutionError("source-lock contains no BBR selections")
+    bbr_policy = None
     for kernel_series, port in ports.items():
         if not re.fullmatch(r"[0-9]+\.[0-9]+", kernel_series):
             raise ResolutionError(f"invalid locked BBRv3 series: {kernel_series}")
@@ -1477,6 +1486,15 @@ def validate_lock(
                 if not isinstance(item, dict) or set(item) != {"name", "url", "ref", "commit", "path"}:
                     raise ResolutionError(f"invalid BBR provider absence evidence for {kernel_series}")
                 require_sha1(item["commit"], f"BBR provider lookup commit for {kernel_series}")
+            if bbr_policy is None:
+                bbr_policy = load_bbr_policy(repo_root)
+            expected = [
+                bbr_provider_lookup(provider, kernel_series)
+                for provider in bbr_policy["providers"]
+            ]
+            sources = [{key: value for key, value in item.items() if key != "commit"} for item in checked]
+            if sources != expected:
+                raise ResolutionError(f"BBR provider absence evidence differs from policy for {kernel_series}")
             continue
         origin_url = port.get("origin_url", "")
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", port.get("provider", "")):
