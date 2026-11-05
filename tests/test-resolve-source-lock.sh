@@ -662,6 +662,18 @@ try:
         "010-bbr3-0001-first.patch",
         "010-bbr3-0002-second.patch",
     ]
+    with mock.patch.object(module, "download_bytes", side_effect=AssertionError("no port to download")):
+        native = module.resolve_bbr_port(multi_policy, "7.3")
+    assert native["provider"] == "in-tree"
+    assert len(native["checked_providers"]) == len(multi_policy["providers"])
+    assert all(item["commit"] == "d" * 40 for item in native["checked_providers"])
+    with mock.patch.object(module, "github_tree_files", side_effect=module.ResolutionError("tree lookup failed")):
+        try:
+            module.resolve_bbr_port(multi_policy, "7.3")
+        except module.ResolutionError as exc:
+            assert str(exc) == "tree lookup failed"
+        else:
+            raise AssertionError("failed provider lookup was mistaken for a missing port")
 finally:
     module.resolve_git_ref = original_resolve_git_ref
     module.github_tree_files = original_github_tree_files

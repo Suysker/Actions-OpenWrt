@@ -15,14 +15,15 @@ kernel_version="${2:-}"
 source_lock="$(cd "$(dirname "$source_lock")" && pwd -P)/$(basename "$source_lock")"
 kernel_series="${kernel_version%.*}"
 
-mapfile -t locked_patches < <(
+patch_paths="$(
   bash "$repo_root/scripts/resolve-source-lock.sh" \
     materialized-bbr-paths "$source_lock" "$kernel_version"
-)
-[ "${#locked_patches[@]}" -gt 0 ] || {
-  echo "::error::No materialized BBRv3 patches were selected" >&2
-  exit 1
-}
+)"
+if [ -z "$patch_paths" ]; then
+  echo "::notice::Linux $kernel_version uses in-tree BBR: no matching trusted BBRv3 port."
+  exit 0
+fi
+mapfile -t locked_patches <<< "$patch_paths"
 
 mapfile -t module_version_contract < <(
   python3 "$repo_root/scripts/bbr3_module_version.py" \

@@ -15,16 +15,11 @@ diff --git a/package/network/config/firewall/files/firewall.config b/package/net
 diff --git a/package/network/config/firewall/files/firewall.init b/package/network/config/firewall/files/firewall.init
 --- a/package/network/config/firewall/files/firewall.init
 +++ b/package/network/config/firewall/files/firewall.init
-@@ -52,28 +52,45 @@ service_triggers() {
+@@ -52,28 +52,40 @@ service_triggers() {
 +apply_tcpcca() {
 +	local tcpcca
 +	tcpcca="$(uci -q get 'firewall.@defaults[0].tcpcca')" || return 0
 +	[ -n "$tcpcca" ] || return 0
-+
-+	if [ "$tcpcca" = bbr ] && [ "$(cat /sys/module/tcp_bbr/version)" != 3 ]; then
-+		echo 'firewall: refusing bbr because the loaded tcp_bbr is not version 3' >&2
-+		return 1
-+	fi
 +	sysctl -qw "net.ipv4.tcp_congestion_control=$tcpcca"
 +}
 +

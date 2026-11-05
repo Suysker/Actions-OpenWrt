@@ -39,6 +39,7 @@ SEMVER_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 FEED_RE = re.compile(r"^(src-git(?:-full)?)\s+([A-Za-z0-9_.-]+)\s+(\S+)$")
 ACTION_USE_RE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^@\s]+)@([^\s#]+)")
 SOURCE_LOCK_SCHEMA = 5
+IN_TREE_BBR = "in-tree"
 
 
 class ResolutionError(RuntimeError):
@@ -717,11 +718,17 @@ def resolve_bbr_algorithm(policy: dict[str, Any]) -> dict[str, Any]:
     return resolved
 
 
-def resolve_bbr_port(policy: dict[str, Any], kernel_series: str) -> dict[str, Any]:
+def resolve_bbr_port(
+    policy: dict[str, Any],
+    kernel_series: str,
+    snapshots: dict[tuple[str, str], tuple[dict[str, Any], set[str]]] | None = None,
+) -> dict[str, Any]:
     if not re.fullmatch(r"[0-9]+\.[0-9]+", kernel_series):
         raise ResolutionError(f"invalid BBRv3 kernel series: {kernel_series}")
 
-    attempted: list[str] = []
+    if snapshots is None:
+        snapshots = {}
+    checked: list[dict[str, str]] = []
     for provider in policy["providers"]:
         if not isinstance(provider, dict):
             raise ResolutionError("BBRv3 provider entries must be objects")
@@ -729,12 +736,15 @@ def resolve_bbr_port(policy: dict[str, Any], kernel_series: str) -> dict[str, An
         repo_url = provider.get("url", "")
         requested_ref = provider.get("ref", "")
         mode = provider.get("mode", "")
-        if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
+        if name == IN_TREE_BBR or not re.fullmatch(r"[a-z0-9][a-z0-9-]*", name):
             raise ResolutionError(f"invalid BBRv3 provider name: {name!r}")
         if mode not in {"single", "directory"}:
             raise ResolutionError(f"invalid BBRv3 provider mode for {name}: {mode!r}")
-        resolved = resolve_git_ref(repo_url, requested_ref)
-        files = github_tree_files(repo_url, resolved["commit"])
+        identity = (repo_url, requested_ref)
+        if identity not in snapshots:
+            resolved = resolve_git_ref(repo_url, requested_ref)
+            snapshots[identity] = (resolved, github_tree_files(repo_url, resolved["commit"]))
+        resolved, files = snapshots[identity]
         source_path = expand_series_template(
             provider.get("path_template", ""), kernel_series, f"provider {name} path"
         ).strip("/")
@@ -758,8 +768,15 @@ def resolve_bbr_port(policy: dict[str, Any], kernel_series: str) -> dict[str, An
                 and "/" not in path[len(prefix) :]
                 and pattern.fullmatch(pathlib.PurePosixPath(path).name)
             )
+            if not origin_paths and any(path.startswith(prefix) for path in files):
+                raise ResolutionError(
+                    f"BBRv3 provider directory contains no recognized patches: {name}:{source_path}"
+                )
         if not origin_paths:
-            attempted.append(f"{name}:{source_path}")
+            checked.append({
+                "name": name, "url": repo_url, "ref": requested_ref,
+                "commit": resolved["commit"], "path": source_path,
+            })
             continue
 
         install_directory = expand_series_template(
@@ -833,10 +850,7 @@ def resolve_bbr_port(policy: dict[str, Any], kernel_series: str) -> dict[str, An
             "patches": patches,
         }
 
-    detail = ", ".join(attempted) or "no configured provider"
-    raise ResolutionError(
-        f"no trusted BBRv3 provider contains kernel series {kernel_series}: {detail}"
-    )
+    return {"provider": IN_TREE_BBR, "checked_providers": checked}
 
 
 def safe_artifact_path(value: str, kernel_series: str) -> pathlib.PurePosixPath:
@@ -858,6 +872,8 @@ def materialize_bbr_patches(lock: dict[str, Any], output: pathlib.Path) -> int:
     count = 0
     ports = lock["kernel_features"]["bbr3"]["ports"]
     for kernel_series, port in sorted(ports.items()):
+        if port["provider"] == IN_TREE_BBR:
+            continue
         origin_url = port["origin_url"]
         origin_commit = port["origin_commit"]
         for patch in port["patches"]:
@@ -930,6 +946,8 @@ def _artifact_compatibility_identity(entry: Any) -> Any:
 def _bbr_port_topology(entry: Any) -> Any:
     if not isinstance(entry, dict):
         return entry
+    if entry.get("provider") == IN_TREE_BBR:
+        return {"provider": IN_TREE_BBR}
     patches = entry.get("patches")
     if isinstance(patches, list):
         patch_topology = [
@@ -1239,10 +1257,7 @@ def locked_profile_string(
     return value
 
 
-def render_profile_kernel_plan(lock: dict[str, Any], profile: str) -> str:
-    """Render the fixed-order kernel/BBRv3 plan consumed by shell orchestration."""
-
-    entry = locked_profile(lock, profile)
+def locked_bbr_port(lock: dict[str, Any], profile: str) -> dict[str, Any]:
     series = locked_profile_string(lock, profile, "kernel_series")
     bbr = lock["kernel_features"]["bbr3"]
     if bbr["profile_kernel_series"].get(profile) != series:
@@ -1251,18 +1266,26 @@ def render_profile_kernel_plan(lock: dict[str, Any], profile: str) -> str:
         )
     port = bbr["ports"].get(series)
     if not isinstance(port, dict):
-        raise ResolutionError(f"source-lock has no BBRv3 port for kernel {series}")
+        raise ResolutionError(f"source-lock has no BBR selection for kernel {series}")
+    return port
+
+
+def render_profile_kernel_plan(lock: dict[str, Any], profile: str) -> str:
+    """Render the fixed-order kernel/BBR plan consumed by shell orchestration."""
+
+    entry = locked_profile(lock, profile)
+    port = locked_bbr_port(lock, profile)
     values = (
         entry["kernel_channel"],
-        series,
+        entry["kernel_series"],
         entry["kernel_version"],
         entry["kernel_source_sha256"],
         entry["kernel_target"],
         port["provider"],
-        port["origin_url"],
-        port["origin_ref"],
-        port["origin_commit"],
-        port["install_directory"],
+        port.get("origin_url", ""),
+        port.get("origin_ref", ""),
+        port.get("origin_commit", ""),
+        port.get("install_directory", ""),
     )
     if any(not isinstance(value, str) or "\n" in value for value in values):
         raise ResolutionError(f"source-lock kernel plan is unsafe for profile {profile}")
@@ -1270,10 +1293,9 @@ def render_profile_kernel_plan(lock: dict[str, Any], profile: str) -> str:
 
 
 def render_bbr_patch_plan(lock: dict[str, Any], profile: str) -> str:
-    series = locked_profile_string(lock, profile, "kernel_series")
-    port = lock["kernel_features"]["bbr3"]["ports"][series]
+    port = locked_bbr_port(lock, profile)
     lines: list[str] = []
-    for patch in port["patches"]:
+    for patch in port.get("patches", []):
         values = (
             str(patch["order"]),
             patch["artifact_path"],
@@ -1307,6 +1329,8 @@ def materialized_bbr_patch_paths(
             f"expected one BBRv3 port for Linux {kernel_version}, found {len(matching)}"
         )
     series, port = matching[0]
+    if port["provider"] == IN_TREE_BBR:
+        return ()
     paths: list[pathlib.Path] = []
     for patch in port["patches"]:
         relative = safe_artifact_path(patch["artifact_path"], series)
@@ -1354,7 +1378,9 @@ def render_lock_summary(lock: dict[str, Any]) -> str:
         for profile in sorted(lock["profiles"])
     )
     lines.extend(
-        f"BBRv3 {series}: {port['provider']}@{port['origin_commit']}"
+        (f"BBR {series}: in-tree (no matching trusted BBRv3 port)"
+         if port["provider"] == IN_TREE_BBR
+         else f"BBRv3 {series}: {port['provider']}@{port['origin_commit']}")
         for series, port in sorted(
             lock["kernel_features"]["bbr3"]["ports"].items()
         )
@@ -1432,22 +1458,26 @@ def validate_lock(
     require_sha256(lock.get("patch_digest", ""), "patch digest")
 
     bbr = lock.get("kernel_features", {}).get("bbr3", {})
-    algorithm = bbr.get("algorithm", {})
-    if (
-        algorithm.get("requested_ref") != "v3"
-        or algorithm.get("module_version") != 3
-        or algorithm.get("runtime_name") != "bbr"
-    ):
-        raise ResolutionError("source-lock BBRv3 algorithm identity is invalid")
-    require_sha1(algorithm.get("commit", ""), "BBRv3 algorithm HEAD")
     ports = bbr.get("ports")
     if not isinstance(ports, dict) or not ports:
-        raise ResolutionError("source-lock contains no BBRv3 ports")
+        raise ResolutionError("source-lock contains no BBR selections")
     for kernel_series, port in ports.items():
         if not re.fullmatch(r"[0-9]+\.[0-9]+", kernel_series):
             raise ResolutionError(f"invalid locked BBRv3 series: {kernel_series}")
         if not isinstance(port, dict):
             raise ResolutionError(f"invalid BBRv3 port for {kernel_series}")
+        if port.get("provider") == IN_TREE_BBR:
+            checked = port.get("checked_providers")
+            if (
+                set(port) != {"provider", "version", "source_sha256", "checked_providers"}
+                or not isinstance(checked, list) or not checked
+            ):
+                raise ResolutionError(f"in-tree BBR has no provider absence evidence for {kernel_series}")
+            for item in checked:
+                if not isinstance(item, dict) or set(item) != {"name", "url", "ref", "commit", "path"}:
+                    raise ResolutionError(f"invalid BBR provider absence evidence for {kernel_series}")
+                require_sha1(item["commit"], f"BBR provider lookup commit for {kernel_series}")
+            continue
         origin_url = port.get("origin_url", "")
         if not re.fullmatch(r"[a-z0-9][a-z0-9-]*", port.get("provider", "")):
             raise ResolutionError(f"invalid BBRv3 provider for {kernel_series}")
@@ -1505,6 +1535,17 @@ def validate_lock(
             if install_name in install_names:
                 raise ResolutionError(f"duplicate BBRv3 install name: {install_name}")
             install_names.add(install_name)
+
+    algorithm = bbr.get("algorithm")
+    if any(port["provider"] != IN_TREE_BBR for port in ports.values()):
+        if (
+            not isinstance(algorithm, dict) or algorithm.get("requested_ref") != "v3"
+            or algorithm.get("module_version") != 3 or algorithm.get("runtime_name") != "bbr"
+        ):
+            raise ResolutionError("source-lock BBRv3 algorithm identity is invalid")
+        require_sha1(algorithm.get("commit", ""), "BBRv3 algorithm HEAD")
+    elif algorithm is not None:
+        raise ResolutionError("source-lock specifies a BBRv3 algorithm with no selected port")
 
     profile_kernel_series = bbr.get("profile_kernel_series")
     if not isinstance(profile_kernel_series, dict) or not profile_kernel_series:
@@ -1657,7 +1698,7 @@ def resolve(
     ports: dict[str, Any] = {}
     kernel_versions: dict[str, dict[str, str]] = {}
     bbr_policy = load_bbr_policy(repo_root)
-    bbr_algorithm = resolve_bbr_algorithm(bbr_policy)
+    provider_snapshots: dict[tuple[str, str], tuple[dict[str, Any], set[str]]] = {}
     for profile, env in environments.items():
         target = env["KERNEL_TARGET"]
         makefile = download_text(
@@ -1699,9 +1740,13 @@ def resolve(
             "image_pattern": env["IMAGE_PATTERN"],
         }
         if kernel_series not in ports:
-            ports[kernel_series] = resolve_bbr_port(bbr_policy, kernel_series)
+            ports[kernel_series] = resolve_bbr_port(bbr_policy, kernel_series, provider_snapshots)
             ports[kernel_series].update(kernel_versions[kernel_series])
 
+    bbr_algorithm = (
+        resolve_bbr_algorithm(bbr_policy)
+        if any(port["provider"] != IN_TREE_BBR for port in ports.values()) else None
+    )
     profile_digests = {
         profile: profile_digest(repo_root, profile) for profile in profiles
     }

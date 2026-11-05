@@ -5,7 +5,7 @@
 - NanoPi R4S：RK3399、原生 Lean 启动链与网口 IRQ 策略、ARMv8 CRC/crypto、R8168、PWM fan、512 MiB LZ4 zram。
 - N5105 PVE：`x86-64-v2 + mtune=tremont`、squashfs combined EFI、VirtIO NET/SCSI、I225/igc 直通、4 队列与 irqbalance。
 
-两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、可选择的 Lean stable/testing kernel channel 和按所选内核系列动态解析的 BBRv3。仓库不写死 Linux point release：手动构建默认选择 stable，也可以选择 testing；每轮从同一份 Lean master 分别解析目标的 channel/series/version/source hash，并把精确结果写进 source lock。2026-08-02 审计时，两个目标的 stable/testing 分别对应 Linux 6.12/6.18，这只是通道映射证据，不是永久版本常量。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP、PCRE2、F2FS tools、MTD 以及 Lean 缺失的官方 CycloneDX image generator 从同一轮锁定的 OpenWrt 官方 core 窄同步。`libsepol`、旧 `wol` CLI、current `small/tcping`、R4S ZRAM backend guard 和共享 image manifest 只保留经真实构建证明必要的窄语义兼容；系列相关规则只消费本轮 source-lock 的 selected kernel，不固定 point release，不降低全局编译器，也不覆盖整份 Lean 核心文件。完整设计、取舍依据和验收规范见 [构建架构](docs/CON-001-architecture.md)。
+两者共用 firewall3/iptables、用户明确固定的 GCC 15、精简应用 allowlist、可选择的 Lean stable/testing kernel channel 和按所选内核自动选择实现的 BBR。仓库不写死 Linux point release：手动构建默认选择 stable，也可以选择 testing；每轮从同一份 Lean master 分别解析目标的 channel/series/version/source hash，并把精确结果写进 source lock。2026-08-02 审计时，两个目标的 stable/testing 分别对应 Linux 6.12/6.18，这只是通道映射证据，不是永久版本常量。当前配置实际使用的通用 package 统一来自每轮锁定的 `openwrt/packages@master`；GMP、PCRE2、F2FS tools、MTD 以及 Lean 缺失的官方 CycloneDX image generator 从同一轮锁定的 OpenWrt 官方 core 窄同步。`libsepol`、旧 `wol` CLI、current `small/tcping`、R4S ZRAM backend guard 和共享 image manifest 只保留经真实构建证明必要的窄语义兼容；系列相关规则只消费本轮 source-lock 的 selected kernel，不固定 point release，不降低全局编译器，也不覆盖整份 Lean 核心文件。完整设计、取舍依据和验收规范见 [构建架构](docs/CON-001-architecture.md)。
 
 ## 构建模型
 
@@ -76,7 +76,7 @@ feed 索引覆盖全部锁定源，但安装阶段只提交当前 profile 的 re
 - R4S 与 N5105 的 squashfs block-root 镜像同时保留 `mkfs.ext4`（`e2fsprogs`）与 `mkfs.f2fs`（`mkf2fs`）；两个 formatter recipe 从同一轮锁定的官方 OpenWrt core 窄同步以保持 GCC15/C23 兼容。首次启动由本轮 Lean fstools 按 rootfs_data 大小选择格式并创建持久 overlay，不因此引入分区或自动挂载工具。
 - `Asia/Shanghai` 和启用 NTP client，保留上游 NTP server 列表。
 - `fq`、16 MiB socket buffer 上限。
-- 在 LuCI「网络 → 防火墙」管理软件流卸载、全锥形 NAT 和 TCP 拥塞控制。新装默认软件流卸载开启、硬件卸载关闭、使用 `FULLCONENAT` 和 `bbr`；FW3 应用 `bbr` 前核对加载的模块是 BBRv3。升级保留已有防火墙设置，只有缺少 `firewall.tcpcca` 时才迁移原 TurboACC 的 CCA 值。
+- 在 LuCI「网络 → 防火墙」管理软件流卸载、全锥形 NAT 和 TCP 拥塞控制。新装默认软件流卸载开启、硬件卸载关闭、使用 `FULLCONENAT` 和 `bbr`。页面和 `/etc/config/firewall` 始终使用同一个 `bbr` 选项，FW3 直接应用该值。升级保留已有防火墙设置，只有缺少 `firewall.tcpcca` 时才迁移原 TurboACC 的 CCA 值。
 - 不内置固定 root 密码、不关闭签名校验、不添加私有软件源、不开放 WAN 管理入口。
 
 AdGuardHome、MosDNS、SmartDNS、dnsmasq-full 和 PassWall 都会被编译，但 DNS 端口、上游、缓存、规则、节点、订阅和凭据是用户常用的设备运行时配置，不烘焙进两台设备共用的镜像。它们应按设备实际 UCI/YAML、socket、iptables redirect 和完整查询链验收。
@@ -152,7 +152,7 @@ Breaking changes：
 - `profiles/x86` 和 workflow 输入 `x86` 已改名为 `x86-n5105-pve`，没有兼容别名。
 - workflow 的 `profile` 输入由静态下拉框改为字符串：填 `all` 或任一 `profiles/<device>` 目录名；matrix、update checker、静态检查和 Release 聚合均自动发现目录，不再维护第二份 profile 名单。
 - source lock 当前为 schema 5，profile 内完整记录 selected kernel channel/target/series/version/source hash；Action 执行身份不属于 source lock，feeds/source overlays/kernel/BBRv3 等消费者统一通过 `source_lock.py` 解释。其他 schema 的 incoming lock 需重新运行 resolver，设备配置与 sysupgrade 行为不受影响。
-- 手动 workflow 通过 `kernel_channel` 共同选择 Lean stable/testing channel，默认 stable；本地 resolver 省略该参数时沿用 common seed 的 testing 默认，自动 update 直接消费自己生成并锁定的通道。任何路径都不永久写死 6.12、6.18 或 point release；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析与目标 series 匹配的最新可信 BBRv3 port、物化并锁定 commit/hash。缺少兼容 port 时构建明确失败，不静默降级。
+- 手动 workflow 通过 `kernel_channel` 共同选择 Lean stable/testing channel，默认 stable；本地 resolver 省略该参数时沿用 common seed 的 testing 默认，自动 update 直接消费自己生成并锁定的通道。任何路径都不永久写死 6.12、6.18 或 point release；`patchsets/common/kernel/bbr3-sources.json` 只保存 provider 策略，每轮自动解析与目标 series 匹配的最新可信 BBRv3 port、物化并锁定 commit/hash。确认没有匹配的可信 port 时，使用选定内核自带的 BBR，并在 source lock 记录查询证据；网络、哈希和补丁应用错误仍阻断构建，内核通道保持原样。
 - GitHub 官方复用 Actions 直接使用 `actions/*@main`，按用户选择追踪最新默认分支；任何上游 runtime/行为不兼容会使门禁直接失败。
 - 自动构建改为每日轻量检查、每周一完整构建、重大兼容变化提前构建；旧 `0 */18 * * *` 实际是每天 00:00/18:00 UTC 两次，不是滑动 18 小时。跨 run 的 `dl`/ccache 不再上传，成功中转 artifact 为 1 天兜底并在发布前删除，失败 diagnostics 保留 7 天，最近 6 个正式 Release 保持不变。
 - `diy-part2.sh` 不做可变 release 查询、服务策略修改或 `PKG_HASH:=skip`；它只应用 source lock 中已经验证的 metadata。PassWall 与 Kenzo 的窄修复均位于独立 feed patchset，由 patch applicator 在各自锁定 Git 工作树中 clean-apply、记录 hash，并在上游语义漂移时失败。

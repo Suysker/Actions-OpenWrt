@@ -39,6 +39,8 @@ exact:zerotier
 
 # firewall3/iptables is the only firewall stack.
 exact:firewall4
+# Lean's router defaults select this independently of firewall4.
+exact:nftables-json
 regex:^nftables(?:-|$)
 exact:iptables-nft
 exact:ip6tables-nft

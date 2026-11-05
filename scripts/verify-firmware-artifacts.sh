@@ -131,6 +131,8 @@ locked_profile = lock["profiles"].get(profile)
 if not isinstance(locked_profile, dict):
     raise SystemExit(f"::error::Profile {profile} is absent from embedded source-lock")
 kernel_version = locked_profile.get("kernel_version")
+bbr_provider = source_lock.locked_bbr_port(lock, profile)["provider"]
+requires_bbrv3 = bbr_provider != source_lock.IN_TREE_BBR
 kernel_identity = {
     "channel": locked_profile.get("kernel_channel"),
     "series": locked_profile.get("kernel_series"),
@@ -217,16 +219,18 @@ if patches.get("format") != "patch-report-v3":
 patch_values = patches.get("values", {})
 if not isinstance(patch_values, dict):
     raise SystemExit("::error::Build provenance patch values are invalid")
-for key, expected in (
-    ("source_lock_digest", expected_digest),
-    ("kernel_channel", str(kernel_identity["channel"])),
-    ("kernel_series", str(kernel_identity["series"])),
-    ("kernel_version", str(kernel_identity["version"])),
-    ("kernel_source_sha256", str(kernel_identity["source_sha256"])),
-    ("assertion_BBR_VERSION", "3"),
-    ("assertion_runtime_name", "bbr"),
-    ("assertion_module_version_metadata", "retained"),
-):
+expected_patch_values = {
+    "source_lock_digest": expected_digest,
+    "kernel_channel": str(kernel_identity["channel"]),
+    "kernel_series": str(kernel_identity["series"]),
+    "kernel_version": str(kernel_identity["version"]),
+    "kernel_source_sha256": str(kernel_identity["source_sha256"]),
+    "bbr_provider": bbr_provider,
+    "assertion_runtime_name": "bbr",
+}
+if requires_bbrv3:
+    expected_patch_values.update(assertion_BBR_VERSION="3", assertion_module_version_metadata="retained")
+for key, expected in expected_patch_values.items():
     if patch_values.get(key) != expected:
         raise SystemExit(f"::error::Build provenance patch evidence misses {key}={expected}")
 runner = inputs.get("runner", {})
@@ -261,10 +265,12 @@ sch_fq_modules = modules.get("sch_fq", [])
 if not isinstance(bbr_modules, list) or not isinstance(sch_fq_modules, list):
     raise SystemExit("::error::Build provenance module lists are invalid")
 if not bbr_modules or not sch_fq_modules:
-    raise SystemExit("::error::Build provenance does not contain BBRv3 and sch_fq modules")
-vermagics = {validate_module(entry, versioned=True) for entry in bbr_modules}
+    raise SystemExit("::error::Build provenance does not contain BBR and sch_fq modules")
+vermagics = {validate_module(entry, versioned=requires_bbrv3) for entry in bbr_modules}
 if len(vermagics) != 1:
     raise SystemExit("::error::Build provenance contains inconsistent BBR module vermagic")
+if len({entry.get("version") for entry in bbr_modules}) != 1:
+    raise SystemExit("::error::Build provenance contains inconsistent BBR module versions")
 for entry in sch_fq_modules:
     validate_module(entry, versioned=False)
 PY

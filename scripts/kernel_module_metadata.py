@@ -69,11 +69,13 @@ def read_modinfo(module: pathlib.Path) -> dict[str, list[str]]:
     return metadata
 
 
-def field_value(module: pathlib.Path, field: str) -> str:
+def field_value(module: pathlib.Path, field: str, *, optional: bool = False) -> str | None:
     if FIELD_NAME.fullmatch(field) is None:
         raise ModuleMetadataError(f"invalid module metadata field: {field!r}")
     values = read_modinfo(module).get(field, [])
     if not values:
+        if optional:
+            return None
         raise ModuleMetadataError(f"module {module} has no .modinfo field {field!r}")
     unique = set(values)
     if len(unique) != 1:
@@ -85,18 +87,20 @@ def field_value(module: pathlib.Path, field: str) -> str:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 3:
+    optional = len(argv) == 4 and argv[3] == "--optional"
+    if len(argv) != 3 and not optional:
         print(
-            "Usage: kernel_module_metadata.py <module.ko> <field>",
+            "Usage: kernel_module_metadata.py <module.ko> <field> [--optional]",
             file=sys.stderr,
         )
         return 2
     try:
-        value = field_value(pathlib.Path(argv[1]), argv[2])
+        value = field_value(pathlib.Path(argv[1]), argv[2], optional=optional)
     except ModuleMetadataError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 1
-    print(value)
+    if value is not None:
+        print(value)
     return 0
 
 

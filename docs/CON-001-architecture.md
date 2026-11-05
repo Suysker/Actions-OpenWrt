@@ -53,7 +53,7 @@
 | Lean master、iptables/firewall3、GCC15 | 已实现 | 保持 |
 | 精简 package 闭包、provider、source lock、provenance | 已实现 | 保持 |
 | 双平台构建、固件验收、Release 回下载复验 | Linux 6.12 已通过 | Linux 6.18 迁移后重新完整通过 |
-| BBRv3 + `fq` + FW3 出厂默认 | 内核门禁已在历史构建验证；FW3 接管逻辑由行为测试验证 | selected kernel 的 port 必须 clean-apply 并保留 module version 3 |
+| BBR + `fq` + FW3 出厂默认 | 内核门禁已在历史构建验证；FW3 接管逻辑由行为测试验证 | 选中 BBRv3 port 时必须 clean-apply 并保留 module version 3；否则验证原生 BBR 和内核匹配 |
 | R4S target、IRQ、OPP、zram、r8168、ARM crypto | 配置与源码语义已实现 | 保留 Lean 原生 steering |
 | N5105 VirtIO、igc、4 queues、irqbalance | 配置与源码语义已实现 | 保持 `x86-64-v2` + Tremont tune；固件不配置 PVE host |
 | Linux 6.18 | selected-kernel/schema 5、本地 fixture 已实现 | 同一 source lock 下完成双平台 CI/Release 验收 |
@@ -99,7 +99,7 @@ R4S、内核和工具链的逐项取舍如下。“原生纳入”表示优化�
 | ALL_KMODS/ALL_NONSHARED | 排除 | 与只构建当前功能闭包的目标直接冲突 |
 | DRM/Panfrost、iGPU、音频 | 排除 | 两个平台都是无显示路由器/虚拟路由器 |
 | zram | 仅 R4S 纳入 | 512 MiB LZ4、低 swappiness，作为 OOM 保险；固定内存的 N5105 guest 不启用 |
-| BBRv3 | common 纳入 | 按 selected series 动态解析公开 port，保留 Lean package/module/runtime 名称，并验证 ELF version `3` |
+| BBR | common 纳入 | 有可信 port 时构建 BBRv3 并验证 ELF version `3`；无 port 时保留选定内核的 BBR，包名、模块和运行名不变 |
 | software flow offload | common 纳入 | 由 firewall/UCI 唯一管理；hardware flow offload 出厂关闭 |
 | SFE/shortcut-fe/natflow | 排除 | 不和 iptables fullcone、PassWall、Lean software flow offload 叠加多条 fast path |
 | firewall4/nftables | 排除 | 与冻结的 firewall3/iptables 产品合同冲突 |
@@ -144,7 +144,7 @@ N5105 profile 的设备合同是运行在 PVE 中的专用 OpenWrt guest，而�
 
 | 层 | 最终方案 |
 |---|---|
-| Common | Lean master；可选择的 stable/testing kernel channel；firewall3/iptables；GCC15；共享精简 package 闭包；OpenSSL ASM/speed、zlib speed；BBRv3 + `fq`；software flow offload；签名、SBOM、source lock 与 provenance |
+| Common | Lean master；可选择的 stable/testing kernel channel；firewall3/iptables；GCC15；共享精简 package 闭包；OpenSSL ASM/speed、zlib speed；BBR + `fq`；software flow offload；签名、SBOM、source lock 与 provenance |
 | R4S | Lean 原生 Rockchip/R4S target；ARMv8 CRC/crypto + A72/A53 tune；r8168；native CPU4/5 IRQ；packet steering；schedutil/PWM fan；512 MiB LZ4 zram；无 irqbalance、RTL8152、DRM/Panfrost |
 | N5105 PVE | x86_64 generic EFI squashfs；x86-64-v2 + Tremont tune；VirtIO built-in + I225/igc；4 queues + irqbalance、RPS off；无 autocore、zram、microcode、USB/GPU/音频 |
 | Actions | 每日轻量解析；每周一次双平台构建，兼容边界发生重大上游变化时提前构建，手动构建随时可用；prepare 一次解析 source lock；四个高价值门禁；聚合、回下载复验、公开、保留六个 Release |
@@ -372,7 +372,7 @@ flowchart LR
 | GeoIP/Geosite 的角色、可信仓库和 recipe 字段 | `geodata-sources.json`；当轮 tag/hash 进入 source lock |
 | BBRv3 provider 与算法身份策略 | `bbr3-sources.json` |
 | selected kernel channel/series/version/hash | common Kconfig intent + `kernel_selection.py` + source lock |
-| BBRv3/`fq` 是否进入固件 | common required Kconfig/package contract |
+| BBR/`fq` 是否进入固件 | common required Kconfig/package contract |
 | 出厂 CCA 与流卸载 | FW3 自带的 `/etc/config/firewall`；升级保留已有配置 |
 | 后续 CCA 与 software flow offload | 防火墙 LuCI/UCI 与 FW3 服务；不建立第二个 sysctl 所有者 |
 | common qdisc/socket buffer | `90-router-performance.conf` |
@@ -398,7 +398,7 @@ flowchart LR
 - `Loyalsoldier/geoip` 最新 `geoip.dat`
 - `Loyalsoldier/v2ray-rules-dat` 最新 `geosite.dat`
 - Lean 本轮 profile 所选 channel 对应的 target kernel
-- 与该 kernel series 匹配的最新受信任 BBRv3 port
+- 与该 kernel series 匹配的最新受信任 BBRv3 port，或已确认无匹配 port 的原生 BBR 选择
 
 resolver 随即把 commit、精确 URL 和 SHA256 写入同一个 schema 5 lock。两个 build job 只消费该 lock，不在构建中再次查询 `latest` 或 branch HEAD。
 
@@ -458,12 +458,12 @@ selected kernel 只有一条带明确优先级的解析路径：
 1. 手动 workflow 的 `kernel_channel` 显式选择 `stable` 或 `testing`，默认 stable；本地调用省略参数时才沿用 common seed 的 testing 回退值。两个设备 seed 都不重复拥有该 symbol。
 2. resolver 通过 `kernel_selection.py` 将显式选择应用到两个渲染结果；非法值在解析前失败。
 3. resolver 从本轮锁定 Lean 的 `target/linux/<target>/Makefile` 分别读取 `KERNEL_PATCHVER` 或 `KERNEL_TESTING_PATCHVER`，再从 `include/kernel-<series>` 解析精确 version/hash，并把最终选择写入 source lock。
-4. build 不再重新猜测通道，而是依据 source lock 原子改写渲染后的 `CONFIG_TESTING_KERNEL`，再执行 defconfig。各 target 独立解析同一 channel 对应的 series；若 Lean 为两个 target 提供不同 series，source lock 分别记录并为每个 series 解析 BBRv3 port。
+4. build 不再重新猜测通道，而是依据 source lock 原子改写渲染后的 `CONFIG_TESTING_KERNEL`，再执行 defconfig。各 target 独立解析同一 channel 对应的 series；若 Lean 为两个 target 提供不同 series，source lock 分别记录并为每个 series 确定 BBR 实现。
 5. build 在最终 `.config`、target metadata、source lock 和 provenance 四处复核同一个 selection；产物 verifier 会再次按 lock 重建期望 seed，任何一处不同立即失败。
 
 2026-08-02 审计时，Lean `f9dcc54b24e3f7fc7e8cd6db05f9e545eff67486` 为 Rockchip/x86 同时提供 stable 6.12、testing 6.18，精确 testing version 为 6.18.38；Linux 6.18 已是 kernel.org longterm。它们是可行性证据而不是永久构建输入，后续仍由 Lean master 动态解析。即使 sbwml 已更新到更高的 6.18 point release，本项目也不越过 Lean target 独立改 kernel hash。
 
-testing channel 以后可能按 target 前进到其他 series。任一 profile 的 selected series 缺少可信 BBRv3 port、target patch 或当前闭包兼容性时，整轮构建必须停止且不发布；不得静默切回 6.12、普通 BBR 或其他 provider。
+testing channel 可按 target 前进到不同 series。缺少可信 BBRv3 port 只影响该 series 的 BBR 实现，按 §13 使用选定内核自带的 BBR；内核通道与版本不改。缺少必要 target patch、当前闭包不兼容或已选 port 校验失败时，整轮停止且不发布。
 
 PPP TX scatter-gather 作为可选优化随选定 Lean 内核继承，不由本仓库回移，也不作为 stable/testing 的共同验收条件。此前 6.12 私有适配依赖 `direct_xmit`，在上游缺少前置能力时会阻断双平台构建；为避免扩展私有内核依赖链，已撤销该补齐要求。PPP/PPPoE 基础功能、独立的 PPPoE IPv4/IPv6 GRO/GSO 合同及 BBRv3 检查保持不变。
 
@@ -632,7 +632,7 @@ resolver 在 prepare 中解析一次，applicator 只把 lock 中的精确版本
 
 HAProxy、AdGuardHome frontend 和 Geo 数据直接采用上游发布元数据中的摘要，解析阶段不下载这些 payload。AdGuardHome 自动生成的源码归档没有上述发布资产摘要，因此仍需下载计算本轮 `PKG_HASH`；这是生成原生下载所需输入，不是重复验证已有上游摘要。版本与摘要每轮一起解析，无需手工更新。
 
-因此仓库中看见的某个上游 recipe `PKG_HASH` 是该 recipe 自身的 metadata，不代表项目永久锁死；项目新增的普通上游版本/hash不得写死。允许稳定固定的是用户明确选择的功能/ABI 代际，例如 GCC15、BBRv3 module version 3 和 N5105 x86-64-v2 基线。
+因此仓库中看见的某个上游 recipe `PKG_HASH` 是该 recipe 自身的 metadata，不代表项目永久锁死；项目新增的普通上游版本/hash不得写死。允许稳定固定的是用户明确选择的功能/ABI 代际，例如 GCC15、所选 BBRv3 port 的 module version 3 和 N5105 x86-64-v2 基线。
 
 AdGuardHome 保持 package 的 `--no-check-update`：最新版本由 Actions 生成新的、可回滚的双平台固件，设备内二进制不绕过 OPKG、非特权 jail、provenance 和 Release 自行替换。
 
@@ -749,11 +749,11 @@ net.core.wmem_max=16777216
 
 16 MiB 是 Hysteria/QUIC 等本机高吞吐 UDP socket 的上限，不会为每条连接预分配 16 MiB。未经当前产品语义证明的 conntrack timeout、backlog、dirty ratio 等“万能调优”不进入固件。
 
-LuCI 防火墙页面是软件流卸载、全锥形 NAT 与 TCP CCA 的唯一配置入口；三者使用 `/etc/config/firewall`。Lean LuCI 同时向 FW3/FW4 提供 `tcpcca` 选项，但其下发至内核的服务实现只有 FW4，因此 `firewall-tcpcca.patch` 在 FW3 的成功启动、重启、重载路径上应用该值。选择 `bbr` 时要求加载模块的 version 为 `3`；内核拒绝设置时保持失败可见。独立 sysctl 文件不保存第二份 CCA 值。
+LuCI 防火墙页面是软件流卸载、全锥形 NAT 与 TCP CCA 的唯一配置入口；三者使用 `/etc/config/firewall`。Lean LuCI 同时向 FW3/FW4 提供 `tcpcca` 选项，但其下发至内核的服务实现只有 FW4，因此 `firewall-tcpcca.patch` 在 FW3 的成功启动、重启、重载路径上应用该值。`bbr` 始终指向当轮固件的 BBR 实现，FW3 不按代际区分该选项；内核拒绝设置时保持失败可见。独立 sysctl 文件不保存第二份 CCA 值。
 
 出厂配置随 FW3 包交付：软件流卸载开启、硬件卸载关闭、`FULLCONENAT` 和 `bbr`。sysupgrade 保留已有防火墙配置，包括 LuCI 以缺省字段表达的关闭状态。`zz-migrate-firewall-cca` 只在防火墙没有 CCA 值且旧 TurboACC 配置存在该值时迁移，不启动旧服务、不复制其他字段；停止支持从含 TurboACC 的镜像直接升级后可移除。
 
-BBRv3 用于路由器本机建立或终止的 IPv4/IPv6 TCP；UDP/QUIC 和普通 NAT 转发连接不由路由器本机 CCA 接管。普通转发性能仍主要取决于规则复杂度、software flow offload、IRQ、RPS/XPS 与网卡队列。
+BBR 用于路由器本机建立或终止的 IPv4/IPv6 TCP；UDP/QUIC 和普通 NAT 转发连接不由路由器本机 CCA 接管。普通转发性能仍主要取决于规则复杂度、software flow offload、IRQ、RPS/XPS 与网卡队列。
 
 ## 10. 出厂配置与运行时边界
 
@@ -921,7 +921,7 @@ IMAGE_PATTERN=*friendlyarm_nanopi-r4s*squashfs*sysupgrade.img.gz
 
 944 MiB rootfs partition 为 overlay 留出空间，不代表允许把额外应用塞进 manifest。当前 Lean 把 F2FS 阈值提高到 1 GiB，因此该 profile 首次启动实际需要 `e2fsprogs` 提供 `mkfs.ext4`；`mkf2fs` 继续保留以兼容后续分区或 fstools 策略变化。镜像仍使用 Lean target 当前的 squashfs/image pipeline，不维护一份 R4S 私有 image Makefile。
 
-selected kernel 由 common testing channel 和本轮 Lean Rockchip metadata 共同决定。设备 seed 不写 `CONFIG_LINUX_6_18` 或 point release，source lock 记录真实 series/version/hash。若 Lean testing channel 前进，R4S 必须同时具备 target config/patch 语义和对应 BBRv3 port，否则整轮停止。
+selected kernel 由 common testing channel 和本轮 Lean Rockchip metadata 共同决定。设备 seed 不写 `CONFIG_LINUX_6_18` 或 point release，source lock 记录真实 series/version/hash。若 Lean testing channel 前进，R4S 必须保留要求的 target config/patch 语义；BBR 实现按 §13 选择。
 
 U-Boot、ATF、rkbin、BL31、DTS、SD signaling 与 LED 都使用本轮 Lean 原生定义。sbwml 的某个 boot component 版本号更新或降低都不能单独证明应该替换；只有当前 Lean target 的真实启动缺陷才允许评审窄修复，禁止删除整个 target 后拉取私有 tree。
 
@@ -1059,17 +1059,17 @@ N5105 guest 明确排除：
 
 PVE 部署必须配套 q35/OVMF、`cpu: host`、4 vCPU、VirtIO multiqueue=4、IOMMU passthrough 和固定内存。固件可以验证 guest 中的 config、driver 和脚本，但不能替宿主机开启 IOMMU、vhost 或改变 PVE CPU model，因此这些参数作为部署前置条件而不是 guest 内的伪配置。
 
-## 13. BBRv3 合同
+## 13. BBR 实现选择与验收
 
 BBRv3 不能作为与内核无关的普通 kmod 下载。正确路径是：
 
 1. 从 Lean target 解析 selected kernel channel、series、精确 version 与 source hash。
-2. 从受信任 provider 策略解析匹配 series 的最新 BBRv3 port。
+2. 从受信任 provider 策略解析匹配 series 的最新 BBRv3 port。所有候选查询成功且明确不存在匹配移植时，source lock 记录 `in-tree` 和查询的 commit/路径，跳过该 series 的 port 下载及应用，保留所选内核自带的 BBR。查询失败、已有候选格式漂移、哈希不符或无法 clean-apply 均为真实失败。
 3. 下载 patch，计算 SHA256，并对精确 pristine Linux tag clean-apply。
 4. 把当轮 patch 物化到 source-lock artifact。
 5. 安装进 Lean 对应 `hack-*`/`backport-*` patch stack。
 6. 继续使用 Lean `kmod-tcp-bbr`、`tcp_bbr.ko` 和运行名 `bbr`，由 FW3 应用配置。
-7. 从 build tree 的每一份 `tcp_bbr.ko` ELF `.modinfo` 读取 `version=3` 和 vermagic。
+7. 从 build tree 的每一份 `tcp_bbr.ko` ELF `.modinfo` 读取实际版本与 vermagic。选中的 BBRv3 port 必须得到 `version=3`；原生 BBR 可以没有版本字段，两种模式都必须有匹配内核的 vermagic。
 8. 同时验证 `sch_fq.ko` 与同一 locked kernel vermagic。
 
 BBRv3 provider patch 允许两种真实格式：
@@ -1085,7 +1085,7 @@ Lean 的 module stripping 会去掉普通 `MODULE_VERSION`。兼容合同仅在 
 
 BBRv3 适用于路由器本机 IPv4 与 IPv6 TCP socket。它不控制 UDP/QUIC，也不改变普通 NAT 转发连接的端到端拥塞算法。PassWall/Xray 在路由器本机建立的 TCP outbound 会直接使用它。
 
-FW3 每次应用 `bbr` 都要求 `/sys/module/tcp_bbr/version` 为 `3`，由内核确认算法可用；`sch_fq` 独立通过成品模块门禁。出厂设置、升级和配置所有权见 §9.4。
+FW3 始终应用相同的 `bbr` 运行名，由内核确认算法可用；代际由构建证据证明，`sch_fq` 独立通过成品模块门禁。出厂设置、升级和配置所有权见 §9.4。
 
 ## 14. 源码兼容策略
 
@@ -1162,7 +1162,7 @@ Release job 的授权矩阵是该依赖图的一部分：
 - 从 profile 目录自动发现目标。
 - 渲染 common/device kernel intent，并由共享 resolver 解析或接收一个完整 schema 5 source lock。
 - incoming lock 必须属于当前 repository commit 且 digest 与 dispatch metadata 一致。
-- 物化两种受支持格式的 BBRv3 patch，并对每个 selected kernel version clean-apply。
+- 对选中 port 的内核物化两种受支持格式的 BBRv3 patch，并对精确内核版本 clean-apply；原生 BBR 的选择在报告中显式展示。
 - 上传一个 `source-lock` artifact 供两个 build job 共用。
 
 ### 15.2 build / check-final-config / verify-firmware
@@ -1364,7 +1364,7 @@ bash scripts/resolve-source-lock.sh digest \
   /tmp/source-input/source-lock.json
 ```
 
-该步骤访问真实上游并验证受控 release、selected channel/series/version/hash、两 profile 同代和对应 BBRv3 port。命令末尾可显式传 `stable` 或 `testing`；省略时使用 common seed 回退值。2026-08-02 审计中，testing 输出为 R4S/x86 的 `kernel_series=6.18`，精确 point release 仍由当轮 Lean 决定。
+该步骤访问真实上游并验证受控 release、selected channel/series/version/hash、以及两个 profile 各自的 BBR 选择。命令末尾可显式传 `stable` 或 `testing`；省略时使用 common seed 回退值。2026-08-02 审计中，testing 输出为 R4S/x86 的 `kernel_series=6.18`，精确 point release 仍由当轮 Lean 决定。
 
 ### 17.3 最终配置与完整构建
 
@@ -1396,7 +1396,7 @@ make -j"$BUILD_JOBS" world
 - R4S target、A72+A53 flags、LZ4 zram backend/default/library、native interface/IRQ、schedutil、crypto/CRC 和 OPP 语义存在。
 - N5105 target、x86-64-v2/Tremont flags、VirtIO built-in、igc、EEE disable、VLAN upstream/backport 等价语义存在。
 - common prepared source 具备 PPPoE IPv4/IPv6 GRO/GSO 语义。
-- BBRv3 patch stack 对本轮精确 kernel 已 clean-apply，source compatibility 没有半应用或不明漂移。
+- 选中的 BBRv3 patch stack 对精确 kernel 已 clean-apply；无 port 的系列有原生 BBR 的明确记录；source compatibility 没有半应用或不明漂移。
 
 `make world` 必须一次并行成功。失败诊断只用于找到根因，不能改变 config、换 provider、降级 GCC、跳过 hash 或产生可发布固件。
 
@@ -1452,7 +1452,7 @@ Release 级验收在 GitHub 上完成完整闭环：aggregate 先复验两个 de
 - 新兼容规则必须有当前 profile 构建失败证据、稳定语义锚点和 fixture。
 - 上游已包含等价实现时，兼容执行器应 no-op；出现半实现或漂移时失败。
 - Linux upstream 的 longterm 身份不等于 Lean target 已将其设为 stable；selected channel 以锁定 Lean metadata 为准。
-- testing channel 前进且没有可信 BBRv3/target/package 适配时允许构建失败，不允许静默降级或发布半兼容固件。
+- testing channel 前进且缺少必要 target/package 适配时允许构建失败，不切换内核通道或发布半兼容固件。缺少可选 BBRv3 port 按 §13 记录并保留内核 BBR。
 - 不因为 sbwml 或 kernel.org 出现更新 point release 就越过 Lean 单独改 version/hash；不引入私有 target、授权凭据或远程覆盖脚本。
 - R4S 2.208/1.8 GHz 是 selected Lean target 的显式超频风险；项目不在其上继续增加电压或频率。N5105 固定使用 `x86-64-v2` + Tremont tune，不引入严格 Tremont 或 x86-64-v3 候选。
 - R4S IRQ/RPS/XPS 与 N5105 queues/irqbalance 各只有一个 production 所有者，不积累开关和 fallback。
@@ -1467,7 +1467,7 @@ Release 级验收在 GitHub 上完成完整闭环：aggregate 先复验两个 de
 | Lean/feed/release 在构建期间变化 | prepare 只解析一次，build 只消费 commit-addressed URL、精确版本和 SHA256 |
 | 最新 HAProxy/AdGuardHome/Geo 数据与当前 recipe 不兼容 | 严格失败并修 recipe/接口；手动回滚也必须指定精确版本后重新生成完整 lock，不使用 `skip` |
 | release metadata/checksum 缺失或不一致 | resolver 拒绝该输入，不进入 matrix |
-| selected testing series 暂无可信 BBRv3 port | prepare 在双 build 前失败；provider 后续发布兼容 port 时下一轮自动吸收，不降级普通 BBR 或另一内核通道 |
+| selected series 暂无可信 BBRv3 port | source lock 显式记录原生 BBR 与查询证据；后续匹配 port 可在下一轮吸收，内核通道不变 |
 | BBR patch 应用但模块身份不符 | pristine clean-apply、prepared source 断言、cross-built ELF version/vermagic 与 firmware provenance 共同失败 |
 | 配置写了 `fq` 但固件缺 provider | common 必选 `kmod-sched`，成品检查 `sch_fq.ko` 及 vermagic |
 | GCC15 暴露旧 package 错误 | 只在真实闭包内优先使用 canonical OpenWrt packages/core；仍未解决才加窄语义规则，不回退 GCC、不关闭告警、不删 required package |
@@ -1540,7 +1540,7 @@ Release 级验收在 GitHub 上完成完整闭环：aggregate 先复验两个 de
 | R4S 与 N5105 共用该共用的 | 应用、网络协议、上游锁、工具链、安全、发布和 verifier 都在 common/共享模块 |
 | 两个平台该优化的分别优化 | R4S ARMv8/A72+A53/r8168/IRQ/OPP/zram；N5105 x86-64-v2/Tremont/VirtIO/igc/4 queues/irqbalance |
 | Linux 6.18 | common 选择 testing channel，精确 6.18 point release/hash 从本轮 Lean 动态解析 |
-| 默认 BBRv3，兼容 IPv4/IPv6 TCP | selected-series public port + module version `3`；运行名/包名保持 `bbr`/`kmod-tcp-bbr` |
+| 默认 BBR，兼容 IPv4/IPv6 TCP | 有匹配可信 port 则用 BBRv3 并核验 version `3`，否则保留原生 BBR；运行名/包名保持 `bbr`/`kmod-tcp-bbr` |
 | 只编译实际需要的插件 | required dependency closure + exact/regex forbidden + final manifest；不维护未选择 package |
 | Geodata 与 Geoview | GeoIP/Geosite 均来自 Loyalsoldier 动态 release，`v2ray-geodata` 打包，Geoview 由 PassWall packages provider 编译 |
 | HAProxy/AdGuardHome/Geo 始终新 | prepare 解析最新 LTS/stable，写入真实 hash；设备内不绕过 package manager 自更新 |

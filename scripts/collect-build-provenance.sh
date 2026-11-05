@@ -66,6 +66,7 @@ locked_kernel_channel="${locked_kernel[0]}"
 locked_kernel_series="${locked_kernel[1]}"
 locked_kernel_version="${locked_kernel[2]}"
 locked_kernel_source_sha256="${locked_kernel[3]}"
+bbr_provider="${locked_kernel[5]}"
 
 module_records="$(mktemp)"
 gcc_banner="$(mktemp)"
@@ -80,9 +81,14 @@ mapfile -d '' -t bbr_modules < <(
   exit 1
 }
 bbr_vermagic=""
+bbr_version=""
+version_flags=()
+if [ "$bbr_provider" = in-tree ]; then
+  version_flags+=(--optional)
+fi
 for module in "${bbr_modules[@]}"; do
   relative="${module#"$openwrt"/}"
-  version="$(python3 "$repo_root/scripts/kernel_module_metadata.py" "$module" version)" || {
+  version="$(python3 "$repo_root/scripts/kernel_module_metadata.py" "$module" version "${version_flags[@]}")" || {
     echo "::error::Cannot verify BBR module metadata: $relative" >&2
     exit 1
   }
@@ -90,7 +96,7 @@ for module in "${bbr_modules[@]}"; do
     echo "::error::Cannot verify BBR module metadata: $relative" >&2
     exit 1
   }
-  [ "$version" = 3 ] || {
+  [ "$bbr_provider" = in-tree ] || [ "$version" = 3 ] || {
     echo "::error::Built $relative reports module version '$version', expected 3" >&2
     exit 1
   }
@@ -102,7 +108,12 @@ for module in "${bbr_modules[@]}"; do
     echo "::error::Built tcp_bbr modules report inconsistent vermagic" >&2
     exit 1
   }
+  [ -z "$bbr_vermagic" ] || [ "$version" = "$bbr_version" ] || {
+    echo "::error::Built tcp_bbr modules report inconsistent version metadata" >&2
+    exit 1
+  }
   bbr_vermagic="$vermagic"
+  bbr_version="$version"
   printf 'tcp_bbr\t%s\t%s\t%s\t%s\n' \
     "$relative" "$(sha256sum "$module" | awk '{print $1}')" \
     "$version" "$vermagic" >> "$module_records"

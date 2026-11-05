@@ -136,7 +136,7 @@ jobs:
           echo "Source lock: $digest"
           python3 scripts/source_lock.py summary "$lock" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Validate BBRv3 Kernel Patch Set
+      - name: Validate Selected BBR Ports
         shell: bash
         run: |
           set -euo pipefail

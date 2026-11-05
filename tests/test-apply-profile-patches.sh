@@ -488,10 +488,8 @@ reload_service || status=$?
 assert_calls unlock lock read:firewall fw3:reload unlock
 fw_status=0
 module_version=1
-status=0
-start_service || status=$?
-[ "$status" -ne 0 ]
-assert_calls lock 'fw3:-q start' unlock
+start_service
+assert_calls lock 'fw3:-q start' sysctl:net.ipv4.tcp_congestion_control=bbr unlock
 cca=cubic
 sysctl_status=7
 status=0
@@ -659,7 +657,7 @@ text = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 assert text.count("\n".join(rule["block"])) == 1
 assert all(marker in text for marker in rule["accepted_semantics"][0])
 PY
-grep -qx 'bbrv3_provider=fixture-single' "$report"
+grep -qx 'bbr_provider=fixture-single' "$report"
 grep -qx 'bbrv3_patch_count=1' "$report"
 grep -qx 'patch-report-v3' "$report"
 grep -qx 'bbrv3_module_version_status=compatibility-installed' "$report"

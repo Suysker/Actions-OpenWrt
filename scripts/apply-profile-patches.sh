@@ -55,28 +55,6 @@ origin_commit="${locked[8]}"
 install_directory="${locked[9]}"
 source_lock_dir="$(dirname "$source_lock")"
 
-mapfile -t module_version_contract < <(
-  python3 "$repo_root/scripts/bbr3_module_version.py" \
-    describe "$repo_root" "$kernel_series"
-)
-[ "${#module_version_contract[@]}" -eq 7 ] || {
-  echo "::error::Could not load the BBRv3 module-version compatibility contract" >&2
-  exit 1
-}
-module_version_patch="${module_version_contract[0]}"
-module_version_install_directory="${module_version_contract[1]}"
-module_version_install_name="${module_version_contract[2]}"
-module_version_sha256="${module_version_contract[6]}"
-
-mapfile -t locked_patches < <(
-  bash "$repo_root/scripts/resolve-source-lock.sh" \
-    bbr-patch-plan "$source_lock" "$profile"
-)
-[ "${#locked_patches[@]}" -gt 0 ] || {
-  echo "::error::Could not parse materialized BBRv3 patches" >&2
-  exit 1
-}
-
 target_makefile="$openwrt_dir/target/linux/$kernel_target/Makefile"
 [ -f "$target_makefile" ] || {
   echo "::error::Locked target Makefile is missing: $target_makefile" >&2
@@ -139,6 +117,7 @@ source_lock_digest="$(bash "$repo_root/scripts/resolve-source-lock.sh" digest "$
   echo "kernel_series=$kernel_series"
   echo "kernel_version=$kernel_version"
   echo "kernel_source_sha256=$kernel_source_sha256"
+  echo "bbr_provider=$bbr_provider"
 } > "$report"
 
 python3 "$repo_root/scripts/apply-source-compatibility.py" \
@@ -150,6 +129,44 @@ apply_series feed_passwall "$repo_root/patchsets/feeds/passwall" \
   "$openwrt_dir/feeds/passwall"
 apply_series feed_kenzo "$repo_root/patchsets/feeds/kenzo" \
   "$openwrt_dir/feeds/kenzo"
+
+netsupport="$openwrt_dir/package/kernel/linux/modules/netsupport.mk"
+grep -Fq 'define KernelPackage/tcp-bbr' "$netsupport"
+grep -Fq 'net/ipv4/tcp_bbr.ko' "$netsupport"
+grep -Fq 'AutoProbe,tcp_bbr' "$netsupport"
+grep -Fq 'define KernelPackage/sched' "$netsupport"
+grep -Fq 'sch_fq' "$netsupport"
+{
+  echo "assertion_runtime_name=bbr"
+  echo "assertion_kernel_package=tcp-bbr"
+  echo "assertion_qdisc_provider=kmod-sched:sch_fq"
+} >> "$report"
+if [ "$bbr_provider" = in-tree ]; then
+  echo "Profile patches prepared for $profile with in-tree BBR. Report: $report"
+  exit 0
+fi
+
+mapfile -t module_version_contract < <(
+  python3 "$repo_root/scripts/bbr3_module_version.py" \
+    describe "$repo_root" "$kernel_series"
+)
+[ "${#module_version_contract[@]}" -eq 7 ] || {
+  echo "::error::Could not load the BBRv3 module-version compatibility contract" >&2
+  exit 1
+}
+module_version_patch="${module_version_contract[0]}"
+module_version_install_directory="${module_version_contract[1]}"
+module_version_install_name="${module_version_contract[2]}"
+module_version_sha256="${module_version_contract[6]}"
+
+mapfile -t locked_patches < <(
+  bash "$repo_root/scripts/resolve-source-lock.sh" \
+    bbr-patch-plan "$source_lock" "$profile"
+)
+[ "${#locked_patches[@]}" -gt 0 ] || {
+  echo "::error::Could not parse materialized BBRv3 patches" >&2
+  exit 1
+}
 
 destination_dir="$openwrt_dir/target/linux/generic/$install_directory"
 [ -d "$destination_dir" ] || {
@@ -243,26 +260,15 @@ esac
 grep -Eq '^\+.*BBR_VERSION[[:space:]]+3$' "${installed_bbr_patches[@]}"
 grep -Eq '^[ +].*\.name[[:space:]]*=[[:space:]]*"bbr"' "${installed_bbr_patches[@]}"
 
-netsupport="$openwrt_dir/package/kernel/linux/modules/netsupport.mk"
-grep -Fq 'define KernelPackage/tcp-bbr' "$netsupport"
-grep -Fq 'net/ipv4/tcp_bbr.ko' "$netsupport"
-grep -Fq 'AutoProbe,tcp_bbr' "$netsupport"
-grep -Fq 'define KernelPackage/sched' "$netsupport"
-grep -Fq 'sch_fq' "$netsupport"
-
 {
   echo "bbrv3_status=installed-into-openwrt-kernel-patch-stack"
-  echo "bbrv3_provider=$bbr_provider"
   echo "bbrv3_origin_url=$origin_url"
   echo "bbrv3_origin_ref=$origin_ref"
   echo "bbrv3_origin_commit=$origin_commit"
   echo "bbrv3_patch_count=${#installed_bbr_patches[@]}"
   echo "bbrv3_install_directory=target/linux/generic/$install_directory"
   echo "assertion_BBR_VERSION=3"
-  echo "assertion_runtime_name=bbr"
   echo "assertion_module_version_metadata=retained"
-  echo "assertion_kernel_package=tcp-bbr"
-  echo "assertion_qdisc_provider=kmod-sched:sch_fq"
 } >> "$report"
 
 echo "Profile patches prepared for $profile. Report: $report"

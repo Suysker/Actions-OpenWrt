@@ -63,6 +63,7 @@ kernel_channel=stable
 kernel_series=6.12
 kernel_version=6.12.100
 kernel_source_sha256=$(printf '3%.0s' {1..64})
+bbr_provider=fixture-single
 assertion_BBR_VERSION=3
 assertion_runtime_name=bbr
 assertion_module_version_metadata=retained
@@ -267,5 +268,56 @@ if bash "$repo_root/scripts/collect-build-provenance.sh" \
   exit 1
 fi
 grep -Fq 'modules report inconsistent vermagic' "$temporary/rejected.log"
+
+# In-tree BBR may legitimately have no version field. The same release gate
+# must still validate the actual ELF, matching kernel, and BBR identity.
+native_lock="$lock_dir/native.json"
+python3 - "$lock_dir/source-lock.json" "$native_lock" <<'PY'
+import json
+import pathlib
+import sys
+
+source, output = map(pathlib.Path, sys.argv[1:])
+lock = json.loads(source.read_text())
+bbr = lock["kernel_features"]["bbr3"]
+bbr["algorithm"] = None
+bbr["ports"]["6.12"] = {
+    "provider": "in-tree",
+    "version": "6.12.100",
+    "source_sha256": "3" * 64,
+    "checked_providers": [{"name": "fixture", "url": "https://github.com/example/ports.git",
+                           "ref": "main", "commit": "c" * 40, "path": "6.12/bbr3.patch"}],
+}
+output.write_text(json.dumps(lock))
+PY
+native_digest="$(python3 "$repo_root/scripts/source_lock.py" digest "$native_lock")"
+printf '{"schema":1,"source_lock_digest":"%s","components":{}}\n' \
+  "$native_digest" > "$temporary/native-artifact.json"
+cat > "$temporary/native-patches.txt" <<EOF
+patch-report-v3
+source_lock_digest=$native_digest
+kernel_channel=stable
+kernel_series=6.12
+kernel_version=6.12.100
+kernel_source_sha256=$(printf '3%.0s' {1..64})
+bbr_provider=in-tree
+assertion_runtime_name=bbr
+EOF
+sed '/static const char version\[\]/{N;d;}' "$temporary/module.c" > "$temporary/native.c"
+cc -c "$temporary/native.c" -o "$openwrt/build_dir/kernel-one/tcp_bbr.ko"
+cp "$openwrt/build_dir/kernel-one/tcp_bbr.ko" "$openwrt/build_dir/kernel-two/tcp_bbr.ko"
+bash "$repo_root/scripts/collect-build-provenance.sh" \
+  fixture "$openwrt" "$native_lock" "$temporary/native-artifact.json" \
+  "$temporary/native-patches.txt" "$temporary/runner-report.txt" "$temporary/native"
+PROFILE_ROOT_OVERRIDE="$profiles" bash "$repo_root/scripts/verify-firmware-artifacts.sh" \
+  fixture "$temporary/native" "$native_lock"
+python3 - "$temporary/native/build-provenance.json" <<'PY'
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert all("version" not in entry for entry in report["kernel_modules"]["tcp_bbr"])
+PY
 
 echo "Build provenance collection tests passed."

@@ -74,7 +74,7 @@ def source_lock_problems(
     bbr3 = kernel_features.get("bbr3") if isinstance(kernel_features, dict) else None
     ports = bbr3.get("ports") if isinstance(bbr3, dict) else None
     if not isinstance(ports, dict) or selection.series not in ports:
-        problems.append(f"source-lock has no BBRv3 port for kernel {selection.series}")
+        problems.append(f"source-lock has no BBR selection for kernel {selection.series}")
     return problems
 
 
